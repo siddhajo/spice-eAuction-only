@@ -1,15 +1,27 @@
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Tax Invoice (Purchase)</title>
-<style>
+{{! A FRAGMENT, not a whole document — see letterhead.hbs. The page padding
+    lives on .pi-page so every concatenated invoice keeps it, and
+    .pi-page + .pi-page starts each later one on a fresh sheet. }}
+{{#if first}}<style>
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
+  .pi-page { padding: 20pt; }
+  /* Each invoice after the first starts a fresh sheet. THREE belts, because
+     a lost page break is invisible until somebody prints a whole trade:
+       1. `break-before` is the CSS Fragmentation property; `page-break-before`
+          is the legacy alias. Both are emitted so a Chromium that has dropped
+          either still breaks.
+       2. The sibling rule needs the fragments to be adjacent siblings — it
+          silently does nothing if anything lands between them, or if a
+          template's root element stops being .pi-page.
+       3. .pi-break is stamped per fragment by renderChunk(), and the element
+          also carries the same declarations inline — which survives a missing
+          stylesheet and any cascade. */
+  .pi-page + .pi-page,
+  .pi-break { break-before: page; page-break-before: always; }
   body {
     font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #000;
-    line-height: 1.25; padding: 20pt;
+    line-height: 1.25;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
   .doc { border: 1pt solid #000; }
@@ -41,9 +53,8 @@
   .words { padding: 4pt; font-size: 9pt; }
   .sig { text-align: right; font-weight: bold; padding: 4pt 4pt 0; }
   .sig2 { text-align: right; font-size: 8pt; padding: 22pt 4pt 6pt; }
-</style>
-</head>
-<body>
+</style>{{/if}}
+<div class="pi-page{{#if pageBreak}} pi-break{{/if}}"{{#if pageBreak}} style="break-before:page;page-break-before:always"{{/if}}>
 <div>
   <div class="top-tag">ORIGINAL/DUPLICATE/TRIPLICATE</div>
   <div class="title">TAX INVOICE</div>
@@ -147,5 +158,4 @@ Rs.     P.</th><th>TAXABLE VALUE
   <div class="sig">{{forSeller}}</div>
   <div class="sig2">Authorised Signatory</div>
 </div>
-</body>
-</html>
+</div>

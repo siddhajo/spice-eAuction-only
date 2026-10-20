@@ -187,6 +187,19 @@ function renderChunk(tpl, chunk, cfg) {
   const pages = chunk.map((inv, i) => {
     const view = buildPurchaseInvoiceView(inv.invoiceData, cfg, inv.invoiceNo);
     view.first = i === 0;
+    // Which fragments must start a fresh sheet — everything after the first.
+    //
+    // Stated PER FRAGMENT rather than left to a `.pi-page + .pi-page` CSS
+    // rule alone. That rule is still there, but it has two silent failure
+    // modes: it needs the fragments to be adjacent SIBLINGS (anything
+    // inserted between them, or a template whose root stops being .pi-page,
+    // kills it with no error), and it lives in a <style> only the FIRST
+    // fragment emits. A customer reported a whole trade's purchase invoices
+    // printing as one continuous run on the deployed container while the
+    // identical build broke pages correctly on a dev machine — so the
+    // template now also carries the break as an inline style on the element
+    // itself, which no selector, cascade or missing stylesheet can lose.
+    view.pageBreak = i > 0;
     return tpl.render(view);
   });
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>'

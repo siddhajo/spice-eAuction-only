@@ -1,14 +1,30 @@
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Purchase Invoice</title>
-<style>
+{{! A FRAGMENT, not a whole document: the batch renderer concatenates many of
+    these into one HTML page, so a trade's purchase invoices cost one render
+    per 25 rather than one each — and one watermark per rendered document
+    instead of a 114 KB copy inside every invoice. `first` is per rendered
+    DOCUMENT; the <style> below is emitted only by the first fragment in one.
+    The page padding lives on .pi-page so every invoice keeps it, and the
+    sibling rule starts each later invoice on a fresh sheet. }}
+{{#if first}}<style>
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #000; line-height: 1.25;
-    padding: 18pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .pi-page { padding: 18pt; }
+  /* Each invoice after the first starts a fresh sheet. THREE belts, because
+     a lost page break is invisible until somebody prints a whole trade:
+       1. `break-before` is the CSS Fragmentation property; `page-break-before`
+          is the legacy alias. Both are emitted so a Chromium that has dropped
+          either still breaks.
+       2. The sibling rule needs the fragments to be adjacent siblings — it
+          silently does nothing if anything lands between them, or if a
+          template's root element stops being .pi-page.
+       3. .pi-break is stamped per fragment by renderChunk(), and the element
+          also carries the same declarations inline — which survives a missing
+          stylesheet and any cascade. */
+  .pi-page + .pi-page,
+  .pi-break { break-before: page; page-break-before: always; }
   .doc { border: 0.7pt solid #000; }
   table { border-collapse: collapse; width: 100%; }
   td, th { border: 0.6pt solid #000; padding: 2pt 4pt; vertical-align: top; }
@@ -42,9 +58,8 @@
      .lbl for the meta grid (longer labels), .lbl2 for the party GSTIN/PAN/STATE. */
   .lbl { display: inline-block; width: 92pt; }
   .lbl2 { display: inline-block; width: 34pt; }
-</style>
-</head>
-<body>
+</style>{{/if}}
+<div class="pi-page{{#if pageBreak}} pi-break{{/if}}"{{#if pageBreak}} style="break-before:page;page-break-before:always"{{/if}}>
 <div class="doc">
   <!-- Seller letterhead -->
   <div class="head">
@@ -140,5 +155,4 @@
     </tr>
   </table>
 </div>
-</body>
-</html>
+</div>

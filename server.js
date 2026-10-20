@@ -14270,6 +14270,15 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
     const tplChoice = String((req.body && req.body.template) || '').trim();
     const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
       engineKey: 'purchase_invoice_engine', templateKey: 'purchase_invoice_template', tplChoice });
+    // Which renderer actually ran, named in the log. A customer reported a
+    // whole trade printing as one continuous run on the deployed container
+    // while the same build paged correctly on a dev machine — and the first
+    // question, "which engine and layout did production use?", could not be
+    // answered from the outside. One line per bulk print (an operator action,
+    // not a hot path) makes it answerable.
+    const tplUsed = tplChoice || cfg.purchase_invoice_template || '(default)';
+    console.log(`[purchases] bulk PDF — ${payloads.length} invoice(s), `
+      + `engine=${useHtml ? 'html' : 'pdfkit'}, layout=${tplUsed}`);
     if (useHtml) {
       const cfg2 = tplChoice ? { ...cfg, purchase_invoice_template: tplChoice } : cfg;
       pdf = await require('./pdf/render-purchase-html').generatePurchaseInvoicesHtmlBatchPDF(payloads, cfg2);

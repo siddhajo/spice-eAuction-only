@@ -5,3 +5,8 @@ data/
 # one company's logo leaking into a new service created from the same repo.
 public/logo-ispl.png
 public/logo-asp.png
+# Crash dumps. A headless Chromium that dies mid-render drops an ELF core in
+# the working directory — hundreds of MB each, and they sail straight past a
+# review into a commit that GitHub then rejects at 100 MB.
+core
+*.core

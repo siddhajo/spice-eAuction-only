@@ -32,14 +32,36 @@ const tpls = fs.readdirSync(dir).filter(f => f.endsWith('.hbs'));
 check('there are purchase templates to check', tpls.length > 0, String(tpls.length));
 for (const f of tpls) {
   const src = fs.readFileSync(path.join(dir, f), 'utf8');
-  // The rule is a sibling selector, so it only fires when the fragments are
-  // adjacent siblings — which means the root element must carry the class.
-  const hasRule = /\.pi-page\s*\+\s*\.pi-page\s*\{[^}]*page-break-before:\s*always/.test(src);
-  const rootIsPiPage = /^<div class="pi-page">/m.test(src);
+  // Belt 1 — the sibling rule, which only fires while the fragments are
+  // adjacent siblings and the root element keeps the class.
+  const hasRule = /\.pi-page\s*\+\s*\.pi-page[^{]*\{[^}]*page-break-before:\s*always/.test(src);
+  const rootIsPiPage = /^<div class="pi-page/m.test(src);
   check(`${f}: breaks before each later invoice`, hasRule, 'missing .pi-page + .pi-page rule');
   check(`${f}: its root element is the .pi-page the rule targets`, rootIsPiPage,
         'the rule cannot match if the fragment root is some other element');
+  // Belt 2 — BOTH spellings. `break-before` is the CSS Fragmentation
+  // property and `page-break-before` the legacy alias; a renderer that
+  // honours only one of them must still break.
+  check(`${f}: emits the modern break-before as well as the legacy alias`,
+        /break-before:\s*page/.test(src), 'only the legacy page-break-before is present');
+  // Belt 3 — the per-fragment stamp. This is the one that survives a
+  // missing stylesheet, a cascade change, and anything inserted between
+  // fragments; renderChunk() sets `pageBreak` on every fragment but the
+  // first.
+  check(`${f}: carries the break inline on the fragment itself`,
+        /\{\{#if pageBreak\}\}[^]*?style="break-before:page;page-break-before:always"/.test(src),
+        'no inline break — a lost stylesheet would print the trade as one run');
+  check(`${f}: …and only on fragments after the first`,
+        /class="pi-page\{\{#if pageBreak\}\} pi-break\{\{\/if\}\}"/.test(src),
+        'the first invoice must NOT force a leading blank page');
 }
+
+// The renderer has to set the flag, or the template markup above never fires.
+const rc = fs.readFileSync(path.join(ROOT, 'pdf', 'render-purchase-html.js'), 'utf8');
+check('renderChunk marks every fragment after the first',
+      /view\.pageBreak\s*=\s*i\s*>\s*0/.test(rc), 'renderChunk does not set view.pageBreak');
+check('…and still marks only the first as `first`',
+      /view\.first\s*=\s*i\s*===\s*0/.test(rc), 'renderChunk does not set view.first');
 
 console.log('\n[date] the supply line prints a real date');
 // Re-register the helpers and read shortDate back off Handlebars, so this
