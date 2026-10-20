@@ -11867,28 +11867,24 @@ app.get('/api/invoices', requireView, (req, res) => {
     }
   }
 
-  // ── Buyer master lookup, shared by alt_code and the distance chain ──
+  // ── Buyer master lookup, feeding the distance chain below ──────────
   //
-  // Both hydrations below need the buyers row behind `invoices.buyer`, so it
-  // is fetched ONCE here rather than twice. Batched for the same reason the
-  // asp_invo block above is: the driver is synchronous, so round-trips are
-  // what cost, not I/O.
+  // Batched for the same reason the asp_invo block above is: the driver is
+  // synchronous, so round-trips are what cost, not I/O.
   //
-  // `ORDER BY id` + first-wins is deliberate and carried over from the
-  // distance lookup this replaces: duplicate buyer codes DO exist in this
-  // data, and an unordered LIMIT 1 picked an arbitrary one. Sharing the map
-  // also guarantees alt_code and the distance resolve against the SAME
-  // buyers row, which two separate lookups could not promise.
+  // `ORDER BY id` + first-wins is deliberate: duplicate buyer codes DO exist
+  // in this data, and the unordered LIMIT 1 this replaces picked an
+  // arbitrary one.
   //
   // NULL, as in the asp_invo block: `buyer IN (...)` is never true for a
   // NULL buyer, so those rows are excluded from the query and fall through
   // to the blank default — never matched against each other.
-  const buyerMaster = new Map();   // buyer -> { pin, cpin, code }
+  const buyerMaster = new Map();   // buyer -> { pin, cpin }
   try {
     const wanted = [...new Set(rows.filter(r => r.buyer != null).map(r => r.buyer))];
     for (const buyers of _chunk(wanted, 400)) {
       const found = db.all(
-        `SELECT buyer, pin, cpin, code FROM buyers
+        `SELECT buyer, pin, cpin FROM buyers
           WHERE buyer IN (${buyers.map(() => '?').join(',')}) ORDER BY id`,
         buyers
       );
@@ -11898,18 +11894,66 @@ app.get('/api/invoices', requireView, (req, res) => {
     console.warn('[invoices] buyer master hydration failed:', e.message);
   }
 
-  // Alt code — the buyer's SHORT ALIAS (buyers.code, e.g. "RG", "CPAJ"), as
-  // against invoices.buyer, which in this data is the buyer's full
-  // identifier ("LAKSHMANAN"). Shown beside it in the Sales list so a row
-  // can be read against the price files and auction tags, which carry the
-  // alias rather than the long name.
+  // ── Alt code — the ALTERNATE CODE typed per lot in Price Entry ──────
   //
-  // NOT lots.dummy_code — that is also labelled "ALT CODE", but on the
-  // per-LOT Checklist/Tharai exports, where it is a free-text Price Entry
-  // tag. Different column, different grain; this one is a buyer attribute.
+  // `lots.dummy_code`: the free-text tag the operator puts on a lot at
+  // pricing time, and the same value the Checklist and Tharai List print
+  // under "ALT CODE". It is NOT buyers.code (the buyer master's short
+  // alias) — the two genuinely differ, because this one is set per trade:
+  // the buyer ERPL carries ER, ERP and ERJ on three different invoices.
+  //
+  // Resolved through the invoice's LOTS, since that is where the tag lives.
+  // Linkage matches invoiceLotNos(): an original stamps lots.invo, while a
+  // PROFORMA stamps lots.proforma_invo and deliberately leaves lots.invo
+  // empty — so a draft keyed on `invo` would find nothing and show blank.
+  //
+  // An invoice's lots carry at most ONE distinct code in practice (checked:
+  // 130 invoices with exactly one, 54 with none, never more). Distinct
+  // values are still joined rather than one being picked arbitrarily, so if
+  // a trade ever does mix them the row shows that instead of hiding it.
+  //
+  // NULL, exactly as the asp_invo block documents: SQL never matches NULL
+  // with `=`, and a JS Map keyed on String(invo) would collapse NULL to ''
+  // and let an invoice inherit a code from an unrelated lot. Both sides
+  // exclude NULL explicitly.
+  const altByKey = new Map();            // key(auction_id, buyer, col, invo) -> Set(code)
+  const altBuyersByAuction = new Map();  // auction_id -> Set(buyer)
+  const _altUnmatchable = (r) => r.auction_id == null || r.buyer == null || r.invo == null;
   for (const r of rows) {
-    const b = r.buyer == null ? null : buyerMaster.get(r.buyer);
-    r.alt_code = (b && b.code != null) ? String(b.code).trim() : '';
+    if (_altUnmatchable(r)) continue;
+    if (!altBuyersByAuction.has(r.auction_id)) altBuyersByAuction.set(r.auction_id, new Set());
+    altBuyersByAuction.get(r.auction_id).add(r.buyer);
+  }
+  try {
+    for (const [aid, buyerSet] of altBuyersByAuction) {
+      for (const buyers of _chunk([...buyerSet], 400)) {
+        const found = db.all(
+          `SELECT buyer, invo, proforma_invo, TRIM(dummy_code) AS dummy_code FROM lots
+            WHERE auction_id = ? AND buyer IN (${buyers.map(() => '?').join(',')})
+              AND dummy_code IS NOT NULL AND TRIM(dummy_code) != ''`,
+          [aid, ...buyers]
+        );
+        for (const f of found) {
+          if (f.buyer == null) continue;   // cannot be matched by `buyer = ?`
+          // One lot can back an original AND a draft, so index both columns.
+          for (const [col, val] of [['invo', f.invo], ['proforma_invo', f.proforma_invo]]) {
+            if (val == null) continue;     // NULL never matched under `= ?`
+            const k = _aspKey(aid, f.buyer, col, val);
+            if (!altByKey.has(k)) altByKey.set(k, new Set());
+            altByKey.get(k).add(f.dummy_code);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // dummy_code is added by migration; an older DB must not break the list.
+    console.warn('[invoices] alt code hydration failed:', e.message);
+  }
+  for (const r of rows) {
+    if (_altUnmatchable(r)) { r.alt_code = ''; continue; }
+    const col = Number(r.is_proforma) ? 'proforma_invo' : 'invo';
+    const hit = altByKey.get(_aspKey(r.auction_id, r.buyer, col, r.invo));
+    r.alt_code = hit ? [...hit].filter(Boolean).join(', ') : '';
   }
 
   // Hydrate the resolved e-way bill distance per invoice. Resolution
@@ -14270,8 +14314,8 @@ const PDF_ZIP_KINDS = {
   // "Separate PDFs" there needs the commission route too, or it would hand the
   // operator a stack of a document their site does not issue.
   bills_commission:    { url: '/api/bills/commission-bos-bulk',    table: 'bills',                noCol: 'bil',     nameCol: 'name',   label: 'CommissionBills' },
-  debit_notes:         { url: '/api/debit-notes/pdf-bulk',         table: 'debit_notes',          noCol: 'note_no', nameCol: 'name',   label: 'DebitNotes' },
-  debit_notes_planter: { url: '/api/debit-notes-planter/pdf-bulk', table: 'debit_notes_planter',  noCol: 'note_no', nameCol: 'name',   label: 'PlanterDebitNotes' },
+  debit_notes:         { url: '/api/debit-notes/pdf-bulk',         table: 'debit_notes',          noCol: 'note_no', nameCol: 'name',   label: 'DebitNotes',        tag: 'SB' },
+  debit_notes_planter: { url: '/api/debit-notes-planter/pdf-bulk', table: 'debit_notes_planter',  noCol: 'note_no', nameCol: 'name',   label: 'PlanterDebitNotes', tag: 'SB' },
 };
 
 // Body fields forwarded verbatim to the per-document bulk route, beyond the
@@ -14287,17 +14331,31 @@ const PDF_ZIP_EXTRA_KEYS = ['invoiceNo'];
 // drop: they file by party and trade, and the number inside the PDF is the
 // number that matters).
 //
+// `tag` is an optional constant that sits between the two, giving
+// "NAME_TAG_AUCTIONNO.pdf". Debit notes carry 'SB' (Spices Board — the same
+// abbreviation the SB Sample Refund setting uses): every kind of document
+// otherwise lands in the operator's Downloads folder under the same
+// party-and-trade name, and the tag is what tells them apart at a glance.
+//
 // Anything that is not a letter, digit, dash or underscore becomes "_" — a
 // party name carries dots, slashes and ampersands, and a slash in particular
 // would make the archive hold a directory nobody asked for.
 //
 // `docNo` survives only as the fallback for a row with no party name on it:
 // an unnamed "_20.pdf" tells the operator nothing, while "7_20.pdf" is at
-// least findable.
-function pdfZipFileName(party, ano, docNo, fallback) {
+// least findable. The tag still applies in that case — a document with no
+// party on it is exactly the one worth labelling.
+function pdfZipFileName(party, ano, docNo, fallback, tag) {
   const clean = (v) => String(v == null ? '' : v).trim().replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '');
   const nm = clean(party).slice(0, 60), no = clean(ano);
-  const base = [nm || clean(docNo), no].filter(Boolean).join('_') || clean(fallback) || 'document';
+  const who = nm || clean(docNo);
+  // The tag DECORATES a name; it can never be the whole of one. Without this
+  // guard a row with no party, no document number and no trade number came
+  // out as plain "SB.pdf" — and every such row would, so they would collide
+  // with each other and lose the row id that at least made them distinct.
+  const base = (who || no)
+    ? [who, clean(tag), no].filter(Boolean).join('_')
+    : (clean(fallback) || 'document');
   return base + '.pdf';
 }
 
@@ -14371,7 +14429,7 @@ app.post('/api/documents/pdf-zip', requireView, async (req, res) => {
   for (const out of built) {
     const row = byId.get(out.id) || {};
     if (out.error) { failed.push(`${row.doc_no || out.id} ${row.party || ''} — ${out.error}`); continue; }
-    let name = pdfZipFileName(row.party, row.ano, row.doc_no, out.id);
+    let name = pdfZipFileName(row.party, row.ano, row.doc_no, out.id, kind.tag);
     // Dropping the document number made collisions ORDINARY rather than rare:
     // one party routinely holds several documents in one trade (every lot-wise
     // purchase invoice, for a start), and namesake parties collide too. Number

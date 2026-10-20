@@ -261,6 +261,49 @@ const pageCount = async (buf) => (await require('pdf-lib').PDFDocument.load(buf)
   r = await api('GET', '/api/debit-notes/next-note-no?ano=21');
   check('the running number moves on for the next trade', r.d && r.d.next === 45, r.d);
 
+  console.log('\n[6] Debit notes name their separate PDFs NAME_SB_AUCTIONNO.pdf');
+  // Every document kind otherwise lands in the operator's Downloads folder
+  // under the same party-and-trade name, so a debit note was indistinguishable
+  // from that party's purchase invoice for the same trade. 'SB' (Spices
+  // Board — the abbreviation the SB Sample Refund setting already uses) is
+  // the constant that tells them apart. Runs after [4], which is what raised
+  // the notes.
+  const dnIds = ((await api('GET', '/api/debit-notes?ano=20')).d || []).map(x => x.id);
+  check('trade 20 has debit notes to zip', dnIds.length >= 3, dnIds);
+  r = await api('POST', '/api/documents/pdf-zip', { kind: 'debit_notes', ids: dnIds.slice(0, 3) });
+  check('the debit-note kind zips', r.status === 200, { status: r.status, d: r.d });
+  const dnZip = path.join(TMP, 'dn.zip');
+  fs.writeFileSync(dnZip, r.buf);
+  const dnNames = require('child_process').execSync(`unzip -Z1 "${dnZip}"`).toString().trim().split('\n');
+  check('every file carries the SB tag between party and trade',
+        dnNames.length === 3 && dnNames.every(n => /^.+_SB_20\.pdf$/.test(n)), dnNames);
+  // The tag sits BETWEEN the two, not appended — a name ending "_20_SB.pdf"
+  // would sort and scan differently in the folder.
+  check('…and the trade number is still last', dnNames.every(n => /_20\.pdf$/.test(n)), dnNames);
+
+  // Planter debit notes are the same document family and take the same tag.
+  await api('POST', '/api/debit-notes-planter/generate-bulk', { ano: '20', startNoteNo: 1 });
+  const dnpIds = ((await api('GET', '/api/debit-notes-planter?ano=20')).d || []).map(x => x.id);
+  if (dnpIds.length) {
+    r = await api('POST', '/api/documents/pdf-zip', { kind: 'debit_notes_planter', ids: dnpIds.slice(0, 2) });
+    check('the planter debit-note kind zips', r.status === 200, { status: r.status, d: r.d });
+    const dnpZip = path.join(TMP, 'dnp.zip');
+    fs.writeFileSync(dnpZip, r.buf);
+    const dnpNames = require('child_process').execSync(`unzip -Z1 "${dnpZip}"`).toString().trim().split('\n');
+    check('planter debit notes carry the SB tag too',
+          dnpNames.every(n => /^.+_SB_20\.pdf$/.test(n)), dnpNames);
+  } else {
+    check('planter debit notes exist to check', false, 'none raised for trade 20');
+  }
+
+  // The tag belongs to debit notes ALONE — adding it everywhere would defeat
+  // the point of having it.
+  r = await api('POST', '/api/documents/pdf-zip', { kind: 'purchases', ids });
+  const pZip = path.join(TMP, 'pur-notag.zip');
+  fs.writeFileSync(pZip, r.buf);
+  const pNames = require('child_process').execSync(`unzip -Z1 "${pZip}"`).toString().trim().split('\n');
+  check('purchase invoices are NOT tagged', pNames.every(n => !/_SB_/.test(n)), pNames);
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log('--- server log tail ---\n' + srvLog.split('\n').slice(-25).join('\n'));
   cleanup();

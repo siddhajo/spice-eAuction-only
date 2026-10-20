@@ -37529,15 +37529,14 @@ async function loadInvoices(opts){
         render:(i)=> i.buyer
           ? `<span style="font-family:monospace;font-weight:700;color:var(--spice-cardamom-dk);font-size:12px;letter-spacing:.4px">${esc(i.buyer)}</span>`
           : '<span style="color:var(--text3)">—</span>' },
-      // Alt Code — the buyer's SHORT ALIAS from the Buyers master
-      // (`buyers.code`, e.g. "RG", "CPAJ"), hydrated per invoice by the
-      // server. This is the code the auction tags and price files carry, so
-      // having it on the row is what lets an operator reconcile a sales
-      // invoice against those without opening the buyer.
+      // Alt Code — the ALTERNATE CODE typed per lot in Price Entry
+      // (`lots.dummy_code`), resolved to the invoice by the server through
+      // its lots. The same value the Checklist and Tharai List print under
+      // "ALT CODE".
       //
-      // Distinct from the "ALT CODE" on the Checklist / Tharai exports:
-      // that one is `lots.dummy_code`, a free-text Price Entry tag, and is
-      // per-LOT. Same words, different column — don't wire this to that.
+      // NOT the Buyers master's short alias (`buyers.code`): the two really
+      // do differ, because this tag is set per trade — the buyer ERPL
+      // carries ER, ERP and ERJ across three invoices.
       //
       // Muted rather than green: it is a secondary identifier sitting beside
       // the primary one, and two bold monospace codes side by side would
