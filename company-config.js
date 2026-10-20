@@ -349,6 +349,18 @@ const DEFAULTS = [
   // `pdf_watermark_reports` is one switch for every report, register,
   // statement, journal and bank file: an operator who wants those unmarked
   // wants all of them unmarked. See pdf/watermark.js (WATERMARK_KINDS).
+  // Which date a generated invoice carries: the day it is RAISED ('today',
+  // the shipping date) or the day of the AUCTION. Both Generate modals seed
+  // their picker from this and still let the operator override per run.
+  //
+  // Default 'today' — the behaviour every install has had. A site that files
+  // by auction day sets it to 'auction' once instead of remembering the
+  // dropdown every time. It matters beyond the paper: the date flows into the
+  // Tally vouchers (sales AND the Merchants journal), so an invoice raised the
+  // morning after the auction posts under that later date, which reads as
+  // "the Tally date is one day ahead of the auction".
+  { key: 'invoice_date_source',  value: 'today', category: 'invoice', label: 'Invoice Date Source (today | auction)', type: 'text' },
+
   { key: 'pdf_watermark_sales_invoice',      value: 'true', category: 'invoice', label: 'Watermark: Sales Invoice',        type: 'boolean' },
   { key: 'pdf_watermark_purchase_invoice',   value: 'true', category: 'invoice', label: 'Watermark: Purchase Invoice',     type: 'boolean' },
   { key: 'pdf_watermark_bill_of_supply',     value: 'true', category: 'invoice', label: 'Watermark: Bill of Supply',       type: 'boolean' },

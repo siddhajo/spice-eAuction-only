@@ -2976,7 +2976,12 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
                AND COALESCE(p.is_proforma,0) = 1
                AND p.buyer = i.buyer AND p.sale = i.sale
                AND TRIM(COALESCE(p.raised_invo,'')) = TRIM(COALESCE(i.invo,''))
-             ORDER BY CAST(p.invo AS INTEGER), p.invo LIMIT 1) AS proforma_invo
+             ORDER BY CAST(p.invo AS INTEGER), p.invo LIMIT 1) AS proforma_invo,
+           -- The TRADE's own date, beside each invoice's. The Merchants
+           -- journal is dated by it (see generMerchantsXML); every other
+           -- voucher keeps using the invoice's own date, which is the
+           -- document's date and the only date a tax voucher may carry.
+           (SELECT a.date FROM auctions a WHERE a.id = i.auction_id) AS auction_date
     FROM invoices i
     WHERE i.auction_id = ? AND ${ISP_STATE_SQL} AND ${
       (!!(opts && opts.includePendingProformas) && cfgBool(cfg, 'flag_proforma_invoice', false))
@@ -3177,6 +3182,10 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
       id: r.id,
       ano: r.ano,
       date: r.date,
+      // The TRADE's date, carried beside the invoice's own. Only the Merchants
+      // journal reads it; a sales voucher is a tax document and must keep the
+      // invoice date.
+      auction_date: r.auction_date,
       sale: r.sale,
       invo: r.invo,
       // Proforma number this invoice was raised from ('' when it was billed
@@ -5139,9 +5148,35 @@ function generMerchantsXML(rows, cfg, opts = {}) {
   // reference VBA's `auction` value.
   const voucherNo = `${xe(String(first.ano || '').trim())}/${season}`;
 
+  // ── The journal's date: the AUCTION's own ────────────────────────────
+  // This one voucher consolidates every invoice in the trade, so it has to
+  // pick a single date, and the invoices need not share one — a trade
+  // part-invoiced on auction day and finished the next morning carries both.
+  //
+  // It is dated by the TRADE, at the operator's instruction: this is the
+  // auction's merchant control entry, so it belongs on the auction's day
+  // whatever date the individual invoices were raised under. Note the
+  // consequence, which is deliberate: when invoices are raised later (the
+  // default is the day they are made — see invoice_date_source), this journal
+  // will predate the sales vouchers it reconciles with, and across a month end
+  // the two land in different periods.
+  //
+  // Falls back to the LATEST invoice date when no trade date reaches here (an
+  // older caller, a row set assembled elsewhere) — of the dates available that
+  // is the only one that can never predate a document in the batch.
+  const auctionDate = toTallyDate(
+    (opts && opts.auctionDate) || rows.map(r => r && r.auction_date).find(Boolean) || '');
+  const latestInvoiceDate = rows
+    .map(r => toTallyDate(r.date))
+    .filter(d => /^\d{8}$/.test(d))
+    .reduce((a, b) => (b > a ? b : a), '');
+  const voucherDate = /^\d{8}$/.test(auctionDate)
+    ? auctionDate
+    : (latestInvoiceDate || toTallyDate(first.date));
+
   xml += `
 <VOUCHER OBJVIEW="Invoice Voucher View">
-<DATE>${toTallyDate(first.date)}</DATE>
+<DATE>${voucherDate}</DATE>
 <ISINVOICE>No</ISINVOICE>
 <VOUCHERNUMBER>${xe(voucherNo)}</VOUCHERNUMBER>
 <NARRATION>${xe(voucherNo)}</NARRATION>

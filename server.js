@@ -944,10 +944,15 @@ function todayLocalYMD() {
 // the auction's own date (legacy behaviour); anything else (default) uses
 // today's local date — the ship/raise date, which is the sensible default for
 // a tax invoice and required when a late invoice is raised long after the sale.
-function resolveInvoiceDate(dateSource, auctionDate) {
-  return String(dateSource || '').trim().toLowerCase() === 'auction'
-    ? auctionDate
-    : todayLocalYMD();
+// `cfg` supplies the INSTALL DEFAULT (invoice_date_source) for a caller that
+// sends no choice of its own — an older client, or a script. The two Generate
+// modals seed their picker from the same setting, so the dropdown and the
+// fallback can never disagree about what "no choice" means.
+function resolveInvoiceDate(dateSource, auctionDate, cfg) {
+  const asked = String(dateSource || '').trim().toLowerCase();
+  const fallback = String((cfg && cfg.invoice_date_source) || '').trim().toLowerCase();
+  const want = (asked === 'auction' || asked === 'today') ? asked : fallback;
+  return want === 'auction' ? auctionDate : todayLocalYMD();
 }
 
 // Add N days to an ISO date string (YYYY-MM-DD). String-based to avoid
@@ -11862,6 +11867,51 @@ app.get('/api/invoices', requireView, (req, res) => {
     }
   }
 
+  // ── Buyer master lookup, shared by alt_code and the distance chain ──
+  //
+  // Both hydrations below need the buyers row behind `invoices.buyer`, so it
+  // is fetched ONCE here rather than twice. Batched for the same reason the
+  // asp_invo block above is: the driver is synchronous, so round-trips are
+  // what cost, not I/O.
+  //
+  // `ORDER BY id` + first-wins is deliberate and carried over from the
+  // distance lookup this replaces: duplicate buyer codes DO exist in this
+  // data, and an unordered LIMIT 1 picked an arbitrary one. Sharing the map
+  // also guarantees alt_code and the distance resolve against the SAME
+  // buyers row, which two separate lookups could not promise.
+  //
+  // NULL, as in the asp_invo block: `buyer IN (...)` is never true for a
+  // NULL buyer, so those rows are excluded from the query and fall through
+  // to the blank default — never matched against each other.
+  const buyerMaster = new Map();   // buyer -> { pin, cpin, code }
+  try {
+    const wanted = [...new Set(rows.filter(r => r.buyer != null).map(r => r.buyer))];
+    for (const buyers of _chunk(wanted, 400)) {
+      const found = db.all(
+        `SELECT buyer, pin, cpin, code FROM buyers
+          WHERE buyer IN (${buyers.map(() => '?').join(',')}) ORDER BY id`,
+        buyers
+      );
+      for (const b of found) if (!buyerMaster.has(b.buyer)) buyerMaster.set(b.buyer, b);
+    }
+  } catch (e) {
+    console.warn('[invoices] buyer master hydration failed:', e.message);
+  }
+
+  // Alt code — the buyer's SHORT ALIAS (buyers.code, e.g. "RG", "CPAJ"), as
+  // against invoices.buyer, which in this data is the buyer's full
+  // identifier ("LAKSHMANAN"). Shown beside it in the Sales list so a row
+  // can be read against the price files and auction tags, which carry the
+  // alias rather than the long name.
+  //
+  // NOT lots.dummy_code — that is also labelled "ALT CODE", but on the
+  // per-LOT Checklist/Tharai exports, where it is a free-text Price Entry
+  // tag. Different column, different grain; this one is a buyer attribute.
+  for (const r of rows) {
+    const b = r.buyer == null ? null : buyerMaster.get(r.buyer);
+    r.alt_code = (b && b.code != null) ? String(b.code).trim() : '';
+  }
+
   // Hydrate the resolved e-way bill distance per invoice. Resolution
   // order matches the Tally generator (so what the user sees in the
   // Sales tab is exactly what ships in the voucher):
@@ -11899,28 +11949,11 @@ app.get('/api/invoices', requireView, (req, res) => {
     // delivery sites. Distance must be computed to the actual ship-to
     // when one is registered. Falls back to bill-to so legacy buyers
     // without a separate consignee block still resolve.
-    // PERF: batch the buyer PINs (one query per chunk, not one per row) and
-    // memoise the route lookup per PIN, since many invoices share a buyer
-    // and many buyers share a destination.
-    //
-    // `ORDER BY id` + first-wins replaces the old unordered `LIMIT 1`. That
-    // only matters for duplicate buyer codes, which DO exist here (8 in this
-    // dataset, plus one empty code on thousands of rows). Checked every one:
-    // the row picked is the same either way, so this is a no-op on the data
-    // and strictly more deterministic than an unordered LIMIT 1 was.
-    const needPinBuyers = [...new Set(
-      rows.filter(r => (r.distance_km == null || r.distance_km === '') && r.buyer != null)
-          .map(r => r.buyer)
-    )];
-    const buyerPins = new Map(); // buyer -> { pin, cpin }
-    for (const buyers of _chunk(needPinBuyers, 400)) {
-      const found = db.all(
-        `SELECT buyer, pin, cpin FROM buyers
-          WHERE buyer IN (${buyers.map(() => '?').join(',')}) ORDER BY id`,
-        buyers
-      );
-      for (const b of found) if (!buyerPins.has(b.buyer)) buyerPins.set(b.buyer, b);
-    }
+    // PERF: the buyer PINs come from the shared buyerMaster built above (one
+    // query per chunk, not one per row); the route lookup is memoised per
+    // PIN, since many invoices share a buyer and many buyers share a
+    // destination.
+    const buyerPins = buyerMaster;
     const routeCache = new Map(); // buyerPin -> km | null
     for (const r of rows) {
       // Per-invoice override always wins
@@ -12107,7 +12140,7 @@ app.post('/api/invoices/generate/:auctionId',
   const s = invoice.summary;
   // Invoice date: today (ship date) by default, or the auction's date when the
   // operator picks "Auction date" in the Generate modal.
-  const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction.date);
+  const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction.date, cfg);
   // Store the BUSINESS context state (TAMIL NADU=ISP, KERALA=ASP), not
   // the auction's physical state. This lets us distinguish ASP invoices
   // from ISP invoices in the same auction, which matters for the sales
@@ -12547,7 +12580,7 @@ app.post('/api/invoices/generate-all/:auctionId',
   const errors = [];
   // Date for every invoice in this batch: today (ship date) by default, or the
   // auction's date when "Auction date" is picked in the Generate-All modal.
-  const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction.date);
+  const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction.date, cfg);
 
   const isASPStateBulk = String(cfg.business_state || '').toUpperCase() === 'KERALA';
   for (const item of plan.items) {
@@ -12676,7 +12709,7 @@ app.post('/api/invoices/:id/raise-original', requireInvoiceWrite, (req, res) => 
 
   const auction = db.get('SELECT * FROM auctions WHERE id=?', [pf.auction_id]);
   const s = invoice.summary;
-  const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction && auction.date);
+  const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction && auction.date, cfg);
   const invoiceState = cfg.business_state || (auction && auction.state) || '';
   db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
@@ -14054,6 +14087,28 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
   }
 });
 
+// The TRADE NUMBER to PRINT on a document.
+//
+// `auctions.ano` is the business-facing number the office and the Spices Board
+// use; `auctions.id` is a row id that merely looks like one. Printing the id is
+// how a purchase invoice came to say "e-AUCTION No: 21" for trade 20 — on the
+// same sheet whose own note line said "Auction Sales in Auction No: 20",
+// because that line reads buildPurchaseInvoice's `auctionNo`, which was right
+// all along.
+//
+// Blank when it cannot be resolved. Deliberately NOT the filename helper's
+// rule (anoForFilename falls back to the id, since a file still needs a name):
+// a document must not state a trade number it cannot stand behind, and a wrong
+// number on a tax document is worse than no number.
+function anoForDocument(db, auctionId) {
+  if (!auctionId) return '';
+  try {
+    const a = db.get('SELECT ano FROM auctions WHERE id = ?', [auctionId]);
+    const v = a && a.ano != null ? String(a.ano).trim() : '';
+    return v;
+  } catch (_) { return ''; }
+}
+
 // Attach buyer block + e-AUCTION No + invoice date to a purchase invoice
 // object so the new renderer can show the full BILLED/SHIPPED TO + top
 // grid correctly. The buyer is whichever identity is currently active in
@@ -14071,7 +14126,11 @@ function enrichPurchaseForPDF(invoice, cfg, db, auctionId) {
     }
   }
   if (!invoice.invoiceDate) invoice.invoiceDate = formatDateForDisplay(new Date(), dateFmt);
-  if (!invoice.eTradeNo) invoice.eTradeNo = String(auctionId || '');
+  // `auctionNo` is already this trade's ano (buildPurchaseInvoice resolves it),
+  // so prefer it: the two lines that name the trade on this sheet then cannot
+  // disagree. The lookup covers the stored-row fallback path in pdf-bulk,
+  // which builds a minimal invoice without it.
+  if (!invoice.eTradeNo) invoice.eTradeNo = invoice.auctionNo || anoForDocument(db, auctionId);
 
   // Buyer block — populated from the central company identity (which
   // reads the user's CURRENT settings). Legacy `s_*` / `tn_*` fields are
@@ -14203,21 +14262,42 @@ app.post('/api/purchases/pdf-bulk', requireView, async (req, res) => {
 // the calls run a few at a time through the shared render pool rather than
 // strictly serially.
 const PDF_ZIP_KINDS = {
-  invoices:            { url: '/api/invoices/pdf-bulk',            table: 'invoices',             noCol: 'invo',    nameCol: 'buyer1', label: 'Invoice' },
-  purchases:           { url: '/api/purchases/pdf-bulk',           table: 'purchases',            noCol: 'invo',    nameCol: 'name',   label: 'PurchaseInvoice' },
-  bills:               { url: '/api/bills/pdf-bulk',               table: 'bills',                noCol: 'bil',     nameCol: 'name',   label: 'BillOfSupply' },
-  debit_notes:         { url: '/api/debit-notes/pdf-bulk',         table: 'debit_notes',          noCol: 'note_no', nameCol: 'name',   label: 'DebitNote' },
-  debit_notes_planter: { url: '/api/debit-notes-planter/pdf-bulk', table: 'debit_notes_planter',  noCol: 'note_no', nameCol: 'name',   label: 'DebitNotePlanter' },
+  invoices:            { url: '/api/invoices/pdf-bulk',            table: 'invoices',             noCol: 'invo',    nameCol: 'buyer1', label: 'Invoices' },
+  purchases:           { url: '/api/purchases/pdf-bulk',           table: 'purchases',            noCol: 'invo',    nameCol: 'name',   label: 'PurchaseInvoices' },
+  bills:               { url: '/api/bills/pdf-bulk',               table: 'bills',                noCol: 'bil',     nameCol: 'name',   label: 'BillsOfSupply' },
+  // URD Purchase prints ONE of two documents, never both — flag_bos_purchase_bill
+  // picks which, and the screen shows exactly one print button accordingly. So
+  // "Separate PDFs" there needs the commission route too, or it would hand the
+  // operator a stack of a document their site does not issue.
+  bills_commission:    { url: '/api/bills/commission-bos-bulk',    table: 'bills',                noCol: 'bil',     nameCol: 'name',   label: 'CommissionBills' },
+  debit_notes:         { url: '/api/debit-notes/pdf-bulk',         table: 'debit_notes',          noCol: 'note_no', nameCol: 'name',   label: 'DebitNotes' },
+  debit_notes_planter: { url: '/api/debit-notes-planter/pdf-bulk', table: 'debit_notes_planter',  noCol: 'note_no', nameCol: 'name',   label: 'PlanterDebitNotes' },
 };
 
-// A file name a human can find in a folder: "<no>_<PARTY>.pdf". Anything that
-// is not a letter, digit, dash or underscore becomes "_" — a party name
-// carries dots, slashes and ampersands, and a slash in particular would make
-// the archive hold a directory nobody asked for.
-function pdfZipFileName(docNo, party, fallback) {
+// Body fields forwarded verbatim to the per-document bulk route, beyond the
+// ids and the layout. Whitelisted rather than spread: this endpoint posts to
+// another route on this server, and passing an unvetted body through would let
+// a caller reach options the screen never offers. `invoiceNo` is the
+// commission bill's "which sales-invoice number do I quote" choice.
+const PDF_ZIP_EXTRA_KEYS = ['invoiceNo'];
+
+// A file name a human can find in a folder: "NAME_AUCTIONNO.pdf" — the party
+// first, because that is what the person looking for the file knows, and the
+// TRADE number after it (not the document number, which the operator asked to
+// drop: they file by party and trade, and the number inside the PDF is the
+// number that matters).
+//
+// Anything that is not a letter, digit, dash or underscore becomes "_" — a
+// party name carries dots, slashes and ampersands, and a slash in particular
+// would make the archive hold a directory nobody asked for.
+//
+// `docNo` survives only as the fallback for a row with no party name on it:
+// an unnamed "_20.pdf" tells the operator nothing, while "7_20.pdf" is at
+// least findable.
+function pdfZipFileName(party, ano, docNo, fallback) {
   const clean = (v) => String(v == null ? '' : v).trim().replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '');
-  const no = clean(docNo), nm = clean(party).slice(0, 60);
-  const base = [no, nm].filter(Boolean).join('_') || clean(fallback) || 'document';
+  const nm = clean(party).slice(0, 60), no = clean(ano);
+  const base = [nm || clean(docNo), no].filter(Boolean).join('_') || clean(fallback) || 'document';
   return base + '.pdf';
 }
 
@@ -14237,11 +14317,15 @@ app.post('/api/documents/pdf-zip', requireView, async (req, res) => {
   const db = getDb();
   const ph = ids.map(() => '?').join(',');
   const rows = db.all(
-    `SELECT id, ${kind.noCol} AS doc_no, ${kind.nameCol} AS party FROM ${kind.table} WHERE id IN (${ph})`, ids) || [];
+    `SELECT id, ${kind.noCol} AS doc_no, ${kind.nameCol} AS party, ano FROM ${kind.table} WHERE id IN (${ph})`, ids) || [];
   const byId = new Map(rows.map(r => [Number(r.id), r]));
   if (!byId.size) return res.status(404).json({ error: 'No matching documents found' });
 
   const template = (req.body && req.body.template) || '';
+  const extra = {};
+  for (const k of PDF_ZIP_EXTRA_KEYS) {
+    if (req.body && req.body[k] !== undefined && req.body[k] !== null && req.body[k] !== '') extra[k] = req.body[k];
+  }
   const auth = req.headers.authorization || '';
   const baseUrl = `http://127.0.0.1:${PORT}`;
   const { mapRenders } = require('./pdf/render-pool');
@@ -14256,7 +14340,7 @@ app.post('/api/documents/pdf-zip', requireView, async (req, res) => {
       const r = await fetch(baseUrl + kind.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: auth },
-        body: JSON.stringify(template ? { ids: [id], template } : { ids: [id] }),
+        body: JSON.stringify(Object.assign({ ids: [id] }, template ? { template } : {}, extra)),
       });
       if (!r.ok) {
         let msg = `HTTP ${r.status}`;
@@ -14274,7 +14358,10 @@ app.post('/api/documents/pdf-zip', requireView, async (req, res) => {
   const anoLabel = anoLabelForRows(db.all(`SELECT ano FROM ${kind.table} WHERE id IN (${ph})`, ids) || []);
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition',
-    `attachment; filename="${exportFileName(kind.label + 's', anoLabel, built.length)}.zip"`);
+    // `label` is already plural per kind — appending an "s" gave
+    // "BillOfSupplys", which is the kind of name that makes an operator
+    // doubt the file.
+    `attachment; filename="${exportFileName(kind.label, anoLabel, built.length)}.zip"`);
   res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
   zip.on('error', (e) => { try { res.destroy(e); } catch (_) {} });
   zip.pipe(res);
@@ -14284,10 +14371,19 @@ app.post('/api/documents/pdf-zip', requireView, async (req, res) => {
   for (const out of built) {
     const row = byId.get(out.id) || {};
     if (out.error) { failed.push(`${row.doc_no || out.id} ${row.party || ''} — ${out.error}`); continue; }
-    let name = pdfZipFileName(row.doc_no, row.party, out.id);
-    // Two parties can share a name and a number can repeat across trades —
-    // keep both files rather than letting the archive silently hold one.
-    if (used.has(name)) name = name.replace(/\.pdf$/, '') + `_${out.id}.pdf`;
+    let name = pdfZipFileName(row.party, row.ano, row.doc_no, out.id);
+    // Dropping the document number made collisions ORDINARY rather than rare:
+    // one party routinely holds several documents in one trade (every lot-wise
+    // purchase invoice, for a start), and namesake parties collide too. Number
+    // the repeats " (2)", " (3)" — the same convention the Auction Desk
+    // bundler uses — so the archive keeps every file instead of silently
+    // holding one of them.
+    if (used.has(name)) {
+      const stem = name.replace(/\.pdf$/, '');
+      let n = 2;
+      while (used.has(`${stem} (${n}).pdf`)) n++;
+      name = `${stem} (${n}).pdf`;
+    }
     used.add(name);
     zip.append(out.buf, { name });
   }
@@ -14874,12 +14970,16 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
     // in the top strip (Invoice No / e-TRADE No / Date). Format follows
     // the operator's `date_format` Setting.
     const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
-    const auction = db.get('SELECT date FROM auctions WHERE id = ?', [req.params.auctionId]);
+    const auction = db.get('SELECT ano, date FROM auctions WHERE id = ?', [req.params.auctionId]);
     if (auction && auction.date) {
       bill.billDate = formatDateForDisplay(auction.date, dateFmt);
     }
     if (!bill.billDate) bill.billDate = formatDateForDisplay(new Date(), dateFmt);
-    bill.eTradeNo = req.query.eTradeNo || req.params.auctionId;
+    // The trade's own number, never the row id — see anoForDocument(). An
+    // explicit ?eTradeNo= still wins, for a caller that knows better.
+    bill.eTradeNo = req.query.eTradeNo
+      || (auction && auction.ano != null ? String(auction.ano).trim() : '')
+      || '';
 
     let pdf;
     const tplChoice = String((req.query.template) || (req.body && req.body.template) || '').trim();
@@ -15144,7 +15244,11 @@ app.post('/api/bills/pdf-bulk', requireView, async (req, res) => {
         }
       }
       if (!bill.billDate) bill.billDate = formatDateForDisplay(new Date(), dateFmt2);
-      bill.eTradeNo = stored.auction_id || '';
+      // bills.ano is the stored trade number for this very row; the lookup is
+      // only for legacy rows that predate the column being filled.
+      bill.eTradeNo = (stored.ano != null && String(stored.ano).trim())
+        ? String(stored.ano).trim()
+        : anoForDocument(db, stored.auction_id);
       payloads.push({ billData: bill, billNo: formatBillOfSupplyNo(cfg, stored.bil, { ano: stored.ano }) });
     }
 

@@ -119,14 +119,91 @@ const pageCount = async (buf) => (await require('pdf-lib').PDFDocument.load(buf)
   fs.writeFileSync(zipPath, r.buf);
   const listing = require('child_process').execSync(`unzip -Z1 "${zipPath}"`).toString().trim().split('\n');
   check('one file per selected document', listing.length === 3, listing);
-  check('each is named "<number>_<PARTY>.pdf"',
-        listing.includes('1_ABSAL_SPICES.pdf') && listing.includes('2_ANAKKARA_TRADERS.pdf')
-        && listing.includes('3_ASMI_SPICES.pdf'), listing);
+  // NAME_AUCTIONNO.pdf — the party first (that is what somebody hunting for
+  // the file knows) and the TRADE number after it. The document number is
+  // deliberately absent: the operator files by party and trade, and the
+  // number that matters is the one printed inside.
+  check('each is named "NAME_AUCTIONNO.pdf"',
+        listing.includes('ABSAL_SPICES_20.pdf') && listing.includes('ANAKKARA_TRADERS_20.pdf')
+        && listing.includes('ASMI_SPICES_20.pdf'), listing);
+  check('…with no document number in the name', !listing.some(n => /^\d+_/.test(n)), listing);
   const cd = r.headers.get('content-disposition') || '';
   check('the archive names the trade, like every other download', /20/.test(cd) && /\.zip/.test(cd), cd);
   // Each member must be a real, single-invoice PDF — not a copy of the merged one.
-  const one = require('child_process').execSync(`unzip -p "${zipPath}" 1_ABSAL_SPICES.pdf`, { maxBuffer: 1 << 26 });
+  const one = require('child_process').execSync(`unzip -p "${zipPath}" ABSAL_SPICES_20.pdf`, { maxBuffer: 1 << 26 });
   check('a member is a one-invoice PDF', (await pageCount(one)) === 1, { pages: await pageCount(one) });
+
+  console.log('\n[2b] One party, several documents in the same trade');
+  // Dropping the document number from the name made this ORDINARY: lot-wise
+  // purchase invoices give one dealer a document per lot, and all of them
+  // want the same file name. The archive must keep every file.
+  await api('PUT', '/api/company-settings', { settings: { flag_lotwise_purchase: 'true' } });
+  // Read the id back rather than guessing it — this block sits before the
+  // one that adds trade 21, so a hard-coded id silently targets nothing.
+  const made = await api('POST', '/api/auctions', { ano: '31', date: '2026-10-24', crop_type: 'ISP' });
+  const A2 = made.d && made.d.id;
+  check('a second trade exists for the clash test', !!A2, made.d);
+  await api('POST', `/api/auctions/${A2}/allocations`, { allocations: [{ branch: 'BODI', start_lot: '001', end_lot: '020' }] });
+  for (const lot of ['001', '002']) {
+    await api('POST', '/api/lots', { auction_id: A2, lot_no: lot, trader_id: 1, branch: 'BODI',
+      grade: '2', bags: 10, litre: '300', qty: 500, sample_wt: 2.95, gross_wt: 502.95 });
+  }
+  const lots2 = (await api('GET', `/api/lots/${A2}`)).d || [];
+  await api('POST', '/api/lots/bulk-price', { items: lots2.map(l => ({ id: l.id, price: 3152, code: 'B1', buyer: 'B1' })) });
+  await api('POST', `/api/lots/calculate/${A2}`, {});
+  r = await api('POST', `/api/purchases/generate-all/${A2}`, { startInvoiceNo: 50 });
+  const lw = ((await api('GET', `/api/purchases?auction_id=${A2}`)).d || []);
+  check('one dealer has two lot-wise invoices in one trade', lw.length === 2, lw.map(x => x.invo));
+  r = await api('POST', '/api/documents/pdf-zip', { kind: 'purchases', ids: lw.map(x => x.id) });
+  const zip2 = path.join(TMP, 'sep2.zip');
+  fs.writeFileSync(zip2, r.buf);
+  const listing2 = require('child_process').execSync(`unzip -Z1 "${zip2}"`).toString().trim().split('\n');
+  check('both files survive the name clash', listing2.length === 2, listing2);
+  check('…the first keeps the plain name', listing2.includes('ABSAL_SPICES_31.pdf'), listing2);
+  check('…and the second is numbered, not overwritten',
+        listing2.includes('ABSAL_SPICES_31 (2).pdf'), listing2);
+  await api('PUT', '/api/company-settings', { settings: { flag_lotwise_purchase: 'false' } });
+
+  console.log('\n[2c] URD Purchase prints the document that screen issues');
+  // The screen shows exactly ONE print button — flag_bos_purchase_bill picks
+  // whether it is a Bill of Supply or a Commission Bill — so Separate PDFs
+  // has to produce the same one. A zip of the document the site does not
+  // issue is a stack of paper the operator cannot use.
+  const planter = (await api('POST', '/api/traders', { name: 'RAVI PLANTER', tel: '9790744477', ppla: 'BODIMETTU' })).d.trader;
+  await api('POST', '/api/lots', { auction_id: 1, lot_no: '030', trader_id: planter.id, branch: 'BODI',
+    grade: '1', bags: 10, litre: '300', qty: 400, sample_wt: 2.95, gross_wt: 402.95 });
+  const pl = ((await api('GET', '/api/lots/1')).d || []).filter(l => l.lot_no === '030');
+  await api('POST', '/api/lots/bulk-price', { items: pl.map(l => ({ id: l.id, price: 3152, code: 'B1', buyer: 'B1' })) });
+  await api('POST', '/api/lots/calculate/1', {});
+  r = await api('POST', '/api/bills/generate-all/1', { startBillNo: 1 });
+  const billIds = ((await api('GET', '/api/bills?auction_id=1')).d || []).map(b => b.id);
+  check('a bill of supply exists for the planter', billIds.length === 1, { billIds, gen: r.d && r.d.error });
+
+  const zipNames = async (kind) => {
+    const res = await api('POST', '/api/documents/pdf-zip', { kind, ids: billIds });
+    if (res.status !== 200) return { status: res.status, err: res.d };
+    const f = path.join(TMP, kind + '.zip');
+    fs.writeFileSync(f, res.buf);
+    return {
+      status: 200,
+      names: require('child_process').execSync(`unzip -Z1 "${f}"`).toString().trim().split('\n'),
+      archive: (res.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)?.[1] || '',
+      first: require('child_process').execSync(`unzip -p "${f}" "RAVI_PLANTER_20.pdf"`, { maxBuffer: 1 << 26 }),
+    };
+  };
+  const bos = await zipNames('bills');
+  check('the bill-of-supply kind zips', bos.status === 200, bos);
+  check('…under a readable archive name', /^BillsOfSupply_/.test(bos.archive || ''), bos.archive);
+  const com = await zipNames('bills_commission');
+  check('the commission kind zips', com.status === 200, com);
+  check('…named for the commission bill', /^CommissionBills_/.test(com.archive || ''), com.archive);
+  check('both name their files the same way — by party and trade',
+        (bos.names || []).includes('RAVI_PLANTER_20.pdf') && (com.names || []).includes('RAVI_PLANTER_20.pdf'),
+        { bos: bos.names, com: com.names });
+  // The documents themselves must actually differ — same rows, two formats.
+  check('and they are genuinely different documents, not the same PDF twice',
+        bos.first && com.first && Buffer.compare(bos.first, com.first) !== 0,
+        { bos: bos.first && bos.first.length, com: com.first && com.first.length });
 
   console.log('\n[3] The rails on separate PDFs');
   r = await api('POST', '/api/documents/pdf-zip', { kind: 'nonsense', ids });

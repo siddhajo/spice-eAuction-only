@@ -170,7 +170,37 @@ function cleanup() {
   check('Debit Notes — Planter has one', btns.dnp === true);
   check('and every handler exists', btns.fns.length === 6, JSON.stringify(btns.fns));
 
-  console.log('\n[5] The Debit Notes button appears and disappears with its sibling');
+  console.log('\n[5] URD Purchase follows the document that screen issues');
+  // flag_bos_purchase_bill shows exactly one print button there — Bill of
+  // Supply or Commission Bill — and Separate PDFs must ask the server for the
+  // same one. Driven through the real predicate rather than a copy of it.
+  const bosRouting = await page.evaluate(async () => {
+    const seen = [];
+    const realDl = window.downloadSeparatePdfs;
+    // Stub the download so nothing renders — the question is which KIND it asks for.
+    downloadSeparatePdfs = (kind) => { seen.push(kind); };
+    const realPick = window.pickTemplate, realPickC = window.pickCommissionTemplate,
+          realPickN = window.pickCommissionInvoiceNo;
+    pickTemplate = async () => '';
+    pickCommissionTemplate = async () => '';
+    pickCommissionInvoiceNo = async () => 'original';
+    const host = document.getElementById('bills-list');
+    host.innerHTML = '<tr><td><input type="checkbox" class="bill-select-cb" value="1" checked></td></tr>';
+    document.body.setAttribute('data-feat-bos-purchase-bill', '1');   // Bill of Supply mode
+    await saveSeparateBills();
+    document.body.setAttribute('data-feat-bos-purchase-bill', '0');   // Commission Bill mode
+    await saveSeparateBills();
+    host.innerHTML = '';
+    downloadSeparatePdfs = realDl; pickTemplate = realPick;
+    pickCommissionTemplate = realPickC; pickCommissionInvoiceNo = realPickN;
+    return seen;
+  });
+  check('with the Bill of Supply button showing, it asks for bills',
+        bosRouting[0] === 'bills', JSON.stringify(bosRouting));
+  check('with the Commission Bill button showing, it asks for the commission format',
+        bosRouting[1] === 'bills_commission', JSON.stringify(bosRouting));
+
+  console.log('\n[6] The Debit Notes button appears and disappears with its sibling');
   const dnToggle = await page.evaluate(() => {
     const printBtn = document.getElementById('dn-bulk-print');
     const sepBtn   = document.getElementById('dn-bulk-sep');

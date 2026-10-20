@@ -7683,7 +7683,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <button class="needs-invoice-revert btn" style="height:38px;padding:0 14px;background:var(--spice-turmeric);color:#fff;font-weight:600" onclick="revertAllInvoices()" title="Revert all invoices — deletes them and re-enables lots for re-invoicing">⟲ Revert All</button>          </div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Distance (km)</th><th>Code</th><th>Trade Name</th><th>Bags</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Dist (km)</th><th>Buyer</th><th>Alt Code</th><th>Trade Name</th><th>Bags</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
         <div id="invoices-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
@@ -10024,7 +10024,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   </div>
   <div class="fg"><label>Starting Invoice No <span style="color:var(--text3);font-weight:400">— auto-increments for each selected buyer</span></label><input id="gi-invno" type="number" placeholder="e.g. 6"></div>
   <div class="fg"><label>Invoice Date</label>
-    <select id="gi-date-source">
+    <select id="gi-date-source" onchange="this.dataset.touched='1'">
       <option value="today">Current date (today)</option>
       <option value="auction">Auction date</option>
     </select>
@@ -10135,7 +10135,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   <!-- Invoice date source — today's (ship) date by default, or the auction's
        own date. Invoices only. -->
   <div class="fg" id="gen-all-date-wrap" style="display:none"><label>Invoice Date</label>
-    <select id="ga-date-source">
+    <select id="ga-date-source" onchange="this.dataset.touched='1'">
       <option value="today">Current date (today)</option>
       <option value="auction">Auction date</option>
     </select>
@@ -12647,6 +12647,18 @@ async function applyFeatureFlags() {
   // attribute is only '0' when the setting is explicitly false), matching the
   // other two dashboard widget flags. Read by loadStats() when it builds the
   // dashboard, so a change takes effect on the next paint.
+  // Invoice Date pickers (both Generate modals) open on the install default,
+  // so a site that files by auction day stops re-picking it every run. The
+  // server applies the same setting when a caller sends no choice.
+  const _invDateSrc = String((cfg && cfg.invoice_date_source) || '').trim().toLowerCase() === 'auction'
+    ? 'auction' : 'today';
+  window._INVOICE_DATE_SOURCE = _invDateSrc;
+  for (const id of ['gi-date-source', 'ga-date-source']) {
+    const el = document.getElementById(id);
+    // Only move a picker the operator has not touched this session — changing
+    // it under them mid-run would silently re-date the batch they are setting up.
+    if (el && el.dataset.touched !== '1') el.value = _invDateSrc;
+  }
   document.body.setAttribute('data-feat-dash-quick-actions',
     (cfg && cfg.flag_dash_quick_actions !== undefined && !on(cfg.flag_dash_quick_actions)) ? '0' : '1');
   // Flag turned off mid-session: pin the form back to a booking so a stale
@@ -33643,7 +33655,7 @@ async function doGenerateAll(){
   if(!start||parseInt(start)<1){alert('Enter a starting number (positive integer)');return}
   const body={};
   if(kind==='bills')body.startBillNo=start;
-  else{body.startInvoiceNo=start;if(kind==='invoices'){body.saleType=document.getElementById('ga-sale').value||'';body.splitInvoices=document.getElementById('ga-split')?document.getElementById('ga-split').checked:true;body.dateSource=document.getElementById('ga-date-source')?document.getElementById('ga-date-source').value:'today';body.docType=selectedDocType('ga-doctype')}}
+  else{body.startInvoiceNo=start;if(kind==='invoices'){body.saleType=document.getElementById('ga-sale').value||'';body.splitInvoices=document.getElementById('ga-split')?document.getElementById('ga-split').checked:true;body.dateSource=document.getElementById('ga-date-source')?document.getElementById('ga-date-source').value:(window._INVOICE_DATE_SOURCE||'today');body.docType=selectedDocType('ga-doctype')}}
   const routeMap={invoices:'invoices/generate-all',purchases:'purchases/generate-all',bills:'bills/generate-all'};
   const submitBtn=document.getElementById('ga-submit');
   submitBtn.disabled=true;submitBtn.textContent='Generating…';
@@ -37244,7 +37256,7 @@ async function generateInvoice(){
   const startInvNo=parseInt(document.getElementById('gi-invno').value.trim(),10);
   if(!startInvNo||isNaN(startInvNo)||startInvNo<1){alert('Enter a valid starting invoice number');return}
   const noTI=!!document.getElementById('gi-no-ti')?.checked;
-  const dateSource=document.getElementById('gi-date-source')?.value||'today';
+  const dateSource=document.getElementById('gi-date-source')?.value||window._INVOICE_DATE_SOURCE||'today';
   const docType=selectedDocType('gi-doctype');
   const list=document.getElementById('gi-buyer-list');
   const checked=Array.from(list?.querySelectorAll('.gi-cb:checked')||[]);
@@ -37501,26 +37513,42 @@ async function loadInvoices(opts){
       //   3. blank
       // noTotal: distance is per-route, not additive — summing kilometres
       // across invoices is meaningless and would mislead the user.
-      { key:'resolved_distance_km', label:'Distance (km)', sort:'number', numeric:true, noTotal:true,
+      { key:'resolved_distance_km', label:'Dist (km)', sort:'number', numeric:true, noTotal:true,
         render:(i)=>{
           const v = i.resolved_distance_km;
           if (v == null || v === '') return '<span style="color:var(--text3)">—</span>';
           return `<span style="font-family:monospace;color:var(--green);font-weight:600">${Number(v)}</span>`;
         } },
-      // Buyer code — short identifier (e.g. "RSH", "B001"). Stored on
-      // `invoices.buyer` (yes, the column is called `buyer` for legacy
-      // FoxPro reasons but it's actually the SHORT CODE; the full trade
-      // name lives in `buyer1`). Rendered in monospace + green so the
-      // code is scannable next to the trade name.
-      { key:'buyer', label:'Code', sort:'text',
+      // Buyer — `invoices.buyer`, the buyer's own identifier. The header used
+      // to read "Code", which undersold it: in this data the field holds the
+      // full identifier the desk knows the buyer by ("LAKSHMANAN",
+      // "SIVA CPA JJ"), not a short code. The short code is the ALT CODE
+      // column next to it. Rendered in monospace + green so it stays
+      // scannable beside the trade name.
+      { key:'buyer', label:'Buyer', sort:'text',
         render:(i)=> i.buyer
           ? `<span style="font-family:monospace;font-weight:700;color:var(--spice-cardamom-dk);font-size:12px;letter-spacing:.4px">${esc(i.buyer)}</span>`
           : '<span style="color:var(--text3)">—</span>' },
+      // Alt Code — the buyer's SHORT ALIAS from the Buyers master
+      // (`buyers.code`, e.g. "RG", "CPAJ"), hydrated per invoice by the
+      // server. This is the code the auction tags and price files carry, so
+      // having it on the row is what lets an operator reconcile a sales
+      // invoice against those without opening the buyer.
+      //
+      // Distinct from the "ALT CODE" on the Checklist / Tharai exports:
+      // that one is `lots.dummy_code`, a free-text Price Entry tag, and is
+      // per-LOT. Same words, different column — don't wire this to that.
+      //
+      // Muted rather than green: it is a secondary identifier sitting beside
+      // the primary one, and two bold monospace codes side by side would
+      // compete.
+      { key:'alt_code', label:'Alt Code', sort:'text',
+        render:(i)=> i.alt_code
+          ? `<span style="font-family:monospace;font-weight:600;color:var(--spice-text-mute);font-size:12px;letter-spacing:.4px">${esc(i.alt_code)}</span>`
+          : '<span style="color:var(--text3)">—</span>' },
       // Trade Name — the full registered company name. Stored on
-      // `invoices.buyer1`. Column header was previously "Buyer" but
-      // "Buyer" overloaded with the code field; renamed to make both
-      // columns self-explanatory and let the user filter/sort each
-      // independently.
+      // `invoices.buyer1`, and kept a separate column from the buyer
+      // identifier beside it so each can be filtered and sorted on its own.
       // Raise Original (⬆) sits INLINE next to the buyer name rather than in
       // the ⋯ actions menu: raising the original off a proforma is the one
       // action operators repeat down the whole list, and having it beside the
@@ -37773,7 +37801,11 @@ async function fetchPdfWithOverlay(overlayMsg, endpoint, fallbackName, postBody)
 // Costs one render per document on the server (separate files cannot share a
 // layout pass), so the overlay says how many are coming — a 50-document run
 // is a visible wait and silence would read as a hang.
-async function downloadSeparatePdfs(kind, ids, template, labelPlural){
+// `extra` carries the per-document options the merged print already asks for
+// (today: the commission bill's invoice-number choice). The server forwards
+// only keys it knows, so an unknown one is dropped rather than reaching a
+// route the screen never offers.
+async function downloadSeparatePdfs(kind, ids, template, labelPlural, extra){
   if (!ids || !ids.length) return;
   let blob = null, name = `${labelPlural || 'Documents'}.zip`;
   try {
@@ -37781,7 +37813,7 @@ async function downloadSeparatePdfs(kind, ids, template, labelPlural){
       const r = await fetch(B + '/api/documents/pdf-zip', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
-        body: JSON.stringify(template ? { kind, ids, template } : { kind, ids }),
+        body: JSON.stringify(Object.assign({ kind, ids }, template ? { template } : {}, extra || {})),
       });
       if (!r.ok) {
         let m = 'Could not build the separate PDFs';
@@ -38220,11 +38252,28 @@ async function saveSeparateInvoices(){
   if(template===null)return;
   await downloadSeparatePdfs('invoices', ids, template, 'SalesInvoices');
 }
+// URD Purchase issues ONE of two documents — a Bill of Supply or a Commission
+// Bill — and flag_bos_purchase_bill decides which, showing exactly one print
+// button for it. So this follows the screen rather than hard-coding a format:
+// handing the operator a zip of the document their site does not print would
+// be a stack of paper they cannot use. Same predicate (`_bosCommissionMode`)
+// the WhatsApp send already uses, for the same reason.
 async function saveSeparateBills(){
   const body=document.getElementById('bills-list');
   if(!body){alert('No bills list found');return}
   const ids=Array.from(body.querySelectorAll('.bill-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
   if(!ids.length){alert('Tick one or more bills first');return}
+  if(_bosCommissionMode()){
+    // Exactly what "Commission Bill Selected" asks, in the same order — the
+    // two must not offer different layouts for the same document.
+    const template=await pickCommissionTemplate();
+    if(template===null)return;
+    const invoiceNo=await pickCommissionInvoiceNo();
+    if(invoiceNo===null)return;
+    await downloadSeparatePdfs('bills_commission', ids, template, 'CommissionBills',
+                               withCommInvoiceNo({}, invoiceNo));
+    return;
+  }
   const template=await pickTemplate('agri-bill','Choose bill of supply format');
   if(template===null)return;
   await downloadSeparatePdfs('bills', ids, template, 'BillsOfSupply');
