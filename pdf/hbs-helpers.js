@@ -64,12 +64,25 @@ function registerHelpers() {
     formatDateForDisplay(val, (typeof fmt === 'string' && fmt) || 'dd/mm/yyyy'));
 
   // Short date used in the metadata grid (dd-Mon-yy): {{shortDate invoiceDate}}
+  //
+  // Goes through formatDateForDisplay, NOT `new Date(val)`. The dates that
+  // reach a template are display strings, and the usual one is dd/mm/yyyy —
+  // which JS parses as MONTH/day/year, so "19/08/2026" is month 19, an
+  // Invalid Date. That printed literally: the purchase invoice's supply line
+  // read "Dated: NaN-Invalid Date-aN" on every document (NaN from getDate(),
+  // "Invalid Date" from toLocaleDateString, "aN" from slicing "NaN").
+  // formatDateForDisplay already parses dd/mm/yyyy, ISO, Excel serials and
+  // Date objects, so this shares that one parser.
+  //
+  // Unparseable input falls through to formatDateForDisplay's own behaviour —
+  // the original string, which at least shows the operator the real value
+  // instead of three kinds of NaN.
   Handlebars.registerHelper('shortDate', (val) => {
-    const d = val ? new Date(val) : new Date();
-    const day = String(d.getDate()).padStart(2, '0');
-    const mon = d.toLocaleDateString('en-US', { month: 'short' });
-    const yr = String(d.getFullYear()).slice(-2);
-    return `${day}-${mon}-${yr}`;
+    const full = formatDateForDisplay(val == null || val === '' ? new Date() : val, 'dd-mmm-yyyy');
+    // dd-Mon-yyyy → dd-Mon-yy. Only trims when the parse actually produced
+    // that shape, so a passed-through raw string is never truncated.
+    const m = /^(\d{2}-[A-Za-z]{3}-)(\d{4})$/.exec(full);
+    return m ? m[1] + m[2].slice(-2) : full;
   });
 
   // Arithmetic for template-side sums (e.g. CGST+SGST total): {{inr (add a b)}}
