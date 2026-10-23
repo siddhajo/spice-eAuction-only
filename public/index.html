@@ -9337,7 +9337,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div class="fg"><label>Code (short alias)</label>
       <div style="position:relative">
         <input id="b-code" placeholder="e.g. RSH" style="text-transform:uppercase" autocomplete="off" onblur="bCheckCodeDup()">
-        <div id="b-code-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:240px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
+        <div id="b-code-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:380px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:13.5px"></div>
       </div>
       <div style="font-size:11px;color:var(--spice-text-hint);margin-top:4px">Short alias used in auction tags &amp; price files. Type a prefix (e.g. JPJ) to see existing codes.</div>
       <div id="b-code-warn" style="display:none"></div>
@@ -9727,7 +9727,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
            absolute-positioned panel sits flush under the input. -->
       <div style="position:relative">
         <input id="l-code" autocomplete="off" placeholder="Search code, buyer code or name">
-        <div id="l-code-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:240px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
+        <div id="l-code-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:380px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:13.5px"></div>
       </div>
     </div>
     <div class="fg"><label>Sale Type</label>
@@ -9760,7 +9760,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     </label>
     <div style="position:relative">
       <input id="bsb-code" autocomplete="off" placeholder="Search code, buyer code or name — e.g. JP">
-      <div id="bsb-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:240px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px"></div>
+      <div id="bsb-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;max-height:380px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:13.5px"></div>
     </div>
   </div>
   <!-- Preview of the resolved buyer record — read-only so the operator
@@ -31562,9 +31562,9 @@ function bWireCodeAutocomplete(){
       const ctxParts = [b.buyer1 || b.buyer, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
       const ctx = ctxParts.join(' · ');
       return '<div class="bc-row" data-code="'+escAttr(b.code)+'" data-idx="'+i+'" '+
-        'style="padding:6px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
+        'style="padding:11px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
         (i === activeIdx ? ';background:#ecfdf5' : '')+'">'+
-        '<span style="font-weight:700;color:#15803d;min-width:60px">'+escAttr(b.code)+'</span>'+
+        '<span style="font-weight:700;color:#15803d;min-width:66px">'+escAttr(b.code)+'</span>'+
         '<span style="flex:1;color:#444">'+escAttr(ctx)+'</span>'+
         '</div>';
     }).join('');
@@ -34703,7 +34703,7 @@ function _lotWireCodeAutocomplete(){
     // first — see _buyerMatch). Whitespace is ignored on both sides.
     const matches = _buyerMatch(codeEl.value, 50);
     if (!matches.length) {
-      ddl.innerHTML = '<div style="padding:8px 12px;color:#888;font-style:italic">No matches.</div>';
+      ddl.innerHTML = '<div style="padding:11px 12px;color:#888;font-style:italic">No matches.</div>';
       ddl.style.display = 'block';
       activeIdx = -1;
       return;
@@ -34717,9 +34717,9 @@ function _lotWireCodeAutocomplete(){
       const ctxParts = [b.buyer, b.buyer1, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
       const ctx = ctxParts.join(' · ');
       return '<div class="lc-row" data-code="'+escAttr(b.code)+'" data-idx="'+i+'" '+
-        'style="padding:6px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
+        'style="padding:11px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
         (i === activeIdx ? ';background:#ecfdf5' : '')+'">'+
-        '<span style="font-weight:700;color:#15803d;min-width:60px">'+escAttr(b.code)+'</span>'+
+        '<span style="font-weight:700;color:#15803d;min-width:66px">'+escAttr(b.code)+'</span>'+
         '<span style="flex:1;color:#444">'+escAttr(ctx)+'</span>'+
         '</div>';
     }).join('');
@@ -35248,7 +35248,7 @@ function _bsbWireAutocomplete(){
     // first — see _buyerMatch).
     const matches = _buyerMatch(codeEl.value, 50);
     if (!matches.length) {
-      ddl.innerHTML = '<div style="padding:8px 12px;color:#888;font-style:italic">No matches.</div>';
+      ddl.innerHTML = '<div style="padding:11px 12px;color:#888;font-style:italic">No matches.</div>';
       ddl.style.display = 'block';
       activeIdx = -1;
       return;
@@ -35257,9 +35257,9 @@ function _bsbWireAutocomplete(){
     ddl.innerHTML = matches.map((b, i) => {
       const ctxParts = [b.buyer, b.buyer1, b.sale ? '['+b.sale+']' : '', b.pla].filter(Boolean);
       return '<div class="bsb-row" data-code="'+escAttr(b.code)+'" data-idx="'+i+'" '+
-        'style="padding:6px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
+        'style="padding:11px 12px;cursor:pointer;border-bottom:1px solid #f1f1f1;display:flex;gap:10px;align-items:baseline'+
         (i === activeIdx ? ';background:#ecfdf5' : '')+'">'+
-        '<span style="font-weight:700;color:#15803d;min-width:60px">'+escAttr(b.code)+'</span>'+
+        '<span style="font-weight:700;color:#15803d;min-width:66px">'+escAttr(b.code)+'</span>'+
         '<span style="flex:1;color:#444">'+escAttr(ctxParts.join(' · '))+'</span>'+
         '</div>';
     }).join('');
