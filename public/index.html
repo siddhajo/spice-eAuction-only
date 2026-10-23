@@ -36308,28 +36308,32 @@ function renderPriceEntryGrid(){
   const bodyHtml = view.length
     ? rows
     : `<tr><td colspan="15" style="padding:20px;text-align:center;color:var(--text3);font-size:13px">No incomplete lots to show.${_anyHiddenComplete ? ' Completed rows are hidden — <a href="#" onclick="document.getElementById(\'pe-show-all\').checked=true;peToggleShowAll(true);return false" style="color:var(--green)">Show all</a>.' : ''} <a href="#" onclick="peClearFilters();return false" style="color:var(--green)">Clear filters</a></td></tr>`;
-  // Totals row — computed over the CURRENTLY VISIBLE (filtered) lots, so when
-  // any filter is active this reads as a subtotal for the shown rows. WD/NA
-  // lots carry no sale value, so they add to the lot count and Qty but not to
+  // Totals — computed over the CURRENTLY VISIBLE (filtered) lots, so when any
+  // filter is active this reads as a subtotal for the shown rows. WD/NA lots
+  // carry no sale value, so they add to the lot count and Qty but not to
   // Amount (their per-row amount is 0), matching the cells above.
-  let totQty = 0, totBags = 0, totAmt = 0;
-  for (const l of view) {
-    const codeUp = String(l.code || '').trim().toUpperCase();
-    const noSale = codeUp === 'WD' || codeUp === 'NA';
-    totBags += Number(l.bags) || 0;
-    totQty  += Number(l.qty)  || 0;
-    totAmt  += noSale ? 0 : (Number(l.qty) || 0) * (Number(l.price) || 0);
-  }
+  //
+  // The footer scrolled away with the rows, so on a long trade the operator
+  // priced blind. It now uses the SAME .dt-foot / .dt-foot-sel classes the
+  // Sales Invoices list uses — not a copy of their look, the actual classes —
+  // so the two screens cannot drift apart, and #pe-grid is already a scroll
+  // box with a sticky thead, which is all sticky:bottom needs.
   const isFiltered = view.length < _pe.lots.length;
   const totLabel = (isFiltered ? 'Filtered subtotal' : 'Total') +
     ` · ${view.length} lot${view.length === 1 ? '' : 's'}`;
-  const footHtml = view.length ? `<tfoot><tr style="border-top:2px solid var(--border);font-weight:700;background:var(--bg)">
+  const t = _peSumLots(view);
+  // The selected row is rendered EMPTY and hidden here, then filled by
+  // _peRenderSelTotals() as lots are ticked — same split the DataTable uses,
+  // so a tick never costs a full grid re-render.
+  const footHtml = view.length ? `<tfoot class="dt-foot">
+    <tr class="dt-foot-sel" hidden>${'<td></td>'.repeat(15)}</tr>
+    <tr class="dt-foot-all">
       <td></td>
-      <td colspan="4" style="padding:8px;text-align:left">${totLabel}</td>
-      <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peBags(totBags)}</td>
-      <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peFmt(totQty)}</td>
+      <td colspan="4" style="text-align:left"><span class="dt-all-tag">${esc(totLabel)}</span></td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums"><strong>${_peBags(t.bags)}</strong></td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums"><strong>${_peFmt(t.qty)}</strong></td>
       <td></td>
-      <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums">${_peFmt(totAmt)}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums"><strong>${_peFmt(t.amt)}</strong></td>
       <td colspan="6"></td>
     </tr></tfoot>` : '';
   grid.innerHTML = `<table class="pe-grid-table" style="width:100%;border-collapse:collapse;font-size:13px">
@@ -36982,6 +36986,50 @@ async function peSelectByLotNos(){
 }
 // Keep the action bar, count, and select-all tri-state in sync. The select-all
 // state reflects the VISIBLE (filtered) rows.
+// Bags / Qty / Amount over a set of lots. One function so the grand total and
+// the selected-rows subtotal can never compute the same column two ways —
+// WD/NA lots count toward lots and Qty but contribute 0 Amount.
+function _peSumLots(list){
+  let bags = 0, qty = 0, amt = 0;
+  for (const l of (list || [])) {
+    const codeUp = String(l.code || '').trim().toUpperCase();
+    const noSale = codeUp === 'WD' || codeUp === 'NA';
+    bags += Number(l.bags) || 0;
+    qty  += Number(l.qty)  || 0;
+    amt  += noSale ? 0 : (Number(l.qty) || 0) * (Number(l.price) || 0);
+  }
+  return { bags, qty, amt, lots: (list || []).length };
+}
+
+// Subtotal for the TICKED lots, in a second sticky row above the grand total.
+// Counts only lots that are BOTH ticked and currently visible: a filter can
+// hide a ticked lot, and a subtotal that silently included rows the operator
+// cannot see would not reconcile with anything on screen.
+function _peRenderSelTotals(){
+  const grid = document.getElementById('pe-grid'); if (!grid) return;
+  const table = grid.querySelector('.pe-grid-table'); if (!table) return;
+  const selRow = table.querySelector('tfoot .dt-foot-sel'); if (!selRow) return;
+  const visibleIds = Array.from(table.querySelectorAll('tbody tr[data-lotid]'))
+    .map(tr => Number(tr.getAttribute('data-lotid')));
+  const picked = visibleIds.filter(id => _pe.sel.has(id)).map(id => _pe.byId.get(id)).filter(Boolean);
+  if (!picked.length) { selRow.hidden = true; return; }
+  const t = _peSumLots(picked);
+  selRow.innerHTML = `<td></td>`
+    + `<td colspan="4" style="text-align:left"><span class="dt-sel-tag">SELECTED · ${t.lots} lot${t.lots === 1 ? '' : 's'}</span></td>`
+    + `<td style="text-align:right;font-variant-numeric:tabular-nums"><strong>${_peBags(t.bags)}</strong></td>`
+    + `<td style="text-align:right;font-variant-numeric:tabular-nums"><strong>${_peFmt(t.qty)}</strong></td>`
+    + `<td></td>`
+    + `<td style="text-align:right;font-variant-numeric:tabular-nums"><strong>${_peFmt(t.amt)}</strong></td>`
+    + `<td colspan="6"></td>`;
+  selRow.hidden = false;
+  // Both rows are sticky at the bottom, so this one is lifted clear of the
+  // grand total below it. Measured, not hard-coded — the grand total's height
+  // moves with the font size and with any column that wraps.
+  const allRow = table.querySelector('tfoot .dt-foot-all');
+  const lift = allRow ? allRow.offsetHeight : 0;
+  Array.from(selRow.cells).forEach(td => { td.style.bottom = lift + 'px'; });
+}
+
 function _peSyncSelectionUI(){
   const n = _pe.sel.size;
   const bar = document.getElementById('pe-action-bar');
@@ -36995,6 +37043,7 @@ function _peSyncSelectionUI(){
     all.checked = selectable > 0 && selVisible >= selectable;
     all.indeterminate = selVisible > 0 && selVisible < selectable;
   }
+  _peRenderSelTotals();
 }
 
 // Open the shared buyer-code modal for the ticked Price Entry lots. Reuses
