@@ -16,7 +16,7 @@ const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getSettingBool, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
         SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, planterDebitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, planterDebitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, pinAuctionRates, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 // Faint company-logo watermark shared by BOTH PDF engines — the debit notes
 // and the Commission Bill (Format 2) draw their own PDFKit layouts here rather
@@ -11206,11 +11206,16 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
   if (noSaleCode) { hasPrice = true; priceNum = 0; }
   // Clear mode — wipe the buyer-identity fields rather than set them.
   const clearBuyer = req.body.clear === true || String(req.body.clear) === 'true';
+  // Optional invoice HOLD, set from the same modal that picks the buyer:
+  // "don't raise the original for this lot yet". Absent → untouched, so
+  // every existing caller behaves exactly as before.
+  const hasHold = req.body.hold !== undefined && req.body.hold !== null && req.body.hold !== '';
+  const holdOn = hasHold && (req.body.hold === true || String(req.body.hold) === 'true' || req.body.hold === 1 || req.body.hold === '1');
   // Caller must update at least one writable field — either the
-  // buyer-code triple, price, or an explicit clear. Empty payload is a
-  // no-op that would silently do nothing, so we refuse it up front.
-  if (!code && !hasPrice && !clearBuyer) {
-    return res.status(400).json({ error: 'At least one of code or price is required' });
+  // buyer-code triple, price, the hold, or an explicit clear. Empty payload
+  // is a no-op that would silently do nothing, so we refuse it up front.
+  if (!code && !hasPrice && !clearBuyer && !hasHold) {
+    return res.status(400).json({ error: 'At least one of code, price or hold is required' });
   }
   const db = getDb();
   // Build an UPDATE that only touches fields the client passed in. The
@@ -11237,6 +11242,10 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
     if (req.body.sale !== undefined) { sets.push('sale = ?'); vals.push(sale); }
     if (hasPrice) { sets.push('price = ?'); vals.push(priceNum); }
   }
+  // The hold applies in BOTH modes: clearing a wrong buyer shouldn't silently
+  // release a lot the operator stopped on purpose, and setting one shouldn't
+  // either — so it is only ever written when the caller actually sent it.
+  if (hasHold) { sets.push('invoice_hold = ?'); vals.push(holdOn ? 1 : 0); }
   // Drop locked rows up-front so the chunked UPDATE below sees only
   // mutable ids. Skip-locked behaviour means a single locked lot in a
   // bulk action doesn't block the whole batch.
@@ -11300,6 +11309,42 @@ app.post('/api/lots/bulk-set-buyer', requireLotWrite, (req, res) => {
 // Body: { items: [ { id, price?, code? }, … ] }. An item must carry at least
 // one of price / code; anything else is dropped. Locked lots are skipped, not
 // refused, so one locked row cannot fail a 300-row import.
+// ── Stop / release an invoice on selected lots ───────────────────────
+// "Don't raise the original for this lot yet." Set from the Set Buyer Code
+// modal while pricing, and released from Price Entry when the goods are
+// ready — a dedicated route because releasing must not require re-picking a
+// buyer, which /bulk-set-buyer's validation would otherwise demand.
+//
+// A lot that is ALREADY invoiced cannot be stopped: the document exists, and
+// a flag that pretended otherwise would be read as "this is unbilled" by an
+// operator scanning the list. Those ids are reported back rather than
+// silently skipped.
+app.post('/api/lots/bulk-hold', requireLotWrite, (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: 'No lot ids provided' });
+  const hold = req.body.hold === true || String(req.body.hold) === 'true'
+            || req.body.hold === 1 || req.body.hold === '1';
+  const db = getDb();
+  const ph = ids.map(() => '?').join(',');
+  const invoiced = hold
+    ? db.all(`SELECT id, lot_no FROM lots WHERE id IN (${ph}) AND invo IS NOT NULL AND invo != ''`, ids)
+    : [];
+  const skip = new Set(invoiced.map(r => r.id));
+  const target = ids.filter(id => !skip.has(id));
+  if (target.length) {
+    for (let i = 0; i < target.length; i += 400) {
+      const chunk = target.slice(i, i + 400);
+      db.run(`UPDATE lots SET invoice_hold = ? WHERE id IN (${chunk.map(() => '?').join(',')})`,
+        [hold ? 1 : 0, ...chunk]);
+    }
+  }
+  res.json({
+    updated: target.length,
+    hold,
+    skippedInvoiced: invoiced.map(r => String(r.lot_no)),
+  });
+});
+
 app.post('/api/lots/bulk-price', requireLotWrite, (req, res) => {
   try {
     const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
@@ -11956,6 +12001,48 @@ app.get('/api/invoices', requireView, (req, res) => {
     r.alt_code = hit ? [...hit].filter(Boolean).join(', ') : '';
   }
 
+  // ── Stopped lots behind each invoice ───────────────────────────────
+  //
+  // A proforma whose lots are stopped must not offer its raise icon, and its
+  // row is tinted so the operator can see WHY nothing can be raised. The
+  // hold lives on the LOT while the icon is per INVOICE, so a proforma is
+  // "stopped" when any un-shipped lot under it is held — raising it would
+  // silently bill a subset the operator never agreed to.
+  //
+  // Same (auction_id, buyer, invo-column) linkage as alt_code above, with
+  // the same NULL discipline, and the same proforma_invo-vs-invo rule: a
+  // draft stamps proforma_invo and leaves invo empty.
+  const heldByKey = new Map();          // key(auction_id, buyer, col, invo) -> count
+  try {
+    for (const [aid, buyerSet] of altBuyersByAuction) {
+      for (const buyers of _chunk([...buyerSet], 400)) {
+        const found = db.all(
+          `SELECT buyer, invo, proforma_invo, COUNT(*) AS n FROM lots
+            WHERE auction_id = ? AND buyer IN (${buyers.map(() => '?').join(',')})
+              AND COALESCE(invoice_hold,0) = 1
+            GROUP BY buyer, invo, proforma_invo`,
+          [aid, ...buyers]
+        );
+        for (const f of found) {
+          if (f.buyer == null) continue;
+          for (const [col, val] of [['invo', f.invo], ['proforma_invo', f.proforma_invo]]) {
+            if (val == null || String(val).trim() === '') continue;
+            const k = _aspKey(aid, f.buyer, col, val);
+            heldByKey.set(k, (heldByKey.get(k) || 0) + Number(f.n || 0));
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[invoices] stopped-lot hydration failed:', e.message);
+  }
+  for (const r of rows) {
+    if (_altUnmatchable(r)) { r.held_lots = 0; continue; }
+    const col = Number(r.is_proforma) ? 'proforma_invo' : 'invo';
+    r.held_lots = heldByKey.get(_aspKey(r.auction_id, r.buyer, col, r.invo)) || 0;
+  }
+
+
   // Hydrate the resolved e-way bill distance per invoice. Resolution
   // order matches the Tally generator (so what the user sees in the
   // Sales tab is exactly what ships in the voucher):
@@ -12173,6 +12260,11 @@ app.post('/api/invoices/generate/:auctionId',
 
   // Raising the ORIGINAL over lots a draft already covers inherits that
   // draft's "no transport & insurance" — see proformaNoTIForLots().
+  // Freeze this trade's rates before the first invoice is built, so every
+  // later one — a leftover raised weeks on, a re-print — bills the same.
+  // Here rather than at the top of the route: a run that fails validation
+  // must not pin a rate the trade never charged.
+  pinAuctionRates(db, req.params.auctionId, cfg);
   const effNoTI = isProforma ? noTI
     : (noTI || proformaNoTIForLots(db, req.params.auctionId, buyerCode, lotNos));
   const invoice = buildSalesInvoice(db, req.params.auctionId, buyerCode, saleType, cfg, { noTI: effNoTI, lotNos, excludeInvoiced: true });
@@ -12509,6 +12601,7 @@ function invoiceGenerationPlan(db, cfg, auctionId, opts) {
     `SELECT DISTINCT l.buyer, b.sale as default_sale
      FROM lots l LEFT JOIN buyers b ON b.buyer = l.buyer
      WHERE l.auction_id = ? AND l.buyer IS NOT NULL AND l.buyer != '' AND l.amount > 0
+       AND COALESCE(l.invoice_hold,0) = 0
        AND ${uninvoicedExpr}
        ${saleClause}
      ORDER BY l.buyer`,   /* invoice numbers run in buyer-code ascending order */
@@ -12530,6 +12623,7 @@ function invoiceGenerationPlan(db, cfg, auctionId, opts) {
         WHERE l.auction_id = ? AND l.buyer = ? AND l.amount > 0
           AND (l.reserved IS NULL OR l.reserved = 0) AND COALESCE(l.godown,0) = 0
           AND (l.sale IS NULL OR l.sale = '' OR l.sale = ?)
+          AND COALESCE(l.invoice_hold,0) = 0
           AND ${uninvoicedExpr}
         ORDER BY l.lot_no`,
       [auctionId, row.buyer, useSaleType]
@@ -12627,6 +12721,11 @@ app.post('/api/invoices/generate-all/:auctionId',
   const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction.date, cfg);
 
   const isASPStateBulk = String(cfg.business_state || '').toUpperCase() === 'KERALA';
+  // Freeze this trade's rates before the first invoice is built, so every
+  // later one — a leftover raised weeks on, a re-print — bills the same.
+  // Here rather than at the top of the route: a run that fails validation
+  // must not pin a rate the trade never charged.
+  pinAuctionRates(db, req.params.auctionId, cfg);
   for (const item of plan.items) {
     const row = item;              // `row.buyer` below reads the plan item
     const useSaleType = item.sale;
@@ -12737,9 +12836,22 @@ app.post('/api/invoices/:id/raise-original', requireInvoiceWrite, (req, res) => 
     `SELECT lot_no FROM lots
       WHERE auction_id=? AND buyer=? AND proforma_invo=?
         AND (invo IS NULL OR invo='')
+        AND COALESCE(invoice_hold,0) = 0
       ORDER BY CAST(lot_no AS INTEGER), lot_no`,
     [pf.auction_id, pf.buyer, pf.invo]).map(r => String(r.lot_no));
-  if (!lotNos.length) return res.status(400).json({ error: 'No un-shipped lots remain for this proforma' });
+  if (!lotNos.length) {
+    // Separate the two reasons: "nothing left to ship" is routine, while
+    // "every remaining lot is held" is a thing the operator can undo, and
+    // saying so beats a message that reads like the draft is finished.
+    const heldLeft = db.get(
+      `SELECT COUNT(*) AS c FROM lots
+        WHERE auction_id=? AND buyer=? AND proforma_invo=?
+          AND (invo IS NULL OR invo='') AND COALESCE(invoice_hold,0) = 1`,
+      [pf.auction_id, pf.buyer, pf.invo]).c;
+    return res.status(400).json({ error: heldLeft
+      ? `Every remaining lot on this proforma is stopped (${heldLeft}). Release them in Price Entry to raise the original.`
+      : 'No un-shipped lots remain for this proforma' });
+  }
 
   const saleType = pf.sale;
   const invoice = buildSalesInvoice(db, pf.auction_id, pf.buyer, saleType, cfg,

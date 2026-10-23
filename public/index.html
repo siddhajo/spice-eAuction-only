@@ -2147,6 +2147,13 @@ tr.row-locked > td{background:#fffbeb !important;border-top:1px solid #fde68a}
 tr.row-locked:hover > td{background:#fef3c7 !important}
 /* Reserved lots — held, not booked. Bright-orange tint so they stand out
    clearly from booked (white) and locked (amber) rows in the lots list. */
+/* A STOPPED draft: at least one un-shipped lot on it is held back in Price
+   Entry, so no original can be raised. Amber like .row-locked (both mean
+   "deliberately not actionable yet") but with its own left rule, so the two
+   are told apart on a list that can show both. */
+tr.row-stopped > td{background:#fffbeb !important;border-top:1px solid #fcd34d}
+tr.row-stopped:hover > td{background:#fef3c7 !important}
+tr.row-stopped > td:first-child{box-shadow:inset 3px 0 0 #B45309}
 tr.row-reserved > td{background:#fed7aa !important;border-top:1px solid #f97316}
 tr.row-reserved:hover > td{background:#fdba74 !important}
 /* Godown-only entries — goods in store, never auctioned. Teal, so they read
@@ -9791,6 +9798,25 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <span style="margin-left:6px;font-weight:400;font-size:11px;color:var(--text3)">optional — blank = leave unchanged · tag only, never printed</span>
     </label>
     <input id="bsb-dummy" maxlength="40" autocomplete="off" placeholder="e.g. AX7" style="width:180px">
+  </div>
+  <!-- Stop the original invoice for these lots. The operator often knows at
+       pricing time that a lot must not be billed yet — goods not shipped, a
+       dispute, a buyer asking to wait. Before this the only way to hold one
+       back was to remember not to tick it, which a Generate All run defeats.
+       Unticking releases, which is why this box is also the RELEASE control
+       and the label reads as a state rather than an action. -->
+  <div class="fg" id="bsb-hold-row" style="margin-top:14px;padding:10px 12px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px">
+    <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;margin:0">
+      <input type="checkbox" id="bsb-hold" style="width:17px;height:17px;margin-top:1px;flex:none;accent-color:#B45309">
+      <span>
+        <span style="font-weight:600;color:#92400E">⏸ Don't raise the original invoice for these lots yet</span>
+        <span style="display:block;font-weight:400;font-size:11px;color:var(--text2);margin-top:3px;line-height:1.5">
+          Stopped lots are skipped by Generate All and by the ⚡ one-click run, and the
+          raise ⬆ icon is hidden on their draft in Sales Invoices. They stay stopped until
+          released — untick this box for the same lots to release them.
+        </span>
+      </span>
+    </label>
   </div>
   <div class="actions">
     <button class="btn btn-o" onclick="hideModal('bulk-setbuyer-modal')">Cancel</button>
@@ -35187,6 +35213,7 @@ async function openBulkSetBuyerModal(){
   // Split and dummy code are Price-Entry concepts — hide them on the Lots tab.
   const splitRow = document.getElementById('bsb-split-row'); if (splitRow) splitRow.style.display = 'none';
   const dummyRow = document.getElementById('bsb-dummy-row'); if (dummyRow) dummyRow.style.display = 'none';
+  const holdRow  = document.getElementById('bsb-hold-row');  if (holdRow)  holdRow.style.display  = 'none';
   _bsbRenderPreview();
   // Refresh the buyer master so newly-added codes show up.
   try {
@@ -35343,6 +35370,9 @@ async function applyBulkSetBuyer(){
         buyer:  _bsbSelected.buyer,
         buyer1: _bsbSelected.buyer1,
         sale:   _bsbSelected.sale,
+        // Always sent, both states — the box doubles as the release control,
+        // so an unticked box has to mean "release", not "leave as it was".
+        hold:   !!(document.getElementById('bsb-hold') || {}).checked,
       }),
     });
     const d = await r.json();
@@ -36241,11 +36271,21 @@ function renderPriceEntryGrid(){
     // Alert when this lot's seller and buyer are the SAME GSTIN.
     const gstClash = sameGstin(l.cr, l.buyer_gstin);
     const gstWarn = gstClash ? `<span title="Seller and Buyer have the same GSTIN" style="color:#dc2626;font-weight:700;margin-right:3px">⚠</span>` : '';
-    const buyerCodeCell = gstWarn + (l.buyer  ? esc(l.buyer)  : `<span style="color:var(--text3)">—</span>`);
+    const heldBadge = Number(l.invoice_hold) === 1
+      ? `<span title="Stopped — no original invoice will be raised for this lot until it is released" style="display:inline-block;margin-right:4px;padding:0 5px;border-radius:4px;background:#B45309;color:#fff;font-size:10px;font-weight:700;letter-spacing:.3px">⏸ STOPPED</span>`
+      : '';
+    const buyerCodeCell = heldBadge + gstWarn + (l.buyer  ? esc(l.buyer)  : `<span style="color:var(--text3)">—</span>`);
     const buyerNameCell = l.buyer1 ? esc(l.buyer1) : `<span style="color:var(--text3)">—</span>`;
-    const rowBg = gstClash ? '#fee2e2' : (pinned ? '#f0fdf4' : '');
+    // Stopped — the original invoice is held back for this lot. Amber, and
+    // BELOW the GSTIN clash in precedence: a clash is a thing to fix, a stop
+    // is a thing the operator chose, so the warning keeps the row when both
+    // are true. Ranked above `pinned`, which is only a scroll aid.
+    const held = Number(l.invoice_hold) === 1;
+    const rowBg = gstClash ? '#fee2e2' : (held ? '#FEF3C7' : (pinned ? '#f0fdf4' : ''));
     const rowStyle = [noSale ? 'opacity:.55' : '', rowBg ? `background:${rowBg}` : ''].filter(Boolean).join(';');
-    return `<tr data-lotid="${l.id}"${rowStyle ? ` style="${rowStyle}"` : ''}${gstClash ? ' title="⚠ Seller and Buyer have the same GSTIN"' : ''}>
+    const rowTitle = gstClash ? ' title="⚠ Seller and Buyer have the same GSTIN"'
+                   : (held ? ' title="⏸ Stopped — the original invoice is held back. Release it from Set Buyer Code."' : '');
+    return `<tr data-lotid="${l.id}"${rowStyle ? ` style="${rowStyle}"` : ''}${rowTitle}>
       <td style="padding:6px 4px;width:28px;text-align:center"><input type="checkbox" class="pe-cb" data-pesel="${l.id}" ${locked ? 'disabled' : ''} ${ticked ? 'checked' : ''} onchange="peToggleSel(${l.id}, this.checked)" style="width:15px;height:15px;cursor:pointer"></td>
       <td style="padding:6px 8px;white-space:nowrap;font-weight:600">${esc(l.lot_no)}</td>
       <td style="padding:6px 8px"><input type="text" maxlength="40" data-pedummy="${l.id}" value="${esc(l.dummy_code||'')}" placeholder="—" ${locked ? 'disabled title="Locked lot — edit via the Lots tab"' : ''} title="Alternate code — free-text tag for this lot; filter by it above" onchange="peDummySave(${l.id}, this.value)" style="width:96px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px${locked ? ';background:#f3f4f6;color:var(--text3)' : ''}"></td>
@@ -36975,6 +37015,17 @@ async function openPeSetBuyerModal(){
   const splitEl = document.getElementById('bsb-split'); if (splitEl) splitEl.value = '';
   const dummyRow = document.getElementById('bsb-dummy-row'); if (dummyRow) dummyRow.style.display = 'block';
   const dummyEl = document.getElementById('bsb-dummy'); if (dummyEl) dummyEl.value = '';
+  // Stop/release. Reflects what the PICKED lots currently are, so the box is
+  // the release control too: open it on stopped lots and it comes up ticked,
+  // untick + Apply releases them. Ticked only when EVERY picked lot is
+  // stopped — on a mixed selection an unticked box means "Apply makes them
+  // all normal", which is the honest reading of what will happen.
+  const holdRow = document.getElementById('bsb-hold-row'); if (holdRow) holdRow.style.display = 'block';
+  const holdEl = document.getElementById('bsb-hold');
+  if (holdEl) {
+    const picked = ids.map(id => _pe.byId.get(id)).filter(Boolean);
+    holdEl.checked = picked.length > 0 && picked.every(l => Number(l.invoice_hold) === 1);
+  }
   _bsbRenderPreview();
   // Refresh the buyer master so newly-added codes show up (same as the
   // Lots-tab opener).
@@ -37459,6 +37510,9 @@ async function loadInvoices(opts){
 
   DataTable.mount('invoices-list', d, {
     noSearch: true,
+    // Stopped drafts are tinted so the operator can see at a glance why a row
+    // offers no ⬆ — without this the missing icon looks like a bug.
+    rowClass: (row) => (row && Number(row.held_lots) > 0) ? 'row-stopped' : '',
     // Ticking rows adds a green subtotal row above the grand total, so the
     // user can total an arbitrary set of invoices (one buyer, one lorry, the
     // ones about to be printed) without filtering the list down to them.
@@ -37664,6 +37718,15 @@ async function loadInvoices(opts){
 // proforma rows of the Sales Invoice list. Kept as one function so the live
 // and already-raised states can never drift apart.
 function raiseOriginalBtn(i){
+  // Stopped: at least one un-shipped lot on this draft is held in Price
+  // Entry. The icon is replaced rather than merely disabled, because a
+  // greyed ⬆ reads as "already raised" — which is the one other state this
+  // button has. The server refuses the raise too; this is the signpost, not
+  // the lock.
+  if (Number(i.held_lots) > 0) {
+    const n = Number(i.held_lots);
+    return `<span class="icon-btn-inline" title="Stopped — ${n} lot${n === 1 ? '' : 's'} on this draft ${n === 1 ? 'is' : 'are'} held back in Price Entry. Release ${n === 1 ? 'it' : 'them'} there to raise the original." style="color:#B45309;font-weight:700;flex:none;cursor:default">&#9208;</span>`;
+  }
   const isRaised = !!(i.raised_invo && String(i.raised_invo).trim() !== '');
   if (isRaised) {
     return `<button class="icon-btn icon-btn-inline" title="Already raised as ${esc(i.raised_invo)}" style="opacity:.35;cursor:not-allowed;flex:none" disabled>&#11014;</button>`;
@@ -46519,13 +46582,37 @@ async function loadRegisterDefault(){
       `<option value="${a.id}">${esc(a.ano || ('#'+a.id))} — ${esc(a.date || '')}</option>`);
     sel.innerHTML = '<option value="">— All auctions —</option>' + opts.join('');
   }
-  // Default date range = current month (used when "All auctions" is picked).
-  const today = new Date().toISOString().slice(0,10);
-  const first = today.slice(0,8) + '01';
+  // Default date range = FY start → today (used when "All auctions" is picked).
+  //
+  // From was the first of the CURRENT MONTH, which is the wrong window for
+  // every register here: these are season documents, read against the
+  // financial year, so a default of "this month" silently hid everything
+  // before the 1st and the operator had to widen the range on every visit.
+  // The FY start is Settings → Season / Financial Year → "FY Start Date"
+  // (`season_start`); when it is blank the old first-of-month default stands,
+  // since an empty From would list every trade ever recorded.
+  //
+  // istToday(), not toISOString() — the latter is UTC whatever the clock is
+  // pinned to, so before 05:30 IST it dates the range to yesterday. See
+  // ist.js and the fmtIst family.
+  const today = _regToday();
+  const cfg = window._CCFG || {};
+  const fyStart = String(cfg.season_start || '').trim();
+  const first = /^\d{4}-\d{2}-\d{2}$/.test(fyStart) ? fyStart : (today.slice(0,8) + '01');
   const f = document.getElementById('reg-from'), t = document.getElementById('reg-to');
   if (f && !f.value) f.value = first;
   if (t && !t.value) t.value = today;
   onRegTypeChange();
+}
+// Today's date in IST as YYYY-MM-DD. The browser's own clock may be in any
+// zone (a laptop still on UTC, a phone roaming); the registers are read
+// against the Indian business day, so the default range has to be too.
+function _regToday(){
+  // _istSplit gives the raw IST calendar parts. NOT fmtIst() — that renders
+  // in the operator's date_format, so reverse-parsing it would read
+  // "10/23/2026" under mm/dd/yyyy as day 10 of month 23.
+  const p = (typeof _istSplit === 'function') ? _istSplit(new Date()) : null;
+  return p ? `${p.y}-${p.m}-${p.d}` : new Date().toISOString().slice(0, 10);
 }
 // The three per-party "individual" registers (Pooler / Sellers / Merchants)
 // are date-range + optional-party, not auction-scoped.

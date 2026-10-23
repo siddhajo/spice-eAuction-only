@@ -1765,6 +1765,14 @@ async function renderTharaiListPdf(db, auctionId, cfg, extra) {
     for (let i = from; i < from + n; i++) {
       const r = side.rows[i];
       const ty = yy + (ROW_H - FS) / 2;
+      // A code carrying a lot stopped in Price Entry gets an amber band. The
+      // figures are untouched — a stopped lot was still sold and still
+      // arrived, so it stays inside its side's totals and the bag
+      // reconciliation still foots. Drawn BEFORE the text, and the same tint
+      // the spreadsheet uses, so the two renderings read alike.
+      if (r.held) {
+        doc.rect(x, yy, tableW, ROW_H).fillAndStroke('#FEF3C7', '#FEF3C7');
+      }
       doc.fillColor('#000')
          .text(String(r.code), cx[0] + 3, ty, { width: w[0] - 6, lineBreak: false })
          .text(fmtQty(r.qty),  cx[1] + 3, ty, { width: w[1] - 6, align: 'right', lineBreak: false })
@@ -1820,6 +1828,9 @@ async function renderTharaiListPdf(db, auctionId, cfg, extra) {
     ['INTER', inter.bags], ['LOCAL', local.bags], ['WD', d.tally.W.bags],
   ];
   if (d.tally.other.bags) lines.push(['UNCLASSIFIED', d.tally.other.bags]);
+  // Memo line — see the spreadsheet's box for why STOPPED sits outside the
+  // INTER/LOCAL/WD arithmetic that foots to TOTAL.
+  if (d.stopped && d.stopped.bags) lines.push(['STOPPED', d.stopped.bags]);
 
   const LINE_H = 18;
   const boxH = 20 + lines.length * LINE_H + 22;

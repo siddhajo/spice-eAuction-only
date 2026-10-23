@@ -393,7 +393,73 @@ function calculateTCS(invoiceAmount, priorSales, cfg) {
  * Aggregates lots by buyer for a given auction
  * Sale type filter is optional — if lots don't have sale set yet, filter by buyer only
  */
+// ── Per-trade rate pinning ───────────────────────────────────────────
+//
+// Which settings are frozen onto a trade the first time it is billed. A rate
+// in company_settings is ONE current value, so editing it re-priced closed
+// trades: gunny moved 150 → 200 between trade 20 and 21, and the two invoices
+// still unraised in trade 20 then billed gunny at 200 while their 90 siblings
+// carried 150.
+//
+// Only `gunny_rate` is pinned — the rate actually reported. Adding another is
+// one line here plus the matching pin at generation; deliberately NOT applied
+// to GST, where a statutory change SHOULD reach an invoice raised after it.
+const PINNED_RATE_KEYS = ['gunny_rate'];
+
+/**
+ * cfg with this trade's pinned rates overlaid.
+ *
+ * Read-only and allocation-free when nothing is pinned, because it sits in
+ * front of EVERY buildSalesInvoice call — previews and re-prints included,
+ * which is the point: a re-print has to reproduce the invoice that was
+ * stored, not re-price it at today's rate.
+ */
+function auctionRateCfg(db, auctionId, cfg) {
+  const aid = Number(auctionId);
+  if (!db || !Number.isFinite(aid) || aid <= 0) return cfg;
+  let rows;
+  try {
+    rows = db.all(
+      `SELECT key, value FROM auction_rates
+        WHERE auction_id = ? AND key IN (${PINNED_RATE_KEYS.map(() => '?').join(',')})`,
+      [aid, ...PINNED_RATE_KEYS]
+    );
+  } catch (_) {
+    return cfg;   // table absent on a part-migrated DB — fall back to live cfg
+  }
+  if (!rows || !rows.length) return cfg;
+  const out = { ...(cfg || {}) };
+  for (const r of rows) {
+    if (r && r.key != null && r.value !== null && r.value !== '') out[r.key] = r.value;
+  }
+  return out;
+}
+
+/**
+ * Freeze this trade's rates, once. Called where invoices are CREATED, never
+ * where they are previewed or re-printed — a preview must not decide what a
+ * trade bills. INSERT OR IGNORE, so the first generation wins and every
+ * later one is a no-op.
+ */
+function pinAuctionRates(db, auctionId, cfg) {
+  const aid = Number(auctionId);
+  if (!db || !Number.isFinite(aid) || aid <= 0) return;
+  for (const key of PINNED_RATE_KEYS) {
+    const v = cfg ? cfg[key] : undefined;
+    if (v === undefined || v === null || String(v).trim() === '') continue;
+    try {
+      db.run('INSERT OR IGNORE INTO auction_rates (auction_id, key, value) VALUES (?,?,?)',
+        [aid, key, String(v)]);
+    } catch (_) { /* never block a generation on the pin */ }
+  }
+}
+
 function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
+  // Rates frozen to this trade win over the live setting. Applied HERE rather
+  // than at the 12 call sites so a re-print, a leftover invoice and a
+  // raise-original all price identically — and so a future caller cannot
+  // forget it.
+  cfg = auctionRateCfg(db, auctionId, cfg);
   // Per-invoice "No Transport & Insurance" switch. When true, this whole
   // invoice carries no transport/insurance — both come out 0 (and so drop
   // out of the PDF + Tally via their >0 guards). Set per invoice from the
@@ -418,6 +484,15 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
     lotFilter = ` AND lot_no IN (${lotNos.map(() => '?').join(',')})`;
     params.push(...lotNos);
   }
+  // HOLD guard. A lot the operator stopped in Price Entry is never billed by
+  // a generation run — the whole point of the hold, and hiding the raise icon
+  // alone would leave Generate All free to raise it anyway.
+  //
+  // Keyed off the SAME excludeInvoiced flag that marks a caller as a
+  // generator. Re-print and preview paths don't pass it, so holding a lot can
+  // never retro-edit an invoice already raised: the document keeps the lots
+  // it was built from.
+  const holdFilter = (opts && opts.excludeInvoiced) ? ` AND COALESCE(invoice_hold,0) = 0` : '';
   // Double-invoice guard (opt-in). Generation callers pass excludeInvoiced so
   // a lot that already carries a sales invoice can't be pulled onto a second
   // one. State-aware, mirroring the eligible-buyers rule so it never hides a
@@ -438,7 +513,7 @@ function buildSalesInvoice(db, auctionId, buyerCode, saleType, cfg, opts) {
     `SELECT * FROM lots WHERE auction_id = ? AND buyer = ? AND amount > 0
      AND (reserved IS NULL OR reserved = 0)
      AND COALESCE(godown,0) = 0
-     AND (sale IS NULL OR sale = '' OR sale = ?)${lotFilter}${invoFilter} ORDER BY lot_no`,
+     AND (sale IS NULL OR sale = '' OR sale = ?)${lotFilter}${invoFilter}${holdFilter} ORDER BY lot_no`,
     params
   );
   
@@ -2722,6 +2797,8 @@ function listRegisterParties(db, opts = {}) {
 }
 
 module.exports = {
+  auctionRateCfg, pinAuctionRates, PINNED_RATE_KEYS,
+
   calculateLot,
   calculateTDS,
   calculateTCS,

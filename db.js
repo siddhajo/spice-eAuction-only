@@ -631,6 +631,32 @@ async function initDb() {
     PRIMARY KEY (from_pin, to_pin)
   )`);
 
+  // ── AUCTION RATES (per-trade snapshot of a rate in force) ─────
+  //
+  // A rate lives in company_settings as ONE current value, so changing it
+  // changed it for every trade — including closed ones. The reported case:
+  // gunny was ₹150 while trade 20 was billed, two invoices were left
+  // unraised, the rate moved to ₹200 for trade 21, and those two leftovers
+  // then billed gunny at 200 while their 90 siblings carried 150. One trade,
+  // two rates, and the register no longer footed.
+  //
+  // So a rate is PINNED to the trade the first time an invoice is generated
+  // for it (see pinAuctionRates), and every later build — a leftover invoice,
+  // a re-print, a raise-original — reads the pin instead of the live setting.
+  // The invariant: every invoice in one trade bills that rate identically,
+  // whatever Settings says later.
+  //
+  // Key/value rather than a column per rate: only `gunny_rate` is pinned
+  // today (the one reported), and pinning another is then one line in
+  // PINNED_RATE_KEYS with no migration.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS auction_rates (
+    auction_id INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    pinned_at TEXT DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (auction_id, key)
+  )`);
+
   // ── LOT ALLOCATIONS (per-trade per-branch lot-number ranges) ──
   // Each row reserves a contiguous range of lot numbers (e.g. 001-080)
   // for one branch within one trade. The Lot Entry workflow validates
@@ -1453,6 +1479,33 @@ async function initDb() {
     'ALTER TABLE bills ADD COLUMN lot_id INTEGER',
     "ALTER TABLE debit_notes_planter ADD COLUMN lot_no TEXT DEFAULT ''",
     'ALTER TABLE debit_notes_planter ADD COLUMN lot_id INTEGER',
+    // ── Invoice HOLD ("stopped") — set per lot in Price Entry ─────
+    // The operator knows at pricing time that a lot must not be billed yet
+    // (goods not shipped, a dispute, a buyer asking to wait). Before this
+    // the only way to hold one back was to remember not to tick it, which a
+    // Generate All run defeats. A held lot is skipped by EVERY path that
+    // raises an original, and the hold is cleared from the same screen that
+    // set it. 0 = normal, 1 = held, so every existing lot is normal.
+    "ALTER TABLE lots ADD COLUMN invoice_hold INTEGER DEFAULT 0",
+    // Backfill auction_rates for trades ALREADY billed, so a leftover invoice
+    // raised after the setting moved still bills the rate its siblings did.
+    // Without this the pin only protects trades billed from now on, and the
+    // very case that prompted it — two unraised invoices in a closed trade —
+    // would still come out at the new rate.
+    //
+    // The rate is read back off the FIRST invoice of the trade
+    // (gunny / bags), not an average across them: on a trade the bug has
+    // already split, an average is a number that was never charged to
+    // anyone, while the first invoice is the rate that was in force when
+    // billing started. Guarded with bag > 0 AND gunny > 0 so a
+    // no-gunny trade pins nothing and keeps following the live setting.
+    // OR IGNORE: a trade pinned at generation time is never overwritten.
+    `INSERT OR IGNORE INTO auction_rates (auction_id, key, value)
+     SELECT i.auction_id, 'gunny_rate', CAST(ROUND(i.gunny * 1.0 / i.bag, 2) AS TEXT)
+       FROM invoices i
+      WHERE i.auction_id IS NOT NULL AND i.bag > 0 AND i.gunny > 0
+        AND i.id = (SELECT MIN(i2.id) FROM invoices i2
+                     WHERE i2.auction_id = i.auction_id AND i2.bag > 0 AND i2.gunny > 0)`,
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

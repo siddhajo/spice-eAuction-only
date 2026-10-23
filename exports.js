@@ -257,6 +257,21 @@ async function createExcelBuffer(sheetName, columns, rows, opts) {
       });
       dataRow.height = rowH(18);
     }
+    // `_tintKeys` marks NAMED CELLS without changing what they say — the
+    // Tharai List uses it for buyer codes carrying a stopped lot. Same
+    // per-column shape as `_subtotalKeys` and for the same reason: the two
+    // sides are independent blocks, so a whole-row fill would mark the
+    // unrelated buyer sitting opposite. Amber, not red: a stopped invoice is
+    // a deliberate state the operator chose, not an error.
+    const tintKeys = rowObj && rowObj._tintKeys;
+    if (Array.isArray(tintKeys) && tintKeys.length) {
+      const wanted = new Set(tintKeys);
+      columns.forEach((c, i) => {
+        if (!wanted.has(c.key)) return;
+        dataRow.getCell(i + 1).fill =
+          { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+      });
+    }
     return dataRow;
   }
 
@@ -718,29 +733,42 @@ function tharaiListData(db, auctionId, opts) {
             UPPER(TRIM(COALESCE(dummy_code,''))) AS dummy,
             UPPER(TRIM(COALESCE(sale,'')))       AS sale,
             COALESCE(bags,0)                     AS bags,
-            COALESCE(qty,0)                      AS qty
+            COALESCE(qty,0)                      AS qty,
+            COALESCE(invoice_hold,0)             AS held
        FROM lots WHERE auction_id = ?`, [auctionId]
   );
   const sides = { I: new Map(), L: new Map() };
   const tally = { I: { bags: 0, qty: 0 }, L: { bags: 0, qty: 0 },
                   W: { bags: 0, qty: 0 }, other: { bags: 0, qty: 0 } };
+  // Lots stopped in Price Entry. Counted SEPARATELY and never subtracted from
+  // a side: a stopped lot was still sold and still arrived, so removing it
+  // would break the reconciliation this sheet exists to prove
+  // (INTER + LOCAL + WD == the trade's bags). It is an annotation on the
+  // sheet, not a different set of rows.
+  const stopped = { bags: 0, qty: 0, lots: 0 };
   for (const r of rows) {
     const bags = Number(r.bags) || 0, qty = Number(r.qty) || 0;
+    const held = Number(r.held) === 1;
     const bucket = (r.sale === 'I' || r.sale === 'L') ? r.sale
                  : (r.sale === 'W' ? 'W' : 'other');
     tally[bucket].bags += bags;
     tally[bucket].qty  += qty;
+    if (held) { stopped.bags += bags; stopped.qty += qty; stopped.lots += 1; }
     if (bucket !== 'I' && bucket !== 'L') continue;
     const key = (byDummy ? r.dummy : r.code) || '—';
-    const g = sides[bucket].get(key) || { code: key, bags: 0, qty: 0 };
+    const g = sides[bucket].get(key) || { code: key, bags: 0, qty: 0, held: 0 };
     g.bags += bags; g.qty += qty;
+    // A code row is marked when ANY of its lots is stopped — a part-stopped
+    // buyer is exactly the one worth seeing, and marking only fully-stopped
+    // codes would hide it.
+    if (held) g.held += 1;
     sides[bucket].set(key, g);
   }
   const order = (m) => [...m.values()].sort(
     (a, b) => (b.bags - a.bags) || String(a.code).localeCompare(String(b.code)));
   const t = tally;
   return {
-    inter: order(sides.I), local: order(sides.L), tally,
+    inter: order(sides.I), local: order(sides.L), tally, stopped,
     // What the code column is, so both renderers label it the same way and
     // nobody has to guess which basis a printed sheet was built on.
     byDummy, codeLabel: byDummy ? 'Alt' : 'Buyer',
@@ -796,16 +824,20 @@ async function exportTharaiList(db, auctionId, cfg, state, extra) {
   for (let i = 0; i < n; i++) {
     const row = {};
     const subKeys = [];
+    const tintKeys = [];
     for (const [side, p] of [[inter, 'i_'], [local, 'l_']]) {
       if (i < side.rows.length) {
         const r = side.rows[i];
         row[p + 'buyer'] = r.code; row[p + 'qty'] = r.qty; row[p + 'bags'] = r.bags;
+        // Stopped lots sit under this code — tint its three cells.
+        if (r.held) tintKeys.push(p + 'buyer', p + 'qty', p + 'bags');
       } else if (i === side.rows.length) {
         row[p + 'buyer'] = side.label; row[p + 'qty'] = side.qty; row[p + 'bags'] = side.bags;
         subKeys.push(p + 'buyer', p + 'qty', p + 'bags');
       }
     }
     if (subKeys.length) row._subtotalKeys = subKeys;
+    if (tintKeys.length) row._tintKeys = tintKeys;
     rows.push(row);
   }
 
@@ -827,6 +859,11 @@ async function exportTharaiList(db, auctionId, cfg, state, extra) {
   // the line reads "0" on every healthy trade. Same rule as the PDF's box.
   const lines = [['INTER', inter.bags], ['LOCAL', local.bags], ['WD', d.tally.W.bags]];
   if (d.tally.other.bags) lines.push(['UNCLASSIFIED', d.tally.other.bags]);
+  // STOPPED is a MEMO line, deliberately listed after WD and outside the
+  // INTER/LOCAL/WD arithmetic: those three foot to TOTAL, and a stopped lot
+  // is already counted inside whichever of them it belongs to. Listed only
+  // when there is one, so a healthy trade doesn't carry a permanent "0".
+  if (d.stopped && d.stopped.bags) lines.push(['STOPPED', d.stopped.bags]);
 
   return createExcelBuffer('Tharai List', cols, rows, {
     db, title: 'Tharai List', metaLines: auctionMeta(db, auctionId),
