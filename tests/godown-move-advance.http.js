@@ -106,9 +106,16 @@ const stockOf = async (lotNo) => {
   const moved = r.d.lot;
   check('an ordinary auction lot is created in the destination trade',
         moved && moved.lot_no === '007' && Number(moved.auction_id) === 2 && !Number(moved.godown), moved);
-  check('carrying the quantity released', moved && Number(moved.qty) === 100 && Number(moved.bags) === 10, moved);
-  check('and the install\'s sample weight, like a hand-entered lot',
-        moved && Number(moved.sample_wt) === 0.5 && Number(moved.gross_wt) === 100.5, moved);
+  // The released figure is the weight LEAVING THE GODOWN, so it is the new
+  // lot's GROSS and the sample comes OUT of it: move 100 → gross 100,
+  // sample 0.5, net 99.5. It used to read the figure as the net and add the
+  // sample on top (gross 100.5), which invented 0.5 kg that never left the
+  // store — the destination lot and the stock it came from disagreed by one
+  // sample on every move. Changed 2026-10-26 at the operator's description.
+  check('the released weight becomes the lot\'s GROSS',
+        moved && Number(moved.gross_wt) === 100 && Number(moved.bags) === 10, moved);
+  check('…with the install\'s sample drawn OUT of it, not added on top',
+        moved && Number(moved.sample_wt) === 0.5 && Number(moved.qty) === 99.5, moved);
   check('the seller travels with it', moved && moved.name === 'RAVI PLANTER' && Number(moved.trader_id) === 1, moved);
 
   s = await stockOf('G001');

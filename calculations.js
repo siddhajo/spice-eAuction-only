@@ -1711,17 +1711,31 @@ function getAdvanceBankPaymentData(db, auctionId, cfg, opts) {
   const sellerKeySql = SELLER_KEY_SQL('l');
   // One row per advanced lot — the grouping is done in JS because it keys on
   // the RESOLVED destination account, which SQL cannot see.
+  // GODOWN mode pays the advances sitting against STORED STOCK instead of a
+  // trade's lots. Same file, same bank format, same seller resolution — the
+  // only difference is which rows are in scope, because stored stock carries
+  // no trade (auction_id NULL on both the lot and its advance) and so cannot
+  // be reached by the per-trade scoping below.
+  //
+  // Deliberately one function rather than a parallel copy: the account
+  // resolution, the seller-master join and the bank layout are the parts that
+  // matter and must not drift between the two files the office hands the bank.
+  const godownMode = !!opts.godown;
+  const scopeSql = godownMode
+    ? `COALESCE(l.godown,0) = 1 AND l.auction_id IS NULL`
+    : `la.auction_id = ? AND l.auction_id = ?`;
+  const scopeParams = godownMode ? [] : [auctionId, auctionId];
   let rows = db.all(
     `SELECT ${sellerKeySql} AS seller_key, l.name, l.cr,
             l.trader_id AS lot_trader_id, TRIM(COALESCE(l.user_id,'')) AS user_id,
             l.lot_no, la.advance AS advance, la.bank_id AS adv_bank_id
        FROM lot_advances la JOIN lots l ON l.id = la.lot_id
-      WHERE la.auction_id = ? AND l.auction_id = ?
+      WHERE ${scopeSql}
         AND la.advance > 0
         AND (l.paid IS NULL OR l.paid = '')
         AND l.paid_at IS NULL
       ORDER BY l.name, CAST(l.lot_no AS INTEGER), l.lot_no`,
-    [auctionId, auctionId]) || [];
+    scopeParams) || [];
 
   if (sellerKeyFilter) {
     rows = rows.filter(r => sellerKeyFilter.has(String(r.seller_key || '').trim().toUpperCase()));
@@ -2495,17 +2509,34 @@ function getGodownRegister(db, opts = {}) {
   // as stock is released into auctions (see godown_movements in db.js). The
   // received figure is the balance plus everything that has left, so a sheet
   // that reads Received − Moved = Balance reconciles on every line.
-  let q = `SELECT a.ano AS tno, a.date AS date, l.created_at AS received,
+  // NO trade columns and no JOIN to auctions. Stored stock is not tied to a
+  // trade (a godown row carries auction_id NULL), so a JOIN would drop every
+  // untied entry and a TNO column would print blank down the sheet.
+  //
+  // ADVANCE is the money already paid against the stock still in store — the
+  // reason an operator reads this sheet next to the bank file. It comes from
+  // lot_advances keyed on the godown row, the same store the lot-wise
+  // Payments screen writes.
+  let q = `SELECT l.created_at AS received,
       l.lot_no AS lot, l.branch AS branch, l.name AS name, l.ppla AS place,
       l.tel AS phone, l.grade AS grade, l.bags AS bag, l.qty AS qty,
       l.gross_wt AS gross_wt, l.trader_id AS trader_id,
       (SELECT COALESCE(SUM(m.bags),0) FROM godown_movements m WHERE m.src_lot_id = l.id) AS moved_bag,
-      (SELECT COALESCE(SUM(m.qty), 0) FROM godown_movements m WHERE m.src_lot_id = l.id) AS moved_qty
-    FROM lots l JOIN auctions a ON a.id = l.auction_id
+      (SELECT COALESCE(SUM(m.qty), 0) FROM godown_movements m WHERE m.src_lot_id = l.id) AS moved_qty,
+      (SELECT COALESCE(adv.advance,0) FROM lot_advances adv WHERE adv.lot_id = l.id) AS advance
+    FROM lots l
     WHERE COALESCE(l.godown,0) = 1`;
   const params = [];
-  if (opts.auctionId) { q += ' AND l.auction_id = ?'; params.push(opts.auctionId); }
-  else if (opts.from && opts.to) { q += ' AND a.date BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
+  // The date window is the entry's OWN received date. It used to be the
+  // trade's date, which an untied entry does not have — and which was the
+  // wrong date anyway: goods arrive on the day they arrive, not on the day of
+  // whatever trade happened to be open. date() strips the time component so a
+  // stamp of "2026-10-26 14:05:00" still falls inside a to-date of 2026-10-26.
+  // opts.auctionId is deliberately IGNORED: stored stock carries no trade, so
+  // scoping this sheet by one would return nothing (or, for a legacy row that
+  // still carries a trade, an arbitrary subset). The window is always the
+  // entry's own received date.
+  if (opts.from && opts.to) { q += ' AND date(l.created_at) BETWEEN ? AND ?'; params.push(opts.from, opts.to); }
   // Namesake planters: the identity wins when the picker committed one. An
   // EMPTY traderId is a real pick — the rows carrying no seller master.
   if (opts.traderId !== undefined && opts.traderId !== null) {
@@ -2518,7 +2549,7 @@ function getGodownRegister(db, opts = {}) {
   // Default is EVERY entry, so the sheet reconciles over the period. `openOnly`
   // narrows it to what is still physically in store.
   if (opts.openOnly) q += ' AND (COALESCE(l.qty,0) > 0 OR COALESCE(l.bags,0) > 0)';
-  q += ' ORDER BY a.ano, l.branch, l.lot_no';
+  q += ' ORDER BY l.branch, l.lot_no';
   const rows = db.all(q, params);
   return rows.map(r => {
     const bag = Number(r.bag) || 0, qty = Number(r.qty) || 0;
@@ -2526,9 +2557,11 @@ function getGodownRegister(db, opts = {}) {
     return {
       ...r,
       bag, qty, moved_bag: movedBag, moved_qty: movedQty,
+      advance: Math.round((Number(r.advance) || 0) * 100) / 100,
       recd_bag: bag + movedBag,
       recd_qty: Math.round((qty + movedQty) * 1000) / 1000,
-      date: _ddmmyyyy(r.date),
+      // No `date` — that was the TRADE's date, and stored stock has no trade.
+      // RECEIVED (below) is the date that means something here.
       // created_at is a local datetime string ("2026-10-11 09:14:02") — the
       // register shows the date half only.
       received: _ddmmyyyy(String(r.received || '').split(' ')[0]),
@@ -2567,6 +2600,57 @@ function getSalesRegister(db, opts = {}) {
   q += ' ORDER BY i.state, i.ano, i.date, i.sale, i.invo';
   const rows = db.all(q, params);
   return rows.map(r => ({ ...r, date: _ddmmyyyy(r.date) }));
+}
+
+/**
+ * Pending Sales Invoice Register — proforma drafts still awaiting their
+ * original, ACROSS ALL TRADES.
+ *
+ * The question it answers is "what have we quoted but not yet billed?", and
+ * that is never a one-trade question: drafts accumulate across trades and the
+ * oldest are the ones worth chasing. So this reads by DATE RANGE by default,
+ * the way the per-party registers do, rather than per trade — though an
+ * explicit trade still narrows it when someone wants just that one.
+ *
+ * PENDING is the same test the Sales Invoices list's "Pending" filter uses:
+ * a proforma (is_proforma=1) with no original raised against it yet
+ * (raised_invo blank). A draft that HAS been raised is finished business and
+ * belongs in the ordinary Sales Register.
+ *
+ * AGE (days since the draft's date) is the column this exists for — it is
+ * what turns a list into a worklist. Computed in SQL off the IST clock
+ * (ist.js pins the process), so it matches the dates printed beside it.
+ */
+function getPendingSalesRegister(db, opts = {}) {
+  let q = `SELECT i.state AS state, i.ano AS tno, i.date AS date, i.sale AS sale,
+      i.invo AS invo, i.buyer1 AS tradername, i.buyer AS bidder,
+      i.bag AS bag, i.qty AS qty, i.amount AS amount,
+      i.pava_hc AS lorry, i.gunny AS gunny, i.igst AS igst, i.cgst AS cgst,
+      i.sgst AS sgst, i.ins AS ins, i.tot AS invamt,
+      CAST(julianday('now','localtime') - julianday(i.date) AS INTEGER) AS age_days
+    FROM invoices i`;
+  const params = [];
+  // The whole point: drafts with no original raised against them.
+  const where = ['COALESCE(i.is_proforma,0) = 1', "TRIM(COALESCE(i.raised_invo,'')) = ''"];
+  if (opts.auctionId) {
+    const a = db.get('SELECT id, ano FROM auctions WHERE id = ?', [opts.auctionId]);
+    if (a) { where.push('(i.auction_id = ? OR i.ano = ?)'); params.push(a.id, a.ano); }
+    else { where.push('i.auction_id = ?'); params.push(opts.auctionId); }
+  } else if (opts.from && opts.to) {
+    where.push('i.date BETWEEN ? AND ?'); params.push(opts.from, opts.to);
+  }
+  if (opts.saleType) { where.push('i.sale = ?'); params.push(opts.saleType); }
+  q += ' WHERE ' + where.join(' AND ');
+  // OLDEST FIRST — the opposite of the sales register's filing order, because
+  // this is read as a chase list and the longest-outstanding draft is the one
+  // that matters. Trade and number break ties so the order is stable.
+  q += ' ORDER BY i.date ASC, i.ano, CAST(i.invo AS INTEGER), i.invo';
+  const rows = db.all(q, params);
+  return rows.map(r => ({
+    ...r,
+    age_days: Math.max(0, Number(r.age_days) || 0),
+    date: _ddmmyyyy(r.date),
+  }));
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2797,7 +2881,7 @@ function listRegisterParties(db, opts = {}) {
 }
 
 module.exports = {
-  auctionRateCfg, pinAuctionRates, PINNED_RATE_KEYS,
+  auctionRateCfg, pinAuctionRates, PINNED_RATE_KEYS, getPendingSalesRegister,
 
   calculateLot,
   calculateTDS,

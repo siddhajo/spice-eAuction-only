@@ -420,6 +420,20 @@ const DOCUMENTS = [
     route: '/api/exports/:type/:auctionId', href: hrefExport('bank_payment_advance'),
     note: 'Pays the recorded lot advances — XLSX only' },
 
+  // The same bank file for STORED STOCK. Stored stock carries no trade, so
+  // this one is install-wide rather than per trade — the :auctionId in the
+  // shared route is ignored by the builder.
+  { id: 'bank_payment_advance_godown', label: 'Bank Payment (Godown Advances)',
+    group: 'banking', sub: 'Bank files',
+    // 'master', not 'trade': stored stock carries no trade, so this file is
+    // install-wide — the same scope the other trade-less exports use.
+    family: 'exports', kind: 'export', scope: 'master', formats: ['xlsx'],
+    perm: 'export',
+    filters: ['sellers'],
+    multi: ['sellers'],
+    route: '/api/exports/:type/:auctionId', href: hrefExport('bank_payment_advance_godown'),
+    note: 'Pays the advances recorded against godown stock — XLSX only' },
+
   // The office's record of what goes out to the PLANTERS for a trade: one row
   // per planter lot (bill, commission, samples, GST, sale cost, balance) with
   // a totals strip. Stage 3 — every column but the bill number comes off a

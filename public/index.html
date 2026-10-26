@@ -1625,10 +1625,43 @@ html.sidebar-collapsed .sidebar .nav-group:hover::after{
    sheet has group headers (Sales Invoices / Purchases / Debitnotes /
    Payments) over their screens; every other group leaves it empty and
    it collapses to nothing. */
+/* ── The tab strip stays put, under the top bar ───────────────────
+   The top bar was already sticky; the tabs under it were not, so on any long
+   screen they scrolled away and changing tab meant scrolling back to the top.
+   They now pin directly beneath it.
+
+   `top` is the MEASURED top-bar height (--topbar-h, set by _syncTopbarHeight
+   on load/resize). Not a constant: the bar is a wrapping flex row, so it is
+   taller on a narrow window and at the larger text-size steps — a hard-coded
+   64px leaves a gap or hides a row at every size but one.
+
+   The background is opaque and the z-index sits just under the top bar's 30,
+   so content scrolls behind the tabs rather than through them. */
 .tabstrip{
   margin:-4px 0 22px;border-bottom:1px solid var(--spice-line);
-  display:flex;flex-direction:column;gap:0
+  display:flex;flex-direction:column;gap:0;
+  position:sticky;top:var(--topbar-h,64px);z-index:20;
+  background:var(--bg);
+  /* The .content padding is 28px 36px, so without this the rows that scroll
+     past show through the gutters either side of the strip. */
+  padding:4px 36px 0;margin-left:-36px;margin-right:-36px
 }
+/* Collapsed: the rows fold away and only the re-open handle is left, for an
+   operator who wants the full height for a long grid. The strip itself stays
+   in flow so the handle keeps its place. */
+.tabstrip.collapsed .tabrow{display:none}
+.tabstrip-toggle{
+  position:absolute;right:36px;top:2px;
+  appearance:none;border:1px solid var(--spice-line);border-top:none;
+  background:var(--spice-paper);cursor:pointer;
+  border-radius:0 0 7px 7px;padding:1px 9px 2px;
+  font-size:10px;font-weight:700;letter-spacing:.4px;
+  color:var(--spice-cardamom-dk);line-height:1.5;z-index:21
+}
+.tabstrip-toggle:hover{background:var(--spice-cardamom-lt)}
+.tabstrip.collapsed .tabstrip-toggle{border-top:1px solid var(--spice-line)}
+body[data-dark="1"] .tabstrip{background:var(--spice-paper)}
+body[data-dark="1"] .tabstrip-toggle{background:var(--spice-line);color:var(--spice-saffron-md)}
 /* Tabs share the full width of the content rather than huddling at the
    left: each takes an equal share of the row and centres its label. They
    stay a row (never wrap) and fall back to scrolling only when the labels
@@ -5309,9 +5342,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          puts its four sub-groups on row 1 and their screens on row 2.
          Painted by renderNav(); lives outside every .tc panel so no
          loader's innerHTML rebuild can wipe it. -->
-    <div class="tabstrip" id="tabstrip" style="display:none">
+    <!-- position:relative so the collapse handle can hang off its bottom
+         edge; the strip itself is sticky (see .tabstrip). -->
+    <div class="tabstrip" id="tabstrip" style="display:none;position:sticky">
       <div class="tabrow tabrow-sub" id="tabrow-sub"></div>
       <div class="tabrow tabrow-items" id="tabrow-items"></div>
+      <button type="button" class="tabstrip-toggle" id="tabstrip-toggle"
+              onclick="toggleTabstrip()" title="Hide or show the tabs (the top bar stays)">▴ TABS</button>
     </div>
     <div class="toast" id="toast"></div>
 
@@ -7295,16 +7332,22 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+        <div id="le-weight-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
           <div>
-            <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Net Weight (kg)</div>
+            <div id="le-qty-label" style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Net Weight (kg)</div>
             <input type="number" id="le-qty" step="0.001" min="0" placeholder="0.000" oninput="leCalcGross()" style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--green);border-radius:8px;font-size:16px;font-weight:700;color:var(--green)">
           </div>
-          <div>
+          <!-- Sample + Gross are an AUCTION idea. A godown entry is stock in
+               store: nothing is sampled and nothing is sold, so the only
+               figure that means anything is the weight that came in. The
+               sample is taken later, out of whatever is MOVED to a trade
+               (see POST /api/godown/move). Hidden as a pair by
+               leSetEntryMode(). -->
+          <div class="le-weight-auction-only">
             <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Sample Wt</div>
             <input type="number" id="le-sample" step="0.001" min="0" placeholder="0.000" oninput="leCalcGross()" readonly style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;background:var(--bg);color:var(--text3)">
           </div>
-          <div>
+          <div class="le-weight-auction-only">
             <div style="font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">Gross Wt</div>
             <input type="number" id="le-gross" readonly style="width:100%;height:40px;padding:0 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;background:var(--bg);color:var(--green);font-weight:700">
           </div>
@@ -8946,6 +8989,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <select id="reg-type" onchange="onRegTypeChange()">
               <option value="purchase">Purchase (lot-wise)</option>
               <option value="sales">Sales (invoice-wise)</option>
+              <!-- Proforma drafts still awaiting their original. Cross-trade
+                   by default, like the per-party registers — "what have we
+                   quoted but not billed?" is never a one-trade question. -->
+              <option value="pending_sales">Pending Sales Invoices (all trades)</option>
               <option value="pooler">Pooler Register (per pooler)</option>
               <option value="seller">Sellers Individual (per seller)</option>
               <option value="merchant">Merchants Individual (per merchant)</option>
@@ -9030,6 +9077,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             Show emptied entries
           </label>
           <button class="btn btn-o" onclick="loadGodown()">Refresh</button>
+          <!-- The RTGS/NEFT file that pays the advances sitting against stored
+               stock — the same sheet and bank format as the lot-wise "Export
+               advance", for the godown instead of a trade's lots. -->
+          <button class="btn btn-o needs-export" id="gd-adv-export" onclick="gdExportAdvance()"
+                  style="font-weight:600;color:#B45309;border-color:#FDE68A;background:#FFFBEB"
+                  title="Download the RTGS/NEFT file that pays the advances recorded on godown stock">📤 Export advance</button>
           <!-- Destructive, so it is role-gated the same way every other delete
                in the app is, and it stays disabled until something is ticked. -->
           <button class="btn btn-r needs-delete" id="gd-del-btn" onclick="gdDeleteSelected()" disabled
@@ -17331,6 +17384,61 @@ const _STATUS_LABELS = { booked: 'Booked', sold: 'Sold', withdrawn: 'Withdrawn',
 
 // Toggle the trade-snapshot widget open/closed. loadStats() re-reads this
 // localStorage flag on every render so the choice survives trade switches.
+// ── The pinned top bars ──────────────────────────────────────────────
+//
+// The top bar was already sticky; the tab strip under it was not, so on any
+// long screen the tabs scrolled away and changing tab meant scrolling back.
+// Both are pinned now, and the tabs can be folded away when the operator
+// wants the height for a long grid.
+//
+// The strip's `top` has to be the MEASURED bar height — it is a wrapping
+// flex row, so it grows on a narrow window and at the larger text-size steps,
+// and a hard-coded offset leaves a gap or hides a row at every size but one.
+function _syncTopbarHeight(){
+  const bar = document.querySelector('.topbar');
+  if (!bar) return;
+  const h = Math.round(bar.getBoundingClientRect().height);
+  if (h > 0) document.documentElement.style.setProperty('--topbar-h', h + 'px');
+}
+// Re-measure whenever the bar can change shape: window resize, and the
+// text-size control (which re-flows it). ResizeObserver catches both plus
+// anything that changes it from script, so nothing has to remember to call it.
+function _watchTopbarHeight(){
+  _syncTopbarHeight();
+  const bar = document.querySelector('.topbar');
+  if (bar && typeof ResizeObserver === 'function') {
+    try { new ResizeObserver(_syncTopbarHeight).observe(bar); return; } catch (_) {}
+  }
+  window.addEventListener('resize', _syncTopbarHeight);   // fallback
+}
+// Fold the tab rows away / back. Remembered, because an operator who works on
+// one long screen wants it to stay folded between visits.
+function toggleTabstrip(next){
+  const strip = document.getElementById('tabstrip');
+  if (!strip) return;
+  const collapsed = (next === undefined) ? !strip.classList.contains('collapsed') : !!next;
+  strip.classList.toggle('collapsed', collapsed);
+  const btn = document.getElementById('tabstrip-toggle');
+  if (btn) {
+    btn.textContent = collapsed ? '▾ TABS' : '▴ TABS';
+    btn.title = collapsed ? 'Show the tabs' : 'Hide the tabs (the top bar stays)';
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+  try { localStorage.setItem('tabstripCollapsed', collapsed ? '1' : '0'); } catch (_) {}
+  // The strip's height just changed, and the sticky offset below it is
+  // measured — re-measure so nothing is left overlapping.
+  _syncTopbarHeight();
+}
+function _restoreTabstrip(){
+  let collapsed = false;
+  try { collapsed = localStorage.getItem('tabstripCollapsed') === '1'; } catch (_) {}
+  if (collapsed) toggleTabstrip(true);
+}
+document.addEventListener('DOMContentLoaded', () => {
+  _watchTopbarHeight();
+  _restoreTabstrip();
+});
+
 function toggleDashSnap() {
   const card = document.getElementById('dash-snap-card');
   if (!card) return;
@@ -23149,10 +23257,17 @@ function leClearSeller(){
 
 function leCalcGross(){
   const qty = parseFloat(document.getElementById('le-qty').value) || 0;
-  const sample = parseFloat(document.getElementById('le-sample').value) || 0;
+  // A godown entry is stock in store: nothing is sampled, so the weight
+  // typed IS the gross and the sample is 0. Carrying the install default
+  // through here would store a sample that was never drawn, and the move
+  // to a trade (which takes the sample out of what is MOVED) would then
+  // draw a second one.
+  const sample = _leIsGodown() ? 0 : (parseFloat(document.getElementById('le-sample').value) || 0);
   const gross = qty + sample;
   document.getElementById('le-gross').value = gross > 0 ? gross.toFixed(3) : '';
 }
+// One reading of the entry mode, so the weight fields and the save agree.
+function _leIsGodown(){ return (_le && _le.entryMode) === 'godown'; }
 
 // ── Pick-list fields (Litre Wt / Moisture) ────────────────────
 // Settings → Lot Entry Defaults can turn Litre Wt and Moisture from typed
@@ -23345,6 +23460,16 @@ function leSetEntryMode(mode, opts){
   });
   const hint = document.getElementById('le-godown-hint');
   if (hint) hint.style.display = godown ? 'block' : 'none';
+  // Sample + Gross are auction-only (see the markup). With them gone the
+  // remaining field is simply "the weight stored", so it is relabelled —
+  // "Net Weight" only means something next to a gross it was netted from.
+  document.querySelectorAll('.le-weight-auction-only').forEach(el => {
+    el.style.display = godown ? 'none' : '';
+  });
+  const wGrid = document.getElementById('le-weight-grid');
+  if (wGrid) wGrid.style.gridTemplateColumns = godown ? '1fr' : 'repeat(3,1fr)';
+  const qLbl = document.getElementById('le-qty-label');
+  if (qLbl) qLbl.textContent = godown ? 'Weight Stored (kg)' : 'Net Weight (kg)';
   // Reserve is an auction-only idea; a held godown entry is a contradiction.
   const resEl = document.getElementById('le-reserved');
   if (godown && resEl && resEl.checked) { resEl.checked = false; leOnReserveToggle(); }
@@ -23505,8 +23630,12 @@ async function leSaveLot(){
   const bagsSafe  = Number.isFinite(bags)  ? bags  : 0;
   const litreSafe = Number.isFinite(litre) ? litre : 0;
   const qtySafe   = Number.isFinite(qty)   ? qty   : 0;
-  const sample = parseFloat(document.getElementById('le-sample').value) || 0;
-  const gross  = parseFloat(document.getElementById('le-gross').value) || (qtySafe + sample);
+  // Godown rows carry no sample and a gross equal to what was stored — the
+  // fields are hidden in that mode, so never trust whatever they still hold.
+  const godownEntry = _leIsGodown();
+  const sample = godownEntry ? 0 : (parseFloat(document.getElementById('le-sample').value) || 0);
+  const gross  = godownEntry ? qtySafe
+    : (parseFloat(document.getElementById('le-gross').value) || (qtySafe + sample));
   // Moisture only when the show-moisture setting is on; we still read
   // the input value defensively because users may have typed something
   // before the wrap was hidden.
@@ -35664,12 +35793,14 @@ function gdRender(){
     return;
   }
   const money = (n) => fmtI(Number(n) || 0, 2);
-  const COLS = 'grid-template-columns:30px 1.5fr 70px 86px 62px repeat(3,minmax(76px,1fr)) 140px 172px';
+  // No Trade column — stored stock is not tied to one. The 62px track that
+  // carried it is gone with it rather than left as a gap.
+  const COLS = 'grid-template-columns:30px 1.5fr 70px 86px repeat(3,minmax(76px,1fr)) 140px 172px';
   const allTicked = rows.length > 0 && rows.every(r => _gd.selected.has(r.id));
   const head = `
     <div style="display:grid;${COLS};gap:0;padding:9px 12px;font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--text2);border-bottom:2px solid var(--border);background:var(--bg)">
       <div style="text-align:center"><input type="checkbox" id="gd-tick-all" ${allTicked ? 'checked' : ''} onchange="gdToggleAll(this.checked)" title="Select every entry listed" style="cursor:pointer"></div>
-      <div>Seller</div><div>Lot</div><div>Depot</div><div>Trade</div>
+      <div>Seller</div><div>Lot</div><div>Depot</div>
       <div style="text-align:right">Recd Wt</div><div style="text-align:right">Moved Wt</div>
       <div style="text-align:right">Balance</div>
       <div style="text-align:right">Advance</div><div style="text-align:right">Actions</div>
@@ -35690,7 +35821,6 @@ function gdRender(){
       </div>
       <div style="font-family:monospace;font-weight:700;color:#0f766e">${esc(r.lot_no || '')}</div>
       <div style="font-family:monospace;font-size:11.5px;color:var(--text2)">${esc(r.branch || '')}</div>
-      <div style="font-size:11.5px;color:var(--text2)">#${esc(String(r.ano || ''))}</div>
       <div style="text-align:right;color:var(--text2)">${fmtI(r.received_qty, 3)}<div style="font-size:10.5px;color:var(--text3)">${fmtI(r.received_bags,0)} bags</div></div>
       <div style="text-align:right;color:var(--text2)">${r.moved_qty ? fmtI(r.moved_qty, 3) : '—'}${r.moved_qty ? `<div style="font-size:10.5px;color:var(--text3)">${fmtI(r.moved_bags,0)} bags · ${fmtI(r.move_count,0)} move${Number(r.move_count)===1?'':'s'}</div>` : ''}</div>
       <div style="text-align:right;font-weight:700;color:${closed ? 'var(--text3)' : 'var(--green)'}">${fmtI(r.qty, 3)}<div style="font-size:10.5px;font-weight:500;color:var(--text3)">${fmtI(r.bags,0)} bags</div></div>
@@ -35812,6 +35942,75 @@ async function gdOpenAdvance(lotId){
 // Mask helper that degrades gracefully if the masking config hasn't loaded.
 function maskAcctUI(v){ try { return maskAcct(v); } catch (_) { return v; } }
 
+// ── Bank file for the advances on STORED STOCK ───────────────────────
+// The sibling of the lot-wise "Export advance" (payLwExportAdvance): same
+// RTGS/NEFT sheet, same bank format, for the godown instead of a trade.
+//
+// Scope is the TICKED rows when anything is ticked, otherwise every entry
+// carrying an advance — ticking nothing to mean "all" matches how the delete
+// button reads the same selection, and saves a tick-everything step on the
+// common case of paying the lot.
+//
+// The :auctionId in the shared export route is ignored by this builder
+// (stored stock has no trade), so 0 is sent rather than a trade that would
+// read as a claim about where the money belongs.
+async function gdExportAdvance(){
+  const rows = (_gd.rows || []).filter(r => Number(r.advance) > 0);
+  const ticked = rows.filter(r => _gd.selected.has(r.id));
+  const use = ticked.length ? ticked : rows;
+  if (!use.length) {
+    alert(_gd.selected.size
+      ? 'None of the ticked entries carries an advance.'
+      : 'No godown entry carries an advance yet. Record one with ₹ Advance first.');
+    return;
+  }
+  const total = use.reduce((s, r) => s + (Number(r.advance) || 0), 0);
+  // { SELLER NAME: [lot_no, …] } — the shape the bank export expects.
+  const byS = {};
+  for (const r of use) {
+    const n = String(r.name || '').trim();
+    if (!n) continue;
+    (byS[n] = byS[n] || []).push(String(r.lot_no || ''));
+  }
+  const names = Object.keys(byS);
+  if (!names.length) { alert('Those entries carry no seller name, so there is nobody to pay.'); return; }
+  // Same warning the lot-wise export gives: a row with no account still
+  // exports, with blank cells the bank will reject.
+  const unlinked = use.filter(r => !r.advance_bank_id).length;
+  if (unlinked && !confirm(
+      `${unlinked} of the ${use.length} entr${use.length === 1 ? 'y has' : 'ies have'} no bank account chosen.\n\n`
+    + `Those rows export with a blank account number and IFSC, which the bank will reject.\n\n`
+    + `Export anyway?`)) return;
+
+  const btn = document.getElementById('gd-adv-export');
+  if (btn) btn.disabled = true;
+  try {
+    await withOverlay(`Exporting godown advance — ₹${fmtI(total, 2)} on ${use.length} entr${use.length === 1 ? 'y' : 'ies'}…`, async () => {
+      const r = await fetch(B + '/api/exports/bank_payment_advance_godown/0', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names, lots: byS, format: 'xlsx', orderBy: 'lot' }),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        alert(`Export failed: ${e.error || ('HTTP ' + r.status)}`);
+        return;
+      }
+      const blob = await r.blob();
+      let filename = 'bank_payment_advance_godown.xlsx';
+      const cd = r.headers.get('Content-Disposition') || '';
+      const fm = /filename="?([^";]+)"?/i.exec(cd);
+      if (fm) filename = fm[1];
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+  } catch (e) { showError(e); }
+  finally { if (btn) btn.disabled = false; }
+}
+
 async function gdSaveAdvance(){
   const r = _gd.advRow;
   if (!r) return;
@@ -35824,10 +36023,12 @@ async function gdSaveAdvance(){
   const btn = document.getElementById('gd-adv-save');
   btn.disabled = true;
   try {
-    // The godown entry belongs to the trade it was booked against, which is
-    // what this per-trade endpoint keys on — so the same validated write path
-    // the lot-wise Payments screen uses handles stored stock too.
-    await j(`/api/payments/lots/${r.auction_id}/advance`, {
+    // Stored stock has NO trade, but the advance goes through the same
+    // validated write path the lot-wise Payments screen uses — the endpoint
+    // admits a godown lot alongside the trade's own. The id in the URL is
+    // only the scope it checks against, so 0 stands for "no trade": the lot
+    // is still found by its own id, and the row's auction_id is null now.
+    await j(`/api/payments/lots/${r.auction_id || 0}/advance`, {
       method: 'POST',
       body: JSON.stringify({ items: [{ lotId: r.id, advance: amt, bankId: bankRaw ? parseInt(bankRaw, 10) : null }] }),
     });
@@ -46673,15 +46874,30 @@ function onRegTypeChange(){
   const saleWrap = document.getElementById('reg-sale-wrap');
   const auctionWrap = document.getElementById('reg-auction-wrap');
   const partyWrap = document.getElementById('reg-party-wrap');
-  if (saleWrap) saleWrap.style.display = (type === 'sales') ? '' : 'none';
-  if (auctionWrap) auctionWrap.style.display = indiv ? 'none' : '';
+  // Godown is a STOCK sheet: its entries are not tied to a trade, so the
+  // auction picker has nothing to offer and would silently narrow the sheet
+  // to the handful of rows that still carry a legacy trade. It reads by date
+  // range + depot, like the per-party registers read by date range + party.
+  const godownReg = (type === 'godown');
+  // Pending Sales Invoices is a CROSS-TRADE worklist — "what have we quoted
+  // but not billed?" spans trades, and the oldest drafts are the point of it.
+  // So it reads by date range with no auction picker, the way the per-party
+  // registers do. It keeps the sale-type filter, which still narrows it.
+  const pendingReg = (type === 'pending_sales');
+  if (saleWrap) saleWrap.style.display = (type === 'sales' || pendingReg) ? '' : 'none';
+  if (auctionWrap) auctionWrap.style.display = (indiv || godownReg || pendingReg) ? 'none' : '';
   if (partyWrap) partyWrap.style.display = indiv ? '' : 'none';
   const certBtn = document.getElementById('reg-certificate-btn');
   if (certBtn) certBtn.style.display = (type === 'pooler') ? '' : 'none';
   // Godown Register — a stock sheet, read per depot.
   const brWrap = document.getElementById('reg-branch-wrap');
-  if (brWrap) brWrap.style.display = (type === 'godown') ? '' : 'none';
-  if (type === 'godown') populateRegBranches();
+  if (brWrap) brWrap.style.display = godownReg ? '' : 'none';
+  // Clear any trade left selected by a previous register, or it would travel
+  // into the godown request and narrow the sheet to one trade's legacy rows.
+  // Clear any trade left selected by a previous register, or it would travel
+  // into the request and narrow a sheet that is meant to span trades.
+  if (godownReg || pendingReg) { const a = document.getElementById('reg-auction'); if (a) a.value = ''; }
+  if (godownReg) populateRegBranches();
   if (indiv) populateRegParties();
 }
 // Fill the Godown Register's depot picker from the configured branches
@@ -46924,9 +47140,10 @@ function regColumns(type){
   // Godown Register — stored stock. No price/buyer/tax: a godown entry was
   // never put up for sale, so the sheet counts bags and weights only.
   if (type === 'godown') return [
-    { key:'tno', label:'TNO', sort:'text', totalKind:'count', totalLabel:'Total' },
-    { key:'date', label:'Date', sort:'text' },
-    { key:'received', label:'Received', sort:'text' },
+    // No TNO / Date — stored stock is not tied to a trade. RECEIVED, the day
+    // the goods came in, is the date that means anything here. Kept in step
+    // with the xlsx + PDF column lists.
+    { key:'received', label:'Received', sort:'text', totalKind:'count', totalLabel:'Total' },
     { key:'lot', label:'Lot', sort:'text' },
     { key:'branch', label:'Depot', sort:'text' },
     { key:'name', label:'Seller', sort:'text' },
@@ -46944,6 +47161,8 @@ function regColumns(type){
     { key:'moved_qty', label:'Moved Wt', sort:'number', numeric:true, fmt:regFmtNum(3) },
     { key:'bag', label:'Bal Bags', sort:'number', numeric:true, fmt:regFmtNum(0) },
     { key:'qty', label:'Bal Wt', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    // Money already paid against stock still in store.
+    { key:'advance', label:'Advance', sort:'number', numeric:true, fmt:regFmtNum(2) },
   ];
   if (type === 'pooler') return [
     { key:'party', label:'Pooler', sort:'text', totalKind:'count', totalLabel:'Total' },
@@ -46984,6 +47203,31 @@ function regColumns(type){
     { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
     { key:'invoice', label:'Invoice', sort:'number', numeric:true, fmt:regFmtNum(2) },
     { key:'receipt', label:'Receipt', sort:'number', numeric:true, fmt:regFmtNum(2) },
+  ];
+  // Pending Sales Invoices — proforma drafts awaiting their original. Same
+  // columns as the Sales Register so the two read alike, led by DAYS: this is
+  // a chase list, and age is what decides which row to act on. The builder
+  // already orders oldest-first.
+  if (type === 'pending_sales') return [
+    { key:'age_days', label:'Days', sort:'number', numeric:true, fmt:regFmtNum(0), noTotal:true,
+      render:(r)=>{
+        const d = Number(r.age_days) || 0;
+        // Amber past a fortnight, red past a month — a draft nobody has
+        // raised in a month is the one worth a phone call.
+        const col = d >= 30 ? '#b91c1c' : (d >= 14 ? '#B45309' : 'var(--text2)');
+        return `<span style="font-weight:${d >= 14 ? '700' : '500'};color:${col}">${d}</span>`;
+      } },
+    { key:'state', label:'State', sort:'text' },
+    { key:'tno', label:'TNO', sort:'text', totalKind:'count', totalLabel:'Total' },
+    { key:'date', label:'Date', sort:'text' },
+    { key:'sale', label:'Sale', sort:'text' },
+    { key:'invo', label:'Proforma', sort:'text' },
+    { key:'tradername', label:'Trader Name', sort:'text' },
+    { key:'bidder', label:'Bidder', sort:'text' },
+    { key:'bag', label:'Bag', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },
+    { key:'invamt', label:'Inv Amt', sort:'number', numeric:true, fmt:regFmtNum(2) },
   ];
   if (type === 'sales') return [
     { key:'state', label:'State', sort:'text' },
@@ -47069,7 +47313,9 @@ async function loadRegister(){
     });
     return;
   }
-  const ep = (type === 'sales') ? 'sales' : (type === 'godown') ? 'godown' : 'purchase';
+  const ep = (type === 'sales') ? 'sales'
+           : (type === 'pending_sales') ? 'pending-sales'
+           : (type === 'godown') ? 'godown' : 'purchase';
   const url = `/api/registers/${ep}?` + regParams().toString();
   let d = [];
   try { d = await j(url); }
@@ -47089,9 +47335,11 @@ async function exportRegister(format){
     base = { pooler:'PoolerRegister', seller:'SellerRegister', merchant:'MerchantRegister' }[type];
   } else {
     ep = (type === 'sales') ? 'sales-register'
+       : (type === 'pending_sales') ? 'pending-sales-register'
        : (type === 'godown') ? 'godown-register' : 'purchase-register';
     p = regParams();
     base = (type === 'sales') ? 'SalesRegister'
+         : (type === 'pending_sales') ? 'PendingSalesRegister'
          : (type === 'godown') ? 'GodownRegister' : 'PurchaseRegister';
   }
   if (format) p.set('format', format);

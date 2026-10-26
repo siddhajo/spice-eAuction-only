@@ -9896,7 +9896,7 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
              (CASE WHEN lots.trader_id IN (SELECT trader_id FROM trader_banks)
                    THEN 1 ELSE 0 END) AS has_bank
            FROM lots
-           WHERE lots.auction_id = ?`;
+           WHERE ${_lotScopeSql(godown)}`;
   const p = [req.params.auctionId];
   if (branch) { q += ' AND lots.branch = ?'; p.push(branch); }
   if (name)   { q += ' AND lots.name LIKE ?'; p.push(`%${name}%`); }
@@ -9921,14 +9921,12 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
   // overstate what was actually auctioned.
   //
   // Contributes no bind params, so it can be appended anywhere in `p`'s order.
+  // The godown/booking split now lives in _lotScopeSql() above, because it
+  // decides the auction scope too — stored stock has no trade to be scoped
+  // by. `godownSql` stays declared (empty) for the summary aggregate below,
+  // which appends it alongside the other filters.
   const godownFilter = String(godown || '').trim();
-  let godownSql = '';
-  if (godownFilter === '1' || godownFilter === '0') {
-    godownSql = godownFilter === '1'
-      ? ' AND COALESCE(lots.godown,0) = 1'
-      : ' AND COALESCE(lots.godown,0) = 0';
-    q += godownSql;
-  }
+  const godownSql = '';
   // Dummy-details filter (Lots tab #lot-dummy-filter): '1' = only lots
   // carrying a stand-in seller identity, '0' = only lots without one. The
   // test is hasDummySellerSql() — ANY of the four columns set — so it selects
@@ -9990,7 +9988,7 @@ app.get('/api/lots/:auctionId', requireViewOrLotEntry, (req, res) => {
               COALESCE(SUM(qty), 0)                  AS qty,
               COALESCE(SUM(CASE WHEN amount > 0 THEN 1 ELSE 0 END), 0) AS priced
          FROM lots
-        WHERE lots.auction_id = ?`
+        WHERE ${_lotScopeSql(godown)}`
       + (branch ? ' AND lots.branch = ?' : '')
       + (name   ? ' AND lots.name LIKE ?' : '')
       + (buyer  ? ' AND lots.buyer = ?' : '')
@@ -10384,6 +10382,35 @@ function runGrade2Alerts(db, req, auctionId) {
 // rows recorded while the feature was on keep their identity (and stay out
 // of the auction) after it is switched off.
 //
+// The trade an ADVANCE belongs to: the lot's own, never the caller's scope.
+// Stored stock has none, so its advance has none either — and a scope id of
+// 0 ("no trade", sent by the godown screen) must never be stored as if it
+// were a real auction.
+function _advAuctionId(lot, scopeAuctionId) {
+  if (lot && lot.auction_id != null) return lot.auction_id;
+  const n = Number(scopeAuctionId);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Which rows a trade's lot list covers, now that stored stock carries no
+// trade (auction_id NULL).
+//
+// An auction booking belongs to ONE trade and is scoped to it. Stored stock
+// belongs to NO trade — it is the same stock whichever trade happens to be
+// open — so when the Lots tab asks for godown rows it gets all of them, and
+// "Both" is the trade's bookings PLUS all stored stock. Scoping godown rows
+// by auction_id would return nothing at all, since none of them has one.
+//
+// Takes the raw `godown` query param: '0' bookings only, '1' stored stock
+// only, anything else (blank) both. The single `?` placeholder is consumed by
+// auction_id in every branch, so callers bind their params unchanged.
+function _lotScopeSql(godownParam) {
+  const g = String(godownParam == null ? '' : godownParam).trim();
+  if (g === '1') return `COALESCE(lots.godown,0) = 1 AND lots.auction_id IS NULL AND ? IS NOT NULL`;
+  if (g === '0') return `lots.auction_id = ? AND COALESCE(lots.godown,0) = 0`;
+  return `(lots.auction_id = ? OR (COALESCE(lots.godown,0) = 1 AND lots.auction_id IS NULL))`;
+}
+
 // Configured prefix for the godown lot series, upper-cased. Blank/missing
 // falls back to 'G'. A digit-only prefix would collide with the auction's own
 // numbering, so it is rejected back to the default.
@@ -10398,20 +10425,32 @@ function isGodownLotNo(lotNo, cfg) {
   return new RegExp('^' + pfx.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\d+$')
     .test(String(lotNo || '').trim().toUpperCase());
 }
-// Next free number in this trade's godown series, zero-padded to 3 (G001 …
-// G999, then G1000). Scans the trade's existing godown numbers rather than
-// counting rows, so a deleted entry's number is not handed out twice while
-// its neighbours still exist.
+// Next free number in the godown series, zero-padded to 3 (G001 … G999, then
+// G1000).
+//
+// INSTALL-WIDE, not per trade. Stored stock is not tied to a trade — an entry
+// sits in the godown until some part of it is released — so a per-trade
+// series would mint G001 twice the moment a second trade opened, and the two
+// rows would then be indistinguishable on a slip that only carries the
+// number. Scans existing godown numbers rather than counting rows, so a
+// deleted entry's number is not handed out twice while its neighbours exist.
+//
+// `auctionId` is accepted but no longer scopes the series; it is kept so the
+// legacy call sites read unchanged, and so a godown row that still carries a
+// trade (pre-migration data) cannot collide with that trade's own numbering.
 function nextGodownLotNo(db, auctionId, cfg) {
   const pfx = godownPrefix(cfg);
   const rows = db.all(
-    `SELECT lot_no FROM lots WHERE auction_id = ? AND COALESCE(godown,0) = 1`,
-    [auctionId]) || [];
-  // Any lot number in the trade is taken, godown or not — the uniqueness
-  // constraint is per auction, so the candidate has to clear all of them.
-  const taken = new Set(
-    (db.all('SELECT lot_no FROM lots WHERE auction_id = ?', [auctionId]) || [])
-      .map(r => String(r.lot_no || '').trim().toUpperCase()));
+    `SELECT lot_no FROM lots WHERE COALESCE(godown,0) = 1`) || [];
+  // Numbers already used anywhere in the godown series, plus — when a trade
+  // is in play — that trade's own lot numbers, since uniqueness is still
+  // enforced per auction for any row that carries one.
+  const taken = new Set(rows.map(r => String(r.lot_no || '').trim().toUpperCase()));
+  if (auctionId) {
+    for (const r of (db.all('SELECT lot_no FROM lots WHERE auction_id = ?', [auctionId]) || [])) {
+      taken.add(String(r.lot_no || '').trim().toUpperCase());
+    }
+  }
   let max = 0;
   for (const r of rows) {
     const m = String(r.lot_no || '').trim().toUpperCase()
@@ -10448,7 +10487,10 @@ const GODOWN_STOCK_SQL = `
          (SELECT COALESCE(SUM(m.qty),  0) FROM godown_movements m WHERE m.src_lot_id = l.id) AS moved_qty,
          (SELECT COUNT(*)                 FROM godown_movements m WHERE m.src_lot_id = l.id) AS move_count
     FROM lots l
-    JOIN auctions a ON a.id = l.auction_id
+    -- LEFT, not INNER: a godown row carries auction_id NULL (stored stock is
+    -- not tied to a trade), and an INNER JOIN would drop every entry. The
+    -- a.* columns stay for the legacy rows that still carry one.
+    LEFT JOIN auctions a ON a.id = l.auction_id
     LEFT JOIN lot_advances la ON la.lot_id = l.id
    WHERE COALESCE(l.godown, 0) = 1`;
 
@@ -10576,11 +10618,28 @@ app.post('/api/godown/move', requireLotWrite, (req, res) => {
     return res.status(400).json({ error: `Only ${outstanding.toFixed(2)} is outstanding as advance on ${src.lot_no}` });
   }
 
-  // Sample weight follows the install default, exactly as lot entry does, so
-  // a released lot is indistinguishable from a hand-entered one.
+  // ── What the released weight MEANS ───────────────────────────────
+  //
+  // The figure the operator types is the weight LEAVING THE GODOWN — move
+  // 250 kg and 250 kg is what comes off the stored stock. So it is the new
+  // lot's GROSS, and the sample is drawn out of it:
+  //
+  //     gross  = 250.000   (what was moved)
+  //     sample =   2.850   (taken OUT of the 250)
+  //     qty    = 247.150   (net, what the seller is paid for)
+  //
+  // It used to read the typed figure as the NET and add the sample on top,
+  // giving a lot with gross 252.850 — 2.850 kg that never left the godown,
+  // because the stored row is decremented by the typed 250. The destination
+  // lot and the stock it came from disagreed by one sample on every move.
+  //
+  // The sample is capped at the moved weight: a move smaller than the sample
+  // would otherwise produce a negative net, and no sample can be drawn from
+  // more than what was released.
   const cfg = getSettingsFlat(db);
-  const sampleWt = Number(cfg.sample_weight) || 0;
-  const grossWt = Math.round((qty + sampleWt) * 1000) / 1000;
+  const grossWt = qty;
+  const sampleWt = Math.min(Number(cfg.sample_weight) || 0, grossWt);
+  const netQty = Math.round((grossWt - sampleWt) * 1000) / 1000;
 
   let destLotId = null;
   try {
@@ -10592,7 +10651,7 @@ app.post('/api/godown/move', requireLotWrite, (req, res) => {
          lotStateForAuction(db, destAuctionId), src.trader_id || null, src.name || '',
          src.padd || '', src.ppla || '', src.ppin || '', src.pstate || '', src.pst_code || '',
          src.cr || '', src.pan || '', src.tel || '', src.aadhar || '',
-         bags, src.litre || '', qty, grossWt, sampleWt, src.moisture || '',
+         bags, src.litre || '', netQty, grossWt, sampleWt, src.moisture || '',
          (req.user && req.user.username) || src.user_id || '', src.bank_id || null]);
       destLotId = info.lastInsertRowid;
 
@@ -10722,22 +10781,37 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
   // above. Such a row numbers itself out of the godown series, so an empty
   // lot_no is normal here and is filled in rather than refused.
   const isGodown = Number(l.godown) ? 1 : 0;
-  if (isGodown && auctionId && !lotNoStr) {
-    lotNoStr = nextGodownLotNo(db, auctionId, getSettingsFlat(db));
+  if (isGodown && !lotNoStr) {
+    // No trade needed to mint one any more — the series is install-wide.
+    lotNoStr = nextGodownLotNo(db, auctionId || null, getSettingsFlat(db));
   }
 
-  if (!auctionId || !lotNoStr) {
-    return res.status(400).json({ error: 'auction_id and lot_no are required' });
+  // A godown row is STOCK IN STORE and is not tied to a trade ANYWHERE the
+  // operator can see it: no trade column on the list, none on the register,
+  // no auction filter, and an install-wide number series.
+  //
+  // It stores auction_id NULL — the column was made nullable by the rebuild
+  // in db.js, and the foreign key permits NULL, which is exactly "no trade".
+  // So only the lot number is required for a godown row, and any auction_id a
+  // caller still sends is dropped at the INSERT: an entry made from a screen
+  // that happens to have a trade selected must not quietly become tied to it.
+  if (isGodown ? !lotNoStr : (!auctionId || !lotNoStr)) {
+    return res.status(400).json({ error: isGodown
+      ? 'lot_no is required'
+      : 'auction_id and lot_no are required' });
   }
 
-  // Reject duplicates within the same trade so two field-staff users
-  // can't end up with the same lot number on different rows.
-  const existing = db.get(
-    'SELECT id FROM lots WHERE auction_id = ? AND lot_no = ?',
-    [auctionId, lotNoStr]
-  );
+  // Reject duplicates. For an auction lot that is per trade, so two
+  // field-staff users can't end up with the same number on different rows.
+  // For a GODOWN row it is INSTALL-WIDE: stored stock carries no trade, so
+  // "the same trade" is not a scope it has, and the G-series is one sequence.
+  const existing = isGodown
+    ? db.get('SELECT id FROM lots WHERE COALESCE(godown,0) = 1 AND UPPER(TRIM(lot_no)) = UPPER(TRIM(?))', [lotNoStr])
+    : db.get('SELECT id FROM lots WHERE auction_id = ? AND lot_no = ?', [auctionId, lotNoStr]);
   if (existing) {
-    return res.status(409).json({ error: `Lot #${lotNoStr} already exists in this auction` });
+    return res.status(409).json({ error: isGodown
+      ? `Godown entry ${lotNoStr} already exists`
+      : `Lot #${lotNoStr} already exists in this auction` });
   }
 
   // Allocation enforcement — only kicks in when the trade has explicit
@@ -10793,7 +10867,7 @@ app.post('/api/lots', requireLotWrite, (req, res) => {
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     // `state` is derived from the trade, NOT taken from the request — see
     // lotStateForAuction(). Whatever a client sends is ignored.
-    [auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,lotStateForAuction(db, auctionId),l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0,Number(l.reserved)?1:0,Number(l.gunny)||0,isGodown]);
+    [isGodown ? null : auctionId,lotNoStr,l.crop||'',l.grade||'',l.crpt||'',branch,lotStateForAuction(db, auctionId),l.trader_id||null,l.name||'',l.padd||'',l.ppla||'',l.ppin||'',l.pstate||'',l.pst_code||'',l.cr||'',l.pan||'',l.tel||'',l.aadhar||'',l.bags||0,l.litre||'',l.qty||0,l.gross_wt||0,l.sample_wt||0,l.moisture||'',Number(l.reserved_price)||0,l.user_id||'',l.bank_id||null,Number(l.immediate_payment)?1:0,Number(l.reserved)?1:0,Number(l.gunny)||0,isGodown]);
   pcClearGate(db, auctionId);
   lvClearGate(db, auctionId);   // new lot → trade must be re-validated before price import
   logLotActivity(db, req, 'create', { id: info.lastInsertRowid, auction_id: auctionId, lot_no: lotNoStr, branch, name: l.name, qty: l.qty });
@@ -10947,6 +11021,33 @@ app.put('/api/lots/:id', requireLotWrite, (req, res) => {
   if (current && current.auction_id) {
     const trueState = lotStateForAuction(db, current.auction_id);
     if (String(current.state || '') !== trueState) l.state = trueState;
+  }
+
+  // ── The amount is the SERVER's to compute ──────────────────────
+  //
+  // Price Entry posts { price, amount } with the amount worked out in the
+  // BROWSER, from the weight it had cached when the screen was opened. That
+  // screen never auto-refreshes, so if anyone else changed the lot's weight
+  // meanwhile — the Lots tab, the mobile app — the save wrote
+  // amount = staleQty × price: a figure matching neither the new weight nor
+  // the old one, with nothing in the request wrong enough to reject. It is
+  // the sharp edge of several people pricing at once.
+  //
+  // So whenever price or qty is part of this update, the amount is
+  // re-derived from the values that will actually be stored, and whatever
+  // the client sent is advisory. A request touching neither is left alone,
+  // so a caller that sets an amount on its own still can.
+  //
+  // UNROUNDED, deliberately: calculateLot() prefers the stored amount and
+  // only falls back to qty × price, and its comment is explicit that the
+  // figure must match what the operator sees rather than a re-rounded
+  // variant. Rounding here would put a paisa between the two.
+  if (!noSaleCode && (l.price !== undefined || l.qty !== undefined)) {
+    const effPrice = (l.price !== undefined) ? Number(l.price) : Number(current && current.price);
+    const effQty   = (l.qty   !== undefined) ? Number(l.qty)   : Number(current && current.qty);
+    if (Number.isFinite(effPrice) && Number.isFinite(effQty)) {
+      l.amount = effQty * effPrice;
+    }
   }
 
   for (const [k,v] of Object.entries(l)) {
@@ -17719,6 +17820,38 @@ app.get('/api/registers/sales', requireView, (req, res) => {
   res.json(getSalesRegister(getDb(), registerOpts(req, {})));
 });
 
+// ── Pending Sales Invoice Register (cross-trade) ─────────────────
+// Proforma drafts still awaiting their original. Reads by DATE RANGE across
+// every trade by default — "what have we quoted but not billed?" is never a
+// one-trade question — though an explicit trade still narrows it.
+app.get('/api/registers/pending-sales', requireView, (req, res) => {
+  const { getPendingSalesRegister } = require('./calculations');
+  res.json(getPendingSalesRegister(getDb(), registerOpts(req, {})));
+});
+
+app.get('/api/exports/pending-sales-register', requireExport, async (req, res) => {
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const opts = registerOpts(req, cfg);
+    const format = String(req.query.format || 'xlsx').toLowerCase();
+    if (format === 'pdf') {
+      const buffer = await exportAnyPdf(db, 'pending_sales_register', opts.auctionId, cfg,
+        { from: opts.from, to: opts.to, saleType: opts.saleType });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="${exportFileName('PendingSalesRegister', ...scopeParts(db, opts))}.pdf"`);
+      return res.send(buffer);
+    }
+    const { exportPendingSalesRegister } = require('./exports');
+    const buffer = await exportPendingSalesRegister(db, opts);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('PendingSalesRegister', ...scopeParts(db, opts))}.xlsx"`);
+    res.send(Buffer.from(buffer));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Godown Register (stored stock) ───────────────────────────────
 // The storage side of the godown utility (flag_godown): every lots row with
 // godown = 1, i.e. goods taken in but never auctioned. Same scoping as the
@@ -18770,8 +18903,14 @@ app.post('/api/payments/lots/:auctionId/unmark-paid', requireAdmin, (req, res) =
 app.post('/api/payments/lots/:auctionId/advance', requireLotWrite, (req, res) => {
   try {
     const db = getDb();
+    // 0 means "no trade" — the godown screen sends it, because stored stock
+    // carries no auction_id. The id here is only the SCOPE lots are checked
+    // against, and a godown lot is admitted by its own id regardless of it,
+    // so 0 is a legitimate scope rather than a missing argument.
     const auctionId = Number(req.params.auctionId);
-    if (!auctionId) return res.status(400).json({ error: 'auctionId is required' });
+    if (!Number.isFinite(auctionId) || auctionId < 0) {
+      return res.status(400).json({ error: 'auctionId is required' });
+    }
     const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
     if (!items.length) return res.status(400).json({ error: 'items (array) is required' });
 
@@ -18790,9 +18929,16 @@ app.post('/api/payments/lots/:auctionId/advance', requireLotWrite, (req, res) =>
 
     const ids = [...wanted.keys()];
     const ph = ids.map(() => '?').join(',');
+    // Stored stock is admitted alongside the trade's own lots. A godown entry
+    // carries no trade (auction_id NULL) but is paid an advance exactly like
+    // a booking is — the lot-wise Payments screen writes both through here —
+    // so scoping strictly by auction_id would refuse every godown advance
+    // with "not in this trade", which is true and useless.
     const rows = db.all(
-      `SELECT id, lot_no, name, trader_id, balance, amount, code, paid_at
-         FROM lots WHERE auction_id = ? AND id IN (${ph})`,
+      `SELECT id, lot_no, name, trader_id, balance, amount, code, paid_at, auction_id
+         FROM lots
+        WHERE (auction_id = ? OR (COALESCE(godown,0) = 1 AND auction_id IS NULL))
+          AND id IN (${ph})`,
       [auctionId, ...ids]) || [];
     const lotById = new Map(rows.map(r => [r.id, r]));
 
@@ -18851,7 +18997,12 @@ app.post('/api/payments/lots/:auctionId/advance', requireLotWrite, (req, res) =>
            DO UPDATE SET auction_id = excluded.auction_id, advance = excluded.advance,
                          bank_id = excluded.bank_id, paid_at = excluded.paid_at,
                          updated_at = excluded.updated_at`,
-          [w.lotId, auctionId, w.advance, w.bankId, paidAt, paidAt]);
+          // The advance takes the LOT's own trade, not the caller's scope id.
+          // A godown lot carries none, so neither does its advance — writing
+          // the scope id (0 for stored stock) would claim the money belonged
+          // to whatever trade happened to be open.
+          [w.lotId, _advAuctionId(lotById.get(w.lotId), auctionId),
+           w.advance, w.bankId, paidAt, paidAt]);
         saved++;
       } else {
         const had = db.get('SELECT lot_id FROM lot_advances WHERE lot_id = ?', [w.lotId]);

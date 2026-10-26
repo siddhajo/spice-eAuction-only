@@ -962,9 +962,9 @@ const COLS = {
   ],
   // Godown Register — stored stock (landscape). Bags + weights only: a
   // godown entry has no price, buyer or tax, so there is no money column.
+  // No TNO / DATE — stored stock is not tied to a trade. Kept in step with
+  // the spreadsheet's columns in exports.js; the two are read side by side.
   godown_register: [
-    { header: 'TNO',      key: 'tno',      width: 5  },
-    { header: 'DATE',     key: 'date',     width: 11 },
     { header: 'RECEIVED', key: 'received', width: 11 },
     { header: 'LOT',      key: 'lot',      width: 8  },
     { header: 'BRANCH',   key: 'branch',   width: 11 },
@@ -978,6 +978,7 @@ const COLS = {
     { header: 'MOVED WT',  key: 'moved_qty', width: 11 },
     { header: 'BAL BAGS',  key: 'bag',       width: 8  },
     { header: 'BAL WT',    key: 'qty',       width: 11 },
+    { header: 'ADVANCE',   key: 'advance',   width: 12 },
   ],
   // Sales Register — invoice-wise (landscape).
   sales_register: [
@@ -986,6 +987,29 @@ const COLS = {
     { header: 'DATE',   key: 'date',   width: 11 },
     { header: 'SALE',   key: 'sale',   width: 5  },
     { header: 'INVO',   key: 'invo',   width: 7  },
+    { header: 'TRADERNAME', key: 'tradername', width: 24 },
+    { header: 'BIDDER', key: 'bidder', width: 9  },
+    { header: 'BAG',    key: 'bag',    width: 5  },
+    { header: 'QTY',    key: 'qty',    width: 10 },
+    { header: 'AMOUNT', key: 'amount', width: 13 },
+    { header: 'GUNNY',  key: 'gunny',  width: 10 },
+    { header: 'TRANSPORT', key: 'lorry', width: 11 },
+    { header: 'INSURANCE', key: 'ins',  width: 11 },
+    { header: 'CGST',   key: 'cgst',   width: 10 },
+    { header: 'SGST',   key: 'sgst',   width: 10 },
+    { header: 'IGST',   key: 'igst',   width: 10 },
+    { header: 'INVAMT', key: 'invamt', width: 13 },
+  ],
+  // Pending Sales Invoice Register — the Sales Register's columns plus the
+  // AGE that makes it a chase list. Kept in step with the spreadsheet's
+  // columns in exports.js; the two are read side by side.
+  pending_sales_register: [
+    { header: 'DAYS',   key: 'age_days', width: 6 },
+    { header: 'STATE',  key: 'state',  width: 12 },
+    { header: 'TNO',    key: 'tno',    width: 5  },
+    { header: 'DATE',   key: 'date',   width: 11 },
+    { header: 'SALE',   key: 'sale',   width: 5  },
+    { header: 'PROFORMA', key: 'invo', width: 9  },
     { header: 'TRADERNAME', key: 'tradername', width: 24 },
     { header: 'BIDDER', key: 'bidder', width: 9  },
     { header: 'BAG',    key: 'bag',    width: 5  },
@@ -1038,7 +1062,9 @@ const TOTAL_KEYS = {
   tds_return:      ['assess_value', 'tds'],
   purchase_register: ['bag', 'qty', 'amount', 'refund', 'commission', 'cgst', 'sgst', 'igst', 'billamount'],
   sales_register:    ['bag', 'qty', 'amount', 'gunny', 'lorry', 'ins', 'cgst', 'sgst', 'igst', 'invamt'],
-  godown_register:   ['recd_bag', 'recd_qty', 'moved_bag', 'moved_qty', 'bag', 'qty'],
+  // No total on DAYS — summing ages is a number that means nothing.
+  pending_sales_register: ['bag', 'qty', 'amount', 'gunny', 'lorry', 'ins', 'cgst', 'sgst', 'igst', 'invamt'],
+  godown_register:   ['recd_bag', 'recd_qty', 'moved_bag', 'moved_qty', 'bag', 'qty', 'advance'],
 };
 
 // Where the totals strip's "TOTAL" label goes, when the default — the first
@@ -1116,6 +1142,7 @@ const TITLES = {
   merchant_individual: 'Merchants Individual',
   purchase_register: 'Purchase Register',
   sales_register:  'Sales Register',
+  pending_sales_register: 'Pending Sales Invoice Register',
   godown_register: 'Godown Register',
 };
 
@@ -1160,6 +1187,7 @@ const PDF_LAYOUT = {
   // 18 / 17 wide registers — portrait can't fit them.
   purchase_register: 'landscape',
   sales_register: 'landscape',
+  pending_sales_register: 'landscape',
   // 12 columns, four of them free text (seller, place, phone, branch).
   godown_register: 'landscape',
   // Pooler register has 9 columns (Qty/Rate/Value + P_Qty/P_Rate/PurAmt);
@@ -1609,6 +1637,14 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
         saleType: extra && extra.saleType,
       });
     }
+    case 'pending_sales_register': {
+      const { getPendingSalesRegister } = require('./calculations');
+      return getPendingSalesRegister(db, {
+        auctionId: auctionId || (extra && extra.auctionId) || null,
+        from: extra && extra.from, to: extra && extra.to,
+        saleType: extra && extra.saleType,
+      });
+    }
 
     default:
       throw new Error(`Unknown export type: ${type}`);
@@ -1927,7 +1963,7 @@ async function exportPdf(db, type, auctionId, cfg, extra = {}) {
   let subtitle = '';
   if (type === 'tds_return') {
     subtitle = `Period: ${extra.from || ''} to ${extra.to || ''}`;
-  } else if ((type === 'purchase_register' || type === 'sales_register' || type === 'godown_register') && !auctionId) {
+  } else if ((type === 'purchase_register' || type === 'sales_register' || type === 'pending_sales_register' || type === 'godown_register') && !auctionId) {
     subtitle = (extra.from && extra.to) ? `Period: ${extra.from} to ${extra.to}` : 'All auctions';
   } else if (auctionId) {
     const auction = db.get('SELECT ano, date, crop_type FROM auctions WHERE id = ?', [auctionId]);

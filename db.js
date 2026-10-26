@@ -1512,6 +1512,95 @@ async function initDb() {
     catch (e) { /* column already exists — ignore */ }
   }
 
+  // ── Untie stored stock from trades (table rebuild) ────────────────
+  //
+  // A godown entry is stock in store: it sits there until some part of it is
+  // released, which may be weeks and several trades later. It was keyed to
+  // whichever trade happened to be open when it was booked, which made the
+  // Godown Register filterable by a trade the goods had nothing to do with
+  // and printed a TNO column that meant nothing.
+  //
+  // `lots.auction_id` is NOT NULL, and SQLite cannot relax a column
+  // constraint in place — it needs the create-copy-swap dance. That is a
+  // rebuild of the core table, so the rules here are strict:
+  //
+  //   • IDEMPOTENT. Runs only while the live schema still says NOT NULL, so a
+  //     restart after a successful run is a no-op.
+  //   • The new schema is DERIVED FROM THE LIVE ONE, never hand-written. This
+  //     table has grown ~20 columns by ALTER over its life and installs sit at
+  //     different points in that history; copying the real CREATE statement
+  //     and editing one token keeps every column, default and foreign key
+  //     exactly as this install has them. `INSERT INTO … SELECT *` is then
+  //     safe because both tables have identical column order by construction.
+  //   • VERIFIED. The row count is taken before and compared after, inside
+  //     the transaction — a mismatch throws, which rolls the whole thing back
+  //     and leaves the original table untouched.
+  //   • foreign_keys is toggled OUTSIDE the transaction: SQLite silently
+  //     ignores that pragma inside one, and the swap would then fail on the
+  //     references other tables hold.
+  //
+  // Both `lots` and `lot_advances` need it: a godown entry is paid an advance
+  // exactly like a booking is, so the advance row has no trade either.
+  function relaxNotNull(table, column) {
+    const cur = wrapped.get(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", [table]);
+    const liveSql = (cur && cur.sql) || '';
+    const NOT_NULL = new RegExp(`\\b${column}\\s+INTEGER\\s+NOT\\s+NULL\\b`, 'i');
+    if (!liveSql || !NOT_NULL.test(liveSql)) return false;   // already relaxed
+    const tmp = `${table}_rebuild`;
+    const before = wrapped.get(`SELECT COUNT(*) AS c FROM ${table}`).c;
+    const idx = (wrapped.all(
+      "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL", [table]) || [])
+      .map(r => r.sql);
+    // One token changes: the NOT NULL comes off the column. Any foreign key
+    // stays — it already permits NULL, which is exactly "no trade".
+    const newSql = liveSql
+      .replace(NOT_NULL, `${column} INTEGER`)
+      .replace(new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?["'\`[]?${table}["'\`\\]]?`, 'i'),
+               `CREATE TABLE ${tmp}`);
+    wrapped.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      wrapped.exec('BEGIN');
+      wrapped.exec(newSql);
+      wrapped.exec(`INSERT INTO ${tmp} SELECT * FROM ${table}`);
+      const copied = wrapped.get(`SELECT COUNT(*) AS c FROM ${tmp}`).c;
+      if (Number(copied) !== Number(before)) {
+        throw new Error(`${table}: row count mismatch — ${before} before, ${copied} copied`);
+      }
+      wrapped.exec(`DROP TABLE ${table}`);
+      wrapped.exec(`ALTER TABLE ${tmp} RENAME TO ${table}`);
+      for (const sql of idx) wrapped.exec(sql);
+      wrapped.exec('COMMIT');
+      const after = wrapped.get(`SELECT COUNT(*) AS c FROM ${table}`).c;
+      console.log(`Migration: ${table}.${column} is now nullable (${after} rows preserved, ${idx.length} indexes rebuilt)`);
+      return true;
+    } catch (e) {
+      try { wrapped.exec('ROLLBACK'); } catch (_) {}
+      try { wrapped.exec(`DROP TABLE IF EXISTS ${tmp}`); } catch (_) {}
+      throw e;
+    } finally {
+      wrapped.exec('PRAGMA foreign_keys = ON;');
+    }
+  }
+
+  try {
+    relaxNotNull('lots', 'auction_id');
+    relaxNotNull('lot_advances', 'auction_id');
+    // Now that the column accepts it, cut stored stock loose. Separate from
+    // the rebuild so it still runs on an install that was already rebuilt.
+    const res = wrapped.run(
+      'UPDATE lots SET auction_id = NULL WHERE COALESCE(godown,0) = 1 AND auction_id IS NOT NULL');
+    const n = (res && (res.changes != null ? res.changes : res.rowsModified)) || 0;
+    if (n) console.log(`Migration: untied ${n} godown entr${n === 1 ? 'y' : 'ies'} from their trade`);
+    // …and the advances sitting against that stock, which have no trade either.
+    wrapped.run(`UPDATE lot_advances SET auction_id = NULL
+                  WHERE lot_id IN (SELECT id FROM lots WHERE COALESCE(godown,0) = 1)`);
+  } catch (e) {
+    // Never take the app down over this: every screen works with the column
+    // as it was, so a failed rebuild degrades to the previous behaviour.
+    console.error('Migration: could not untie godown stock —', e.message);
+  }
+
   // Index on locked_at — used by the Lots tab list sort/filter and by
   // the cascade-lock helpers (lotsLockedFor*) that scan by auction +
   // buyer/seller with locked_at NOT NULL. Created here (after the

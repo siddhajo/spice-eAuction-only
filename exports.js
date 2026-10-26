@@ -1351,6 +1351,28 @@ async function exportBankPaymentAdvance(db, auctionId, cfg, _state, extra) {
   return renderBankPaymentView(db, auctionId, fmt, payments, cfg);
 }
 
+// ── Export: Bank Payment (Godown advances) ───────────────────
+// The RTGS/NEFT file that pays the advances recorded against STORED STOCK —
+// the same sheet the lot-wise Pay Advance export produces, for the stock in
+// the godown instead of a trade's lots.
+//
+// No auctionId: stored stock carries no trade. The signature keeps the
+// positional slot so this sits in EXPORT_TYPES beside its siblings and is
+// driven by the same route.
+async function exportBankPaymentAdvanceGodown(db, _auctionId, cfg, _state, extra) {
+  const { getAdvanceBankPaymentData } = require('./calculations');
+  const { getBankFormat } = require('./bank-formats');
+  const payments = getAdvanceBankPaymentData(db, null, cfg, {
+    godown:      true,
+    sellers:    (extra && extra.sellers) || null,
+    sellerKeys: (extra && extra.sellerKeys) || null,
+    lots:        extra && extra.lots,
+    orderByLot:  !!(extra && extra.orderByLot),
+  });
+  const fmt = getBankFormat(cfg && cfg.bank_format);
+  return renderBankPaymentView(db, null, fmt, payments, cfg);
+}
+
 // ── Export Type 4b: Bank Payment (Before discount) ───────────
 // Same data shape as bank_payment except `amount` is the pre-discount
 // puramt (raw purchase amount before refund/GST). Uses the active profile's
@@ -2068,9 +2090,11 @@ async function exportPurchaseRegister(db, opts = {}) {
 async function exportGodownRegister(db, opts = {}) {
   const { getGodownRegister } = require('./calculations');
   const rows = getGodownRegister(db, opts);
+  // No TNO / DATE: stored stock is not tied to a trade, so those columns
+  // printed either a blank or the date of a trade the goods had nothing to do
+  // with. RECEIVED — the day the goods actually came in — is the date that
+  // means something here, and it was already on the sheet.
   const cols = [
-    { header: 'TNO',      key: 'tno',      width: 6  },
-    { header: 'DATE',     key: 'date',     width: 12 },
     { header: 'RECEIVED', key: 'received', width: 12 },
     { header: 'LOT',      key: 'lot',      width: 9  },
     { header: 'BRANCH',   key: 'branch',   width: 12 },
@@ -2085,12 +2109,15 @@ async function exportGodownRegister(db, opts = {}) {
     { header: 'MOVED WT',  key: 'moved_qty', width: 12, numFmt: '#,##0.000' },
     { header: 'BAL BAGS',  key: 'bag',       width: 9,  numFmt: '#,##0'     },
     { header: 'BAL WT',    key: 'qty',       width: 12, numFmt: '#,##0.000' },
+    // Money already paid against stock still in store — read next to the bank
+    // file that paid it.
+    { header: 'ADVANCE',   key: 'advance',   width: 13, numFmt: '#,##0.00'  },
   ];
   const sum = (k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
   const grandTotal = { label: 'TOTAL', values: {
     recd_bag: sum('recd_bag'), recd_qty: sum('recd_qty'),
     moved_bag: sum('moved_bag'), moved_qty: sum('moved_qty'),
-    bag: sum('bag'), qty: sum('qty'),
+    bag: sum('bag'), qty: sum('qty'), advance: sum('advance'),
   }};
   return createExcelBuffer('GodownRegister', cols, rows, {
     db, title: 'Godown Register', metaLines: registerMeta(db, opts), grandTotal,
@@ -2128,6 +2155,47 @@ async function exportSalesRegister(db, opts = {}) {
   }};
   return createExcelBuffer('SalesRegister', cols, rows, {
     db, title: 'Sales Register', metaLines: registerMeta(db, opts), grandTotal,
+  });
+}
+
+// ── Export: Pending Sales Invoice Register (cross-trade) ──────────
+// Proforma drafts still awaiting their original. Same shape as the Sales
+// Register so the two read alike side by side, plus an AGE column — the
+// reason this sheet exists is to chase the oldest, so it leads with DAYS and
+// is ordered oldest-first by the builder.
+async function exportPendingSalesRegister(db, opts = {}) {
+  const { getPendingSalesRegister } = require('./calculations');
+  const rows = getPendingSalesRegister(db, opts);
+  const cols = [
+    { header: 'DAYS',   key: 'age_days', width: 7, numFmt: '#,##0' },
+    { header: 'STATE',  key: 'state',  width: 14 },
+    { header: 'TNO',    key: 'tno',    width: 6  },
+    { header: 'DATE',   key: 'date',   width: 12 },
+    { header: 'SALE',   key: 'sale',   width: 6  },
+    { header: 'PROFORMA', key: 'invo', width: 10 },
+    { header: 'TRADERNAME', key: 'tradername', width: 30 },
+    { header: 'BIDDER', key: 'bidder', width: 10 },
+    { header: 'BAG',    key: 'bag',    width: 6  },
+    { header: 'QTY',    key: 'qty',    width: 11, numFmt: '#,##0.000' },
+    { header: 'AMOUNT', key: 'amount', width: 14, numFmt: '#,##0.00' },
+    { header: 'GUNNY',  key: 'gunny',  width: 10, numFmt: '#,##0.00' },
+    { header: 'TRANSPORT', key: 'lorry', width: 11, numFmt: '#,##0.00' },
+    { header: 'INSURANCE', key: 'ins',  width: 11, numFmt: '#,##0.00' },
+    { header: 'CGST',   key: 'cgst',   width: 10, numFmt: '#,##0.00' },
+    { header: 'SGST',   key: 'sgst',   width: 10, numFmt: '#,##0.00' },
+    { header: 'IGST',   key: 'igst',   width: 10, numFmt: '#,##0.00' },
+    { header: 'INVAMT', key: 'invamt', width: 14, numFmt: '#,##0.00' },
+  ];
+  const sum = (k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  // No total on DAYS — summing ages is a number that means nothing.
+  const grandTotal = { label: 'TOTAL', values: {
+    bag: sum('bag'), qty: sum('qty'), amount: sum('amount'), lorry: sum('lorry'),
+    gunny: sum('gunny'), igst: sum('igst'), cgst: sum('cgst'), sgst: sum('sgst'),
+    ins: sum('ins'), invamt: sum('invamt'),
+  }};
+  return createExcelBuffer('PendingSalesRegister', cols, rows, {
+    db, title: 'Pending Sales Invoice Register',
+    metaLines: registerMeta(db, opts), grandTotal,
   });
 }
 
@@ -2541,6 +2609,7 @@ const EXPORT_TYPES = {
   // against lots instead of the payable. Raised from Pay Advance on the
   // lot-wise Payments screen; the POST route carries the picked lots.
   bank_payment_advance:{ fn: exportBankPaymentAdvance, name: 'BankPaymentAdvance', needsCfg: true },
+  bank_payment_advance_godown:{ fn: exportBankPaymentAdvanceGodown, name: 'BankPaymentAdvanceGodown', needsCfg: true },
   pooler_register:    { fn: exportPoolerRegister,    name: 'PoolerRegister' },
   full_file:          { fn: exportFullFile,          name: 'FullFile' },
   // Writes CSV directly (bespoke 22-column layout), so ext/mime are set
@@ -3077,7 +3146,7 @@ module.exports = {
   exportSalesJournal, exportPurchaseJournal,
   // Shared with the PDF twin — one column spec, two renderings.
   SALES_JOURNAL_COLS, SALES_JOURNAL_TOTAL_KEYS,
-  exportPurchaseRegister, exportSalesRegister, exportGodownRegister, exportIndividualRegister,
+  exportPurchaseRegister, exportSalesRegister, exportPendingSalesRegister, exportGodownRegister, exportIndividualRegister,
   exportSellersXlsx, exportBuyersXlsx,
   exportDealerInvoiceCsv,
   // Shared with the PDF twin (exports-pdf.js) so the two renderings cannot
