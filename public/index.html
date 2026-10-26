@@ -5399,7 +5399,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div id="screensaver" aria-hidden="true" style="display:none;position:fixed;inset:0;z-index:9000;
          background:linear-gradient(145deg,#06281d 0%,#0b3d2c 45%,#06281d 100%);
          align-items:center;justify-content:center;cursor:none;user-select:none">
-      <div style="text-align:center;color:#fff;padding:24px;max-width:640px">
+      <!-- One centred column, and every line in it shares that one axis —
+           name, customer, credit, numbers, clock. 860px rather than 640:
+           a three-word product name ("SpiceFlow eAuction Suite") overflowed
+           the narrower box and wrapped mid-name, which is what made the
+           block look crooked. -->
+      <div style="text-align:center;color:#fff;padding:24px;max-width:860px;margin:0 auto">
         <!-- The company logo is a PNG on a WHITE ground, not a transparent
              one, so on this dark panel it lands as a bare white rectangle.
              Making it a rounded chip turns that into something deliberate
@@ -5407,9 +5412,21 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <img id="ss-logo" alt="" style="display:none;width:116px;height:116px;object-fit:contain;
              margin:0 auto 24px;background:#fff;border-radius:22px;padding:12px;
              box-shadow:0 10px 30px rgba(0,0,0,.28)">
-        <div id="ss-app" style="font-size:46px;font-weight:800;letter-spacing:2px;line-height:1.1">GreenGavel</div>
+        <!-- clamp(), not a fixed 46px: the name is operator-typed and can be
+             any length, so it scales with the viewport instead of spilling
+             out of the box on a laptop or a phone. balance keeps a wrap, if
+             one is still needed, from leaving a single orphan word. -->
+        <div id="ss-app" style="font-size:clamp(27px,4.4vw,46px);font-weight:800;letter-spacing:1.5px;line-height:1.14;text-wrap:balance">SpiceFlow eAuction Suite</div>
         <div id="ss-company" style="margin-top:10px;font-size:15px;font-weight:600;letter-spacing:3px;text-transform:uppercase;color:rgba(255,255,255,.72)"></div>
-        <div id="ss-clock" style="margin-top:30px;font-size:19px;font-weight:600;color:rgba(255,255,255,.88);font-variant-numeric:tabular-nums"></div>
+        <!-- Credit + support numbers, as one block under a hairline so they
+             read as attribution rather than as part of the product name.
+             The rule is drawn by the wrapper, so it disappears along with
+             the block when both lines are blank. -->
+        <div id="ss-by" style="margin-top:22px;padding-top:18px;border-top:1px solid rgba(255,255,255,.14);display:none">
+          <div id="ss-credit" style="font-size:13.5px;font-weight:600;letter-spacing:1.2px;color:rgba(255,255,255,.78)"></div>
+          <div id="ss-contact" style="margin-top:5px;font-size:13.5px;letter-spacing:1.4px;color:rgba(255,255,255,.58);font-variant-numeric:tabular-nums"></div>
+        </div>
+        <div id="ss-clock" style="margin-top:26px;font-size:19px;font-weight:600;color:rgba(255,255,255,.88);font-variant-numeric:tabular-nums"></div>
         <div style="margin-top:28px;font-size:12.5px;letter-spacing:.6px;color:rgba(255,255,255,.45)">Press any key or click to resume</div>
       </div>
     </div>
@@ -12614,6 +12631,17 @@ function ssShow(){
   // The customer's own name underneath, so a machine on a counter says whose
   // office it is. Blank on an install that has not been branded yet.
   setText('ss-company', String(cfg.trade_name || cfg.short_name || '').trim());
+  // Credit and support numbers. Each line is dropped when blank, and the
+  // whole block (hairline included) goes when neither is set — an unbadged
+  // install shows no empty rule.
+  const credit  = String(cfg.app_credit  || '').trim();
+  const contact = String(cfg.app_contact || '').trim();
+  setText('ss-credit', credit);
+  setText('ss-contact', contact);
+  const hide = (id, gone) => { const n = document.getElementById(id); if (n) n.style.display = gone ? 'none' : ''; };
+  hide('ss-credit', !credit);
+  hide('ss-contact', !contact);
+  hide('ss-by', !credit && !contact);
   const logo = document.getElementById('ss-logo');
   const src = document.getElementById('topbar-logo-img');
   if (logo && src && src.getAttribute('src')) {
@@ -28080,8 +28108,8 @@ const SET_FIELD_GROUPS = {
       keys:['mask_acct','mask_ifsc','mask_phone'] },
   ],
   company: [
-    { title:'Name & Identity', icon:'🏢', hint:'What the company is called on every document — the trade name, its legal suffix, and the short code used in file names. The first field is a different thing: the name of THIS SOFTWARE, shown on the screensaver and the sign-in card, not on any document.',
-      keys:['app_name','trade_name','legal_name','short_name','logo'] },
+    { title:'Name & Identity', icon:'🏢', hint:'What the company is called on every document — the trade name, its legal suffix, and the short code used in file names. The first three fields are a different thing: the name of THIS SOFTWARE and the credit / support numbers shown beneath it on the screensaver. None of the three appears on any document.',
+      keys:['app_name','app_credit','app_contact','trade_name','legal_name','short_name','logo'] },
     { title:'Constitution', icon:'🤝', hint:'Partnership firms print the firm name / registration number under the company name.',
       keys:['is_partnership','partnership_name'] },
     { title:'Statutory Registrations', icon:'📜', hint:'Numbers printed in the invoice header and quoted in the Spice Board returns.',
