@@ -2640,6 +2640,17 @@ function getPendingSalesRegister(db, opts = {}) {
     where.push('i.date BETWEEN ? AND ?'); params.push(opts.from, opts.to);
   }
   if (opts.saleType) { where.push('i.sale = ?'); params.push(opts.saleType); }
+  // Party = the BUYER. Matched on the buyer CODE when one is given, because
+  // buyer trade names repeat and a name match would sweep in a namesake —
+  // the same rule the other party filters follow. The name is the fallback
+  // for a caller that only has one.
+  if (opts.buyerCode) {
+    where.push('UPPER(TRIM(COALESCE(i.buyer,\'\'))) = UPPER(TRIM(?))');
+    params.push(opts.buyerCode);
+  } else if (opts.party) {
+    where.push('UPPER(TRIM(COALESCE(i.buyer1,\'\'))) = UPPER(TRIM(?))');
+    params.push(opts.party);
+  }
   q += ' WHERE ' + where.join(' AND ');
   // OLDEST FIRST — the opposite of the sales register's filing order, because
   // this is read as a chase list and the longest-outstanding draft is the one

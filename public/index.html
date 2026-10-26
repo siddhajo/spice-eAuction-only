@@ -1385,6 +1385,34 @@ body[data-dark="1"] #settings-root .fg>textarea{
 .btn-orange:hover{background:#D97706}
 .btn-blue{background:var(--blue);color:#fff}
 .btn-full{width:100%;height:52px;font-size:15px;font-weight:700}
+
+/* ── Compact row / toolbar button ────────────────────────────
+   A button that lives INSIDE a fixed-width grid cell — the Advance and Move
+   actions on a godown row, a ↻ Refresh in a card header — cannot take the
+   density setting's sizing: at "spacious" that is `height:48px !important;
+   padding:0 22px !important`, which inflates it past the column it sits in,
+   so the label wraps ("₹" on one line, "Advance" on the next) and the row
+   grows to swallow it.
+
+   Those buttons carried an inline `height:28px`, which LOSES to the density
+   rules because those are `!important`. Hence this class, which is how a
+   compact button actually gets to stay compact:
+
+     • `!important` on each property, to beat the density block;
+     • specificity (0,2,1) — `body .btn.btn-compact` — matching the density
+       selectors, and DECLARED BELOW THEM so the tie goes this way. Same
+       ordering trap as the .feat-* / .needs-*-write gates further down.
+     • `white-space:nowrap` so the label can never split across lines;
+     • `flex:none` so a tight flex cell shrinks the gap, not the button.
+
+   Density still governs every ordinary button; this is only for the ones
+   whose width is decided by a layout rather than by the text in them. */
+body .btn.btn-compact{
+  height:30px !important;padding:0 11px !important;
+  font-size:11.5px !important;font-weight:600;gap:5px !important;
+  border-radius:8px !important;
+  white-space:nowrap;flex:none
+}
 .err{color:var(--spice-chili);font-size:13px;text-align:center;margin-top:12px;font-weight:600;display:none}
 
 /* ── Top Bar ─────────────────────────────────────────────── */
@@ -9021,7 +9049,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <!-- Proforma drafts still awaiting their original. Cross-trade
                    by default, like the per-party registers — "what have we
                    quoted but not billed?" is never a one-trade question. -->
-              <option value="pending_sales">Pending Sales Invoices (all trades)</option>
+              <option value="pending_sales">Pending Sales Invoices (all auctions)</option>
               <option value="pooler">Pooler Register (per pooler)</option>
               <option value="seller">Sellers Individual (per seller)</option>
               <option value="merchant">Merchants Individual (per merchant)</option>
@@ -24282,7 +24310,11 @@ async function loadLeRecent(){
     // The summary endpoint honours the same `name=` seller filter, so the row
     // reflects the WHOLE filtered set, not just the currently-loaded page.
     try {
-      const sumQs = 'summary=1'
+      // `godown` too, and for the same reason the list sends it: the totals
+      // row must count the rows ON SCREEN. Without it the aggregate covered
+      // the whole trade, so a godown list of two entries footed "185 lots ·
+      // 1,294 bags" — the trade's numbers under the godown's rows.
+      const sumQs = `summary=1&godown=${godownOnly}`
                   + (search ? `&name=${encodeURIComponent(search)}` : '')
                   + (branch ? `&branch=${encodeURIComponent(branch)}` : '');
       _le.recentSummary = await j(`/api/lots/${aid}?${sumQs}`);
@@ -35952,7 +35984,7 @@ function gdRender(){
     const bg = closed ? 'var(--bg)' : '';
     const moveBtn = closed
       ? ''
-      : `<button class="btn btn-o needs-lot-write" onclick="gdOpenMove(${r.id})" style="height:28px;padding:0 10px;font-size:11.5px">➡ Move</button>`;
+      : `<button class="btn btn-o btn-compact needs-lot-write" onclick="gdOpenMove(${r.id})" title="Release part of this stock into a trade">➡ Move</button>`;
     return `
     <div style="display:grid;${COLS};gap:0;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;align-items:center;background:${bg}">
       <div style="text-align:center"><input type="checkbox" class="gd-cb" data-id="${r.id}" ${_gd.selected.has(r.id) ? 'checked' : ''} onchange="gdToggle(${r.id}, this.checked)" style="cursor:pointer"></div>
@@ -35968,7 +36000,7 @@ function gdRender(){
       <div style="text-align:right;font-weight:700;color:${closed ? 'var(--text3)' : 'var(--green)'}">${fmtI(r.qty, 3)}<div style="font-size:10.5px;font-weight:500;color:var(--text3)">${fmtI(r.bags,0)} bags</div></div>
       <div style="text-align:right;font-weight:${r.advance ? '700' : '400'};color:${r.advance ? 'var(--spice-saffron)' : 'var(--text3)'}">${r.advance ? '₹' + money(r.advance) : '—'}</div>
       <div style="text-align:right;display:flex;gap:4px;justify-content:flex-end">
-        <button class="btn btn-o needs-lot-write" onclick="gdOpenAdvance(${r.id})" style="height:28px;padding:0 10px;font-size:11.5px">₹ Advance</button>
+        <button class="btn btn-o btn-compact needs-lot-write" onclick="gdOpenAdvance(${r.id})" title="Record an advance paid against this stock">₹ Advance</button>
         ${moveBtn}
       </div>
     </div>`;
@@ -35976,8 +36008,13 @@ function gdRender(){
   const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
   const totals = `
     <div style="display:grid;${COLS};gap:0;padding:10px 12px;font-size:12.5px;font-weight:800;color:var(--green-dk);border-top:2px solid var(--green-border);background:var(--green-bg)">
+      <!-- NINE cells, matching the nine tracks in COLS and the nine header
+           cells: tick · seller · lot · depot · recd · moved · balance ·
+           advance · actions. It carried a tenth — a leftover spacer for the
+           Trade column that was removed — so every total landed one column
+           to the right of the figure it belonged under. -->
       <div></div>
-      <div>${fmtI(rows.length,0)} entr${rows.length===1?'y':'ies'}</div><div></div><div></div><div></div>
+      <div>${fmtI(rows.length,0)} entr${rows.length===1?'y':'ies'}</div><div></div><div></div>
       <div style="text-align:right">${fmtI(sum('received_qty'),3)}</div>
       <div style="text-align:right">${fmtI(sum('moved_qty'),3)}</div>
       <div style="text-align:right">${fmtI(sum('qty'),3)}</div>
@@ -47026,9 +47063,13 @@ function onRegTypeChange(){
   // So it reads by date range with no auction picker, the way the per-party
   // registers do. It keeps the sale-type filter, which still narrows it.
   const pendingReg = (type === 'pending_sales');
-  if (saleWrap) saleWrap.style.display = (type === 'sales' || pendingReg) ? '' : 'none';
+  // Sale type does not narrow a chase list in any useful way — every pending
+  // draft matters whoever it is for. The question actually asked of this
+  // sheet is "what is outstanding for THIS buyer", so the party picker takes
+  // its place.
+  if (saleWrap) saleWrap.style.display = (type === 'sales') ? '' : 'none';
   if (auctionWrap) auctionWrap.style.display = (indiv || godownReg || pendingReg) ? 'none' : '';
-  if (partyWrap) partyWrap.style.display = indiv ? '' : 'none';
+  if (partyWrap) partyWrap.style.display = (indiv || pendingReg) ? '' : 'none';
   const certBtn = document.getElementById('reg-certificate-btn');
   if (certBtn) certBtn.style.display = (type === 'pooler') ? '' : 'none';
   // Godown Register — a stock sheet, read per depot.
@@ -47040,7 +47081,7 @@ function onRegTypeChange(){
   // into the request and narrow a sheet that is meant to span trades.
   if (godownReg || pendingReg) { const a = document.getElementById('reg-auction'); if (a) a.value = ''; }
   if (godownReg) populateRegBranches();
-  if (indiv) populateRegParties();
+  if (indiv || pendingReg) populateRegParties();
 }
 // Fill the Godown Register's depot picker from the configured branches
 // (br1..br9 in settings — the same source Lot Entry reads). Done once; the
@@ -47069,17 +47110,40 @@ let _regPartyActive = 0;
 
 async function populateRegParties(){
   const type = document.getElementById('reg-type').value;
-  if (!isIndividualReg(type)) return;
+  const pendingReg = (type === 'pending_sales');
+  if (!isIndividualReg(type) && !pendingReg) return;
   const hidden = document.getElementById('reg-party');
   if (!hidden) return;
   const keep = hidden.value;
   const from = document.getElementById('reg-from').value;
   const to = document.getElementById('reg-to').value;
-  const p = new URLSearchParams({ kind: type });
-  if (from && to) { p.set('from', from); p.set('to', to); }
   let rows = [];
-  try { rows = await j('/api/registers/individual-parties?' + p.toString()) || []; }
-  catch(e){ rows = []; }
+  if (pendingReg) {
+    // The party on a sales draft is the BUYER, so this one picker is fed from
+    // the buyers master rather than the per-party registers' endpoint (which
+    // only knows poolers, sellers and merchants).
+    //
+    // The IDENTITY carried through is the buyer CODE, not the trade name:
+    // buyer names repeat, and a name-only filter would sweep in a namesake.
+    // It rides in the `gstin` slot because the picker already treats that
+    // slot as "the opaque id for this kind" — see regPartyIdField.
+    try {
+      const buyers = await j('/api/buyers?all=1') || [];
+      const seen = new Set();
+      rows = (Array.isArray(buyers) ? buyers : []).map(b => {
+        const code = String(b.buyer || '').trim();
+        const nm = String(b.buyer1 || b.buyer || '').trim();
+        if (!code || !nm || seen.has(code)) return null;
+        seen.add(code);
+        return { name: nm, phone: String(b.tel || ''), trader_id: null, gstin: code };
+      }).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+    } catch (_) { rows = []; }
+  } else {
+    const p = new URLSearchParams({ kind: type });
+    if (from && to) { p.set('from', from); p.set('to', to); }
+    try { rows = await j('/api/registers/individual-parties?' + p.toString()) || []; }
+    catch(e){ rows = []; }
+  }
   // Endpoint may return [string] (legacy) or [{name, phone}] — normalise.
   // The identity that distinguishes two parties sharing a name: trader_id for
   // pooler and seller, gstin for merchant (invoices carry no buyer FK). A kind
@@ -47100,7 +47164,12 @@ async function populateRegParties(){
 // rather than off the row is what keeps "this party has no seller master"
 // (a real pick — the unlinked rows) distinct from "this kind has no such
 // column"; both arrive from the endpoint as null and are NOT the same thing.
-function regPartyIdField(type){ return (type === 'merchant') ? 'gstin' : 'trader_id'; }
+// `pending_sales` uses the gstin slot to carry the BUYER CODE — see
+// populateRegParties. The slot is just "the opaque id for this kind"; what
+// matters is that one field identifies the party and the name never does.
+function regPartyIdField(type){
+  return (type === 'merchant' || type === 'pending_sales') ? 'gstin' : 'trader_id';
+}
 // The committed identity, read back off the hidden field. Values are always
 // strings here — '' is a party with no id, never "unspecified".
 function regPartyIdentity(){
@@ -47253,6 +47322,13 @@ function regParams(){
   if (aid) p.set('auctionId', aid);
   else if (from && to) { p.set('from', from); p.set('to', to); }
   if (type === 'sales' && saleType) p.set('saleType', saleType);
+  if (type === 'pending_sales') {
+    // The buyer CODE, parked in the gstin slot by populateRegParties — never
+    // the trade name, which repeats across buyers.
+    const d = (document.getElementById('reg-party') || {}).dataset;
+    const code = (d && d.gstin) || '';
+    if (code) p.set('buyerCode', code);
+  }
   if (type === 'godown') {
     const br = document.getElementById('reg-branch') ? document.getElementById('reg-branch').value : '';
     if (br) p.set('branch', br);
@@ -47359,8 +47435,11 @@ function regColumns(type){
         const col = d >= 30 ? '#b91c1c' : (d >= 14 ? '#B45309' : 'var(--text2)');
         return `<span style="font-weight:${d >= 14 ? '700' : '500'};color:${col}">${d}</span>`;
       } },
-    { key:'state', label:'State', sort:'text' },
-    { key:'tno', label:'TNO', sort:'text', totalKind:'count', totalLabel:'Total' },
+    // No State column — every row on this sheet is a draft awaiting its
+    // original, and which state raised it is not what decides whether to
+    // chase it. ANO, not TNO: the operator's word for the number is the
+    // auction number.
+    { key:'tno', label:'ANO', sort:'text', totalKind:'count', totalLabel:'Total' },
     { key:'date', label:'Date', sort:'text' },
     { key:'sale', label:'Sale', sort:'text' },
     { key:'invo', label:'Proforma', sort:'text' },

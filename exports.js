@@ -2168,8 +2168,9 @@ async function exportPendingSalesRegister(db, opts = {}) {
   const rows = getPendingSalesRegister(db, opts);
   const cols = [
     { header: 'DAYS',   key: 'age_days', width: 7, numFmt: '#,##0' },
-    { header: 'STATE',  key: 'state',  width: 14 },
-    { header: 'TNO',    key: 'tno',    width: 6  },
+    // No STATE column, and the auction number is ANO — kept in step with the
+    // on-screen columns and the PDF spec in exports-pdf.js.
+    { header: 'ANO',    key: 'tno',    width: 6  },
     { header: 'DATE',   key: 'date',   width: 12 },
     { header: 'SALE',   key: 'sale',   width: 6  },
     { header: 'PROFORMA', key: 'invo', width: 10 },

@@ -218,6 +218,27 @@ function cleanup() {
   check('and the advance left behind is the rest of it',
         Math.abs(after.adv - 22299.17) < 0.02, String(after.adv));
 
+  // Every total has to land under the figure it totals. The footer is a
+  // SEPARATE grid from the header, so a stray cell shifts the whole row and
+  // the received total reads as moved — which is exactly what happened when
+  // the Trade column was removed and its spacer was left behind.
+  const foot = await page.evaluate(() => {
+    const grids = [...document.querySelectorAll('#gd-list > div > div')];
+    const head = grids[0], tot = grids[grids.length - 1];
+    const txt = (el) => [...el.children].map(c => c.textContent.trim());
+    const h = txt(head), f = txt(tot);
+    const at = (label) => {
+      const i = h.findIndex(x => new RegExp(label, 'i').test(x));
+      return i < 0 ? null : f[i];
+    };
+    return { cells: f.length, heads: h.length,
+             recd: at('Recd'), moved: at('Moved'), bal: at('Balance') };
+  });
+  check('the totals row has one cell per column', foot.cells === foot.heads, JSON.stringify(foot));
+  check('the Recd Wt total is under Recd Wt', /180\.500/.test(foot.recd || ''), JSON.stringify(foot));
+  check('…and the Moved Wt total is under Moved Wt', /100\.000/.test(foot.moved || ''), JSON.stringify(foot));
+  check('…and the Balance total under Balance', /80\.500/.test(foot.bal || ''), JSON.stringify(foot));
+
   console.log('\n[6] An emptied entry leaves the in-store list');
   await page.evaluate(() => gdOpenMove(_gd.rows[0].id));
   await page.waitForFunction(() => document.getElementById('gd-move-modal').classList.contains('show'), { timeout: 10000 });

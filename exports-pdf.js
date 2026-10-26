@@ -1005,8 +1005,9 @@ const COLS = {
   // columns in exports.js; the two are read side by side.
   pending_sales_register: [
     { header: 'DAYS',   key: 'age_days', width: 6 },
-    { header: 'STATE',  key: 'state',  width: 12 },
-    { header: 'TNO',    key: 'tno',    width: 5  },
+    // No STATE, and ANO for the auction number — in step with exports.js
+    // and the on-screen columns.
+    { header: 'ANO',    key: 'tno',    width: 5  },
     { header: 'DATE',   key: 'date',   width: 11 },
     { header: 'SALE',   key: 'sale',   width: 5  },
     { header: 'PROFORMA', key: 'invo', width: 9  },
@@ -1642,7 +1643,9 @@ async function getRowsForType(db, type, auctionId, cfg, extra) {
       return getPendingSalesRegister(db, {
         auctionId: auctionId || (extra && extra.auctionId) || null,
         from: extra && extra.from, to: extra && extra.to,
-        saleType: extra && extra.saleType,
+        // The party filter is the buyer CODE — the PDF has to carry it or a
+        // one-buyer screen would print as every buyer.
+        buyerCode: extra && extra.buyerCode,
       });
     }
 

@@ -14,6 +14,10 @@
 //   [switch]  flipping the mode refetches, rather than leaving the other list
 //   [wording] the heading says which list is on screen; "this auction" is
 //             wrong for stock that carries no trade
+//   [totals]  the totals row counts the rows ON SCREEN. The summary is a
+//             SECOND request, and it was going out without the `godown`
+//             scope the list sends — so a godown list of a few entries
+//             footed the whole trade's lots and bags.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -97,6 +101,7 @@ const cleanup = () => {
       mode: _le.entryMode,
       lots: (_le.recentLots || []).map(l => ({ no: String(l.lot_no), godown: Number(l.godown) || 0 })),
       title: ((document.getElementById('le-recent-title') || {}).textContent || '').trim(),
+      summary: _le.recentSummary,
     }));
   };
 
@@ -116,6 +121,18 @@ const cleanup = () => {
   console.log('\n[wording] the heading follows the list');
   check('it no longer claims "this auction"', !/this auction/i.test(v.title), v.title);
   check('…and names the godown', /godown/i.test(v.title), v.title);
+
+  console.log('\n[totals] the totals row counts the rows on screen');
+  // Three stored entries here, two bookings. The figure to catch is the lot
+  // COUNT: before the fix the godown footer reported the trade's total.
+  check('the godown totals count the stored entries only',
+        !!(v.summary && Number(v.summary.n) === 3 && Number(v.summary.bags) === 15), v.summary);
+  let vb = await snap('auction');
+  check('…and booking mode counts the trade\'s bookings only',
+        !!(vb.summary && Number(vb.summary.n) === 2 && Number(vb.summary.bags) === 20), vb.summary);
+  check('the two footers disagree, as they must',
+        !!(v.summary && vb.summary) && Number(v.summary.n) !== Number(vb.summary.n),
+        { godown: v.summary, booking: vb.summary });
 
   console.log('\n[switch] flipping back refetches');
   v = await snap('auction');

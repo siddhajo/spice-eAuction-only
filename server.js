@@ -17805,6 +17805,12 @@ function registerOpts(req, cfg) {
     from: req.query.from || null,
     to: req.query.to || null,
     saleType: req.query.saleType || null,
+    // Party filter. `buyerCode` is the IDENTITY (invoices.buyer) and wins —
+    // buyer trade names repeat, so filtering on the name alone would sweep in
+    // a namesake. `party` is the name, kept as the fallback for a caller that
+    // only has one. Used by the Pending Sales register.
+    buyerCode: req.query.buyerCode || null,
+    party: req.query.party || null,
     mode: (cfg && cfg.business_mode) || 'e-Auction',
   };
 }
@@ -17837,7 +17843,7 @@ app.get('/api/exports/pending-sales-register', requireExport, async (req, res) =
     const format = String(req.query.format || 'xlsx').toLowerCase();
     if (format === 'pdf') {
       const buffer = await exportAnyPdf(db, 'pending_sales_register', opts.auctionId, cfg,
-        { from: opts.from, to: opts.to, saleType: opts.saleType });
+        { from: opts.from, to: opts.to, buyerCode: opts.buyerCode });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition',
         `attachment; filename="${exportFileName('PendingSalesRegister', ...scopeParts(db, opts))}.pdf"`);

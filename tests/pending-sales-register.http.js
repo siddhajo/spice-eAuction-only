@@ -9,7 +9,9 @@
 //   [cross]    drafts from SEVERAL trades land in one sheet
 //   [raised]   raising the original takes a draft off the list
 //   [age]      rows carry the age that makes it a worklist, oldest first
-//   [export]   the xlsx builds and carries the same rows
+//   [party]    the buyer filter narrows the sheet to one buyer, by CODE
+//   [raised]   raising the original takes a draft off the list
+//   [columns]  ANO not TNO, and no STATE column
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const ExcelJS = require('exceljs');
@@ -55,10 +57,13 @@ const api = async (m, u, b) => {
   await api('PUT', '/api/company-settings', {
     settings: { br1: 'BODI', flag_proforma_invoice: 'true' } });
   await api('POST', '/api/buyers', { buyer: 'B1', code: 'B1', buyer1: 'BUYER ONE', sale: 'L' });
+  // A SECOND buyer, so the party filter has something to leave out. With one
+  // buyer every filter "works" — it just returns the whole sheet.
+  await api('POST', '/api/buyers', { buyer: 'B2', code: 'B2', buyer1: 'BUYER TWO', sale: 'L' });
   const seller = (await api('POST', '/api/traders', { name: 'PENDING SELLER', tel: '9790744421', ppla: 'BODIMETTU' })).d.trader;
 
   // Two trades, each with a draft raised over its own lots.
-  const mkTrade = async (ano, date, lots, startNo) => {
+  const mkTrade = async (ano, date, lots, startNo, bCode, bName) => {
     const a = (await api('POST', '/api/auctions', { ano, date, crop_type: 'ISP' })).d;
     await api('POST', `/api/auctions/${a.id}/allocations`,
       { allocations: [{ branch: 'BODI', start_lot: lots[0], end_lot: lots[lots.length - 1] }] });
@@ -69,7 +74,7 @@ const api = async (m, u, b) => {
     }
     const ls = (await api('GET', `/api/lots/${a.id}`)).d || [];
     await api('POST', '/api/lots/bulk-set-buyer', { ids: ls.map(l => l.id),
-      code: 'B1', buyer: 'B1', buyer1: 'BUYER ONE', sale: 'L' });
+      code: bCode, buyer: bCode, buyer1: bName, sale: 'L' });
     await api('POST', '/api/lots/bulk-price', { items: ls.map(l => ({ id: l.id, price: 3000 })) });
     await api('POST', `/api/lots/calculate/${a.id}`, {});
     // dateSource:'auction' dates each draft from its trade rather than
@@ -79,8 +84,8 @@ const api = async (m, u, b) => {
       { startInvoiceNo: startNo, docType: 'proforma', dateSource: 'auction' });
     return { a, gen: r };
   };
-  const t1 = await mkTrade('60', '2026-09-01', ['001', '002'], 100);
-  const t2 = await mkTrade('61', '2026-10-01', ['010', '011'], 200);
+  const t1 = await mkTrade('60', '2026-09-01', ['001', '002'], 100, 'B1', 'BUYER ONE');
+  const t2 = await mkTrade('61', '2026-10-01', ['010', '011'], 200, 'B2', 'BUYER TWO');
   check('two trades each raised a draft', t1.gen.s === 200 && t2.gen.s === 200,
         { t1: t1.gen.d, t2: t2.gen.d });
 
@@ -103,6 +108,18 @@ const api = async (m, u, b) => {
         rows.map(r => ({ tno: r.tno, age: r.age_days })));
   check('…and is genuinely older', Number(rows[0].age_days) > Number(rows[rows.length - 1].age_days),
         rows.map(r => r.age_days));
+
+  console.log('\n[party] the buyer filter narrows the sheet to one buyer');
+  // Matched on the buyer CODE, not the trade name: names repeat across the
+  // master and a name match would sweep in a namesake.
+  const one = await reg('from=2000-01-01&to=2099-12-31&buyerCode=B1');
+  check('one buyer, one draft', one.length === 1 && String(one[0].tno) === '60',
+        one.map(r2 => ({ tno: r2.tno, bidder: r2.bidder })));
+  const two = await reg('from=2000-01-01&to=2099-12-31&buyerCode=B2');
+  check('…and the other buyer gets the other', two.length === 1 && String(two[0].tno) === '61',
+        two.map(r2 => ({ tno: r2.tno, bidder: r2.bidder })));
+  check('a buyer with no drafts gets an empty sheet, not every draft',
+        (await reg('from=2000-01-01&to=2099-12-31&buyerCode=NOSUCH')).length === 0);
 
   console.log('\n[raised] raising the original takes a draft off the list');
   const drafts = (await api('GET', `/api/invoices?auction_id=${t1.a.id}&docType=proforma`)).d;
@@ -128,6 +145,13 @@ const api = async (m, u, b) => {
     check('…and states the period it covers', /Period: /.test(flat), flat.slice(0, 160));
     check('it carries the DAYS column', /DAYS/.test(flat));
     check('it lists the still-pending trade', /"61"|,61,/.test(flat) || /61/.test(flat));
+
+    console.log('\n[columns] ANO not TNO, and no STATE column');
+    // The operator's word for the auction number is ANO, and which state
+    // raised a draft does not decide whether to chase it.
+    check('the auction number is headed ANO', /ANO/.test(flat), flat.slice(0, 400));
+    check('…not TNO', !/TNO/.test(flat), flat.slice(0, 400));
+    check('no STATE column', !/STATE/.test(flat), flat.slice(0, 400));
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
