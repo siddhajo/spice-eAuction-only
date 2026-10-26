@@ -5357,6 +5357,35 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          half-typed work to a silent logout. Deliberately NOT a .modal-bg:
          this has to appear over whatever is on screen, including an open
          modal, and it must not be dismissible by the generic close helpers. -->
+    <!-- ── Screensaver ───────────────────────────────────────────────
+         An office machine sits on one screen all day — a priced lot grid, a
+         seller's bank details — in a room people walk through. After a few
+         quiet minutes this covers it, and the first key or click clears it.
+
+         z-index 9000: ABOVE everything the app draws, and deliberately BELOW
+         the sign-out warning's 9999. A screensaver that hid a sign-out
+         countdown would cost somebody their half-typed work.
+
+         aria-hidden + inert-by-display: it is scenery, so it never takes
+         focus or appears in the tab order. -->
+    <div id="screensaver" aria-hidden="true" style="display:none;position:fixed;inset:0;z-index:9000;
+         background:linear-gradient(145deg,#06281d 0%,#0b3d2c 45%,#06281d 100%);
+         align-items:center;justify-content:center;cursor:none;user-select:none">
+      <div style="text-align:center;color:#fff;padding:24px;max-width:640px">
+        <!-- The company logo is a PNG on a WHITE ground, not a transparent
+             one, so on this dark panel it lands as a bare white rectangle.
+             Making it a rounded chip turns that into something deliberate
+             rather than something that looks broken. -->
+        <img id="ss-logo" alt="" style="display:none;width:116px;height:116px;object-fit:contain;
+             margin:0 auto 24px;background:#fff;border-radius:22px;padding:12px;
+             box-shadow:0 10px 30px rgba(0,0,0,.28)">
+        <div id="ss-app" style="font-size:46px;font-weight:800;letter-spacing:2px;line-height:1.1">GreenGavel</div>
+        <div id="ss-company" style="margin-top:10px;font-size:15px;font-weight:600;letter-spacing:3px;text-transform:uppercase;color:rgba(255,255,255,.72)"></div>
+        <div id="ss-clock" style="margin-top:30px;font-size:19px;font-weight:600;color:rgba(255,255,255,.88);font-variant-numeric:tabular-nums"></div>
+        <div style="margin-top:28px;font-size:12.5px;letter-spacing:.6px;color:rgba(255,255,255,.45)">Press any key or click to resume</div>
+      </div>
+    </div>
+
     <div id="idle-warn" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px">
       <div style="background:var(--card);border:1.5px solid var(--border);border-radius:14px;max-width:430px;width:100%;padding:24px;box-shadow:0 18px 50px rgba(0,0,0,.25);text-align:center">
         <div style="font-size:34px;line-height:1;margin-bottom:10px">⏳</div>
@@ -7447,7 +7476,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <span class="le-collapsible-chev">▾</span>
           <span class="le-collapsible-title" style="display:inline-flex;align-items:center;gap:8px">
             <span style="width:6px;height:18px;background:var(--green);border-radius:3px;display:inline-block"></span>
-            Recent entries — this auction
+            <span id="le-recent-title">Recent entries — this auction</span>
           </span>
           <span id="le-recent-count" style="font-weight:400;color:var(--text3);font-size:12px;margin-left:8px"></span>
         </div>
@@ -12452,8 +12481,13 @@ const _idle = {
 // whenever settings are saved, so changing the number takes effect at once.
 async function idleInit(){
   let mins = 0;
+  // Hoisted: the screensaver is configured from the SAME settings read below,
+  // so a fetched-fresh cfg reaches both. Reading window._CCFG again further
+  // down would hand the screensaver a stale cache on the one call that
+  // actually had to fetch.
+  let cfg = null;
   try {
-    const cfg = window._CCFG || await j('/api/company-settings/flat');
+    cfg = window._CCFG || await j('/api/company-settings/flat');
     // parseFloat, not parseInt: the server reads the same setting as a number,
     // and truncating a sub-minute window to 0 would mean "never" — the exact
     // opposite of what was typed.
@@ -12463,6 +12497,10 @@ async function idleInit(){
   // The warning eats into the window rather than extending it: a 1-minute
   // setting must not mean two. Never leave less than 10s of warning.
   _idle.warnSec = Math.max(10, Math.min(60, Math.round(_idle.minutes * 60 * 0.25)));
+  // Same settings trip configures the screensaver, so it picks up a changed
+  // number at the same moment auto-logout does — and so it works on an
+  // install where auto-logout is off, which returns early below.
+  try { ssConfigure(cfg || window._CCFG || {}); } catch (_) {}
   if (!_idle.armed) {
     // `capture` so a click a modal swallows still counts as activity,
     // and passive so scroll/touch listeners never block painting.
@@ -12481,6 +12519,13 @@ async function idleInit(){
 // it — a stray mouse nudge should not silently cancel a sign-out the operator
 // never saw.
 function idleBump(force){
+  // The screensaver rides the same activity, on its own clock. Done FIRST and
+  // outside the auto-logout guards below: a click clears it even on an
+  // install where auto-logout is off (minutes 0, which returns early), and
+  // even while the sign-out warning is up — there, dismissing the scenery is
+  // exactly right, because the countdown is what the operator must see.
+  if (_ss.on) ssHide();
+  ssArm();
   if (!_idle.minutes) { idleClearTimers(); return; }
   if (_idle.warning && !force) return;
   idleClearTimers();
@@ -12501,6 +12546,75 @@ function idleClearTimers(){
   if (_idle.timer) { clearTimeout(_idle.timer); _idle.timer = null; }
   if (_idle.tick)  { clearInterval(_idle.tick); _idle.tick = null; }
 }
+
+// ── SCREENSAVER (screensaver_minutes) ────────────────────────────────
+//
+// Rides the SAME activity listeners the sign-out uses (idleInit attaches
+// them once, in capture phase). A second set would double every listener on
+// the document for no gain, and the two clocks would drift apart.
+//
+// It is NOT the sign-out and must never stand in for it:
+//   • its own, independent window — either can be shorter;
+//   • the sign-out warning draws OVER it (9999 vs 9000), so a countdown is
+//     never hidden behind a screensaver;
+//   • it is never shown once the warning is up, and goes away if the warning
+//     arrives while it is showing — the operator has seconds to react and
+//     must not spend them wondering what they are looking at;
+//   • it does NOT touch the sign-out clock. Being covered is not activity,
+//     so an unattended machine still signs out on time.
+const _ss = { minutes: 0, timer: null, tick: null, on: false };
+
+function ssConfigure(cfg){
+  const n = parseFloat(cfg && cfg.screensaver_minutes);
+  _ss.minutes = (Number.isFinite(n) && n > 0) ? Math.min(n, 1440) : 0;
+  ssHide();
+  ssArm();
+}
+function ssArm(){
+  if (_ss.timer) { clearTimeout(_ss.timer); _ss.timer = null; }
+  if (!_ss.minutes || !T) return;
+  _ss.timer = setTimeout(ssShow, Math.max(5000, _ss.minutes * 60 * 1000));
+}
+function ssShow(){
+  // Not over the sign-out warning, and not on the sign-in screen.
+  if (!_ss.minutes || !T || _idle.warning) return;
+  const el = document.getElementById('screensaver');
+  if (!el) return;
+  const cfg = window._CCFG || {};
+  const setText = (id, v) => { const n = document.getElementById(id); if (n) n.textContent = v; };
+  setText('ss-app', String(cfg.app_name || 'GreenGavel').trim() || 'GreenGavel');
+  // The customer's own name underneath, so a machine on a counter says whose
+  // office it is. Blank on an install that has not been branded yet.
+  setText('ss-company', String(cfg.trade_name || cfg.short_name || '').trim());
+  const logo = document.getElementById('ss-logo');
+  const src = document.getElementById('topbar-logo-img');
+  if (logo && src && src.getAttribute('src')) {
+    logo.src = src.getAttribute('src');
+    logo.style.display = '';
+  }
+  el.style.display = 'flex';
+  _ss.on = true;
+  ssTick();
+  if (_ss.tick) clearInterval(_ss.tick);
+  _ss.tick = setInterval(ssTick, 1000);
+}
+function ssTick(){
+  // IST, not the device clock — same rule as every other stamp in the app
+  // (see ist.js). A machine left on UTC would otherwise show the wrong time
+  // in letters big enough to read across the room.
+  const el = document.getElementById('ss-clock');
+  if (!el) return;
+  const now = new Date();
+  const d = (typeof fmtIst === 'function') ? fmtIst(now, { dateOnly: true }) : '';
+  const t = (typeof fmtIstTime === 'function') ? fmtIstTime(now, { label: true }) : '';
+  el.textContent = [d, t].filter(Boolean).join('  ·  ');
+}
+function ssHide(){
+  if (_ss.tick) { clearInterval(_ss.tick); _ss.tick = null; }
+  const el = document.getElementById('screensaver');
+  if (el) el.style.display = 'none';
+  _ss.on = false;
+}
 function idleHideWarning(){
   _idle.warning = false;
   const el = document.getElementById('idle-warn');
@@ -12508,6 +12622,10 @@ function idleHideWarning(){
 }
 function idleShowWarning(){
   if (!_idle.minutes || !T) return;
+  // The countdown takes the screen. It would draw over the screensaver
+  // anyway (9999 vs 9000), but leaving scenery behind a sign-out warning
+  // just makes the warning harder to read in the seconds that matter.
+  if (_ss.on) ssHide();
   _idle.warning = true;
   const el = document.getElementById('idle-warn');
   const num = document.getElementById('idle-countdown');
@@ -23488,6 +23606,17 @@ function leSetEntryMode(mode, opts){
     else if (typeof leLoadAllocBar === 'function') { try { leLoadAllocBar(); } catch (_) {} }
   }
   leApplyLotNoLock();
+  // The list heading names what is actually on screen. Stored stock is not
+  // "this auction" — it carries no trade at all.
+  const rTitle = document.getElementById('le-recent-title');
+  if (rTitle) rTitle.textContent = godown ? 'Godown entries — all stored stock'
+                                          : 'Recent entries — this auction';
+  // The recent list is scoped to the mode (see loadLeRecent), so switching
+  // mode has to refetch — otherwise the operator keeps looking at the other
+  // kind of entry. Back to page 1: the two lists have different lengths, and
+  // an offset carried over from the other one lands nowhere.
+  if (_le.recentPage !== 1) _le.recentPage = 1;
+  if (typeof loadLeRecent === 'function') { try { loadLeRecent(); } catch (_) {} }
   if (opts && opts.suggest === false) return;
   if (godown) leSuggestGodownLotNo();
   else if (!_le.editingLotId) leAutoSuggestLotNo();
@@ -24120,7 +24249,16 @@ async function loadLeRecent(){
     // the seller column for this trade. Without this query param the
     // search would only filter the locally-loaded page and miss every
     // other matching lot in the trade.
-    const qs = `paginated=1&limit=${PAGE}&offset=${offset}`
+    // The list shows what THIS ENTRY MODE is for, and nothing else:
+    //   Book for auction     → the trade's bookings (godown=0)
+    //   Godown storage only  → stored stock (godown=1)
+    //
+    // Without it the two were mixed. That got worse when stored stock was
+    // untied from trades: an unscoped request now means "this trade's lots
+    // PLUS all stored stock", so every godown entry in the install showed
+    // under every trade while booking — see _lotScopeSql() on the server.
+    const godownOnly = (typeof leGodownMode === 'function' && leGodownMode()) ? '1' : '0';
+    const qs = `paginated=1&limit=${PAGE}&offset=${offset}&godown=${godownOnly}`
              + (search ? `&name=${encodeURIComponent(search)}` : '')
              + (branch ? `&branch=${encodeURIComponent(branch)}` : '');
     const data = await j(`/api/lots/${aid}?${qs}`);
@@ -24387,8 +24525,10 @@ function renderLeRecent(){
     // Distinguish "no lots in trade" from "no matches for filter" so the
     // user knows whether to enter a lot or clear the filter.
     host.innerHTML = searchActive
-      ? `<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">No lots match <b>${esc(_le.recentSearch)}</b> in this trade. <a href="#" onclick="leClearRecentSearch();return false" style="color:var(--green)">Clear filter</a></div>`
-      : '<div style="padding:12px;color:var(--text3);font-size:12px;text-align:center">No lots in this trade yet</div>';
+      // Stored stock carries no trade, so "in this trade" would be wrong
+      // for it — the wording follows whichever list is on screen.
+      ? `<div style="padding:14px;color:var(--text3);font-size:12px;text-align:center">No ${leGodownMode() ? 'godown entries' : 'lots'} match <b>${esc(_le.recentSearch)}</b>${leGodownMode() ? '' : ' in this trade'}. <a href="#" onclick="leClearRecentSearch();return false" style="color:var(--green)">Clear filter</a></div>`
+      : `<div style="padding:12px;color:var(--text3);font-size:12px;text-align:center">${leGodownMode() ? 'Nothing in the godown yet' : 'No lots in this trade yet'}</div>`;
     if (count) count.textContent = '';
     leUpdateRecentSearchStatus();
     leUpdatePrintToolbar();
@@ -27908,8 +28048,8 @@ const SET_FIELD_GROUPS = {
       keys:['mask_acct','mask_ifsc','mask_phone'] },
   ],
   company: [
-    { title:'Name & Identity', icon:'🏢', hint:'What the company is called on every document — the trade name, its legal suffix, and the short code used in file names.',
-      keys:['trade_name','legal_name','short_name','logo'] },
+    { title:'Name & Identity', icon:'🏢', hint:'What the company is called on every document — the trade name, its legal suffix, and the short code used in file names. The first field is a different thing: the name of THIS SOFTWARE, shown on the screensaver and the sign-in card, not on any document.',
+      keys:['app_name','trade_name','legal_name','short_name','logo'] },
     { title:'Constitution', icon:'🤝', hint:'Partnership firms print the firm name / registration number under the company name.',
       keys:['is_partnership','partnership_name'] },
     { title:'Statutory Registrations', icon:'📜', hint:'Numbers printed in the invoice header and quoted in the Spice Board returns.',
@@ -27958,6 +28098,8 @@ const SET_FIELD_GROUPS = {
   security: [
     { title:'Concurrent Sign-ins', icon:'🔐', hint:'Whether one username may be signed in twice, and how long a quiet session keeps holding the name. The last field is a different question: how long an UNATTENDED screen stays signed in — leave it 0 and nobody is ever signed out automatically. Idle there means no mouse, key or touch; the app’s background polling does not count, and a countdown warns before it happens.',
       keys:['single_session','session_idle_minutes','auto_logout_minutes'] },
+    { title:'Screensaver', icon:'🖥', hint:'Covers the screen after a few quiet minutes — an office machine sits on a priced lot grid or a seller’s bank details all day, in a room people walk through. Any key or click clears it. Separate from the sign-out above: that still runs on its own clock, and its countdown draws OVER the screensaver so it can never be hidden. 0 = never.',
+      keys:['screensaver_minutes'] },
     { title:'Admin Notifications', icon:'🔔', hint:'Tell admins when another admin signs in.',
       keys:['admin_login_alert'] },
   ],

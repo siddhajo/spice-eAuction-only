@@ -76,6 +76,19 @@ for (const k of RETIRED_SETTING_KEYS.keys()) HIDDEN_SETTING_KEYS.add(k);
 const DEFAULTS = [
   // ── COMPANY (Primary - ISP) ────────────────────────────────
   { key: 'logo',             value: '', category: 'company',     label: 'Logo Code',                type: 'text' },
+  // The SOFTWARE's own name, as against trade_name below, which is the
+  // CUSTOMER's company. The two are different things and were conflated:
+  // every screen showed the customer's name and the product had none, so
+  // "Admin Console" stood in for it.
+  //
+  // Shown on the SCREENSAVER. Deliberately not on the top bar or the sign-in
+  // card, which keep the customer's own name — that is what an operator wants
+  // to see while working, and the product name earns its place on the one
+  // screen nobody is working on.
+  //
+  // A setting rather than a constant so a reseller can badge it, and so
+  // changing it never means a rebuild.
+  { key: 'app_name',         value: 'GreenGavel', category: 'company', label: 'Application Name (this software)', type: 'text' },
   { key: 'trade_name',       value: '', category: 'company',     label: 'Trade Name',               type: 'text' },
   { key: 'legal_name',       value: '', category: 'company',     label: 'Legal Name Suffix',        type: 'text' },
   { key: 'short_name',       value: '', category: 'company',     label: 'Short Name',               type: 'text' },
@@ -880,6 +893,20 @@ const DEFAULTS = [
   // 0 = never sign out, and that is the default: an install that never asked
   // for this must not start ejecting its operators on upgrade.
   { key: 'auto_logout_minutes',   value: '0',    category: 'security', label: 'Sign out after inactivity (minutes; 0 = never)', type: 'number'  },
+  // ── Screensaver ───────────────────────────────────────────────────
+  // The office machines sit on one screen all day — a priced lot grid, a
+  // seller's bank details — in a room people walk through. The screensaver
+  // covers that after a few quiet minutes and clears on the first key or
+  // click.
+  //
+  // It is NOT the sign-out: auto_logout_minutes above still runs on its own
+  // clock, and the sign-out warning draws OVER the screensaver (z-index 9999
+  // against 9000) so a countdown can never be hidden behind it. Setting one
+  // shorter than the other is fine and does the sensible thing either way.
+  //
+  // 0 = never, and that is the default: an install that never asked for this
+  // must not start blanking screens on upgrade.
+  { key: 'screensaver_minutes',   value: '0',    category: 'security', label: 'Screensaver after inactivity (minutes; 0 = never)', type: 'number'  },
   // Cross-notify concurrent admins: when an admin signs in while another
   // admin is already online, both are told. The one signing in sees it on
   // the login screen; the one already online gets a banner from the
