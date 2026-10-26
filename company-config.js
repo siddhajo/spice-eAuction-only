@@ -88,7 +88,15 @@ const DEFAULTS = [
   //
   // A setting rather than a constant so a reseller can badge it, and so
   // changing it never means a rebuild.
-  { key: 'app_name',         value: 'GreenGavel', category: 'company', label: 'Application Name (this software)', type: 'text' },
+  { key: 'app_name',         value: 'SpiceFlow eAuction Suite', category: 'company', label: 'Application Name (this software)', type: 'text' },
+  // The two lines UNDER the name on the screensaver. Settings, not constants,
+  // for the same reason the name is: a reseller badges this without a rebuild,
+  // and a changed phone number must not mean editing HTML.
+  //
+  // Blank either one and its line simply does not render — an install with no
+  // support number must not show an empty row where one should be.
+  { key: 'app_credit',       value: 'Powered by KJ & Co', category: 'company', label: 'Screensaver credit line', type: 'text' },
+  { key: 'app_contact',      value: '9790745462 / 8248922434', category: 'company', label: 'Screensaver support number(s)', type: 'text' },
   { key: 'trade_name',       value: '', category: 'company',     label: 'Trade Name',               type: 'text' },
   { key: 'legal_name',       value: '', category: 'company',     label: 'Legal Name Suffix',        type: 'text' },
   { key: 'short_name',       value: '', category: 'company',     label: 'Short Name',               type: 'text' },
