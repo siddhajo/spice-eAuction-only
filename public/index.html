@@ -5399,25 +5399,26 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div id="screensaver" aria-hidden="true" style="display:none;position:fixed;inset:0;z-index:9000;
          background:linear-gradient(145deg,#06281d 0%,#0b3d2c 45%,#06281d 100%);
          align-items:center;justify-content:center;cursor:none;user-select:none">
+      <!-- Fireworks. Behind the lockup and pointer-events:none, so it is
+           scenery in the literal sense — it can never intercept the key or
+           click that dismisses the screensaver. -->
+      <canvas id="ss-fx" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>
       <!-- One centred column, and every line in it shares that one axis —
            name, customer, credit, numbers, clock. 860px rather than 640:
            a three-word product name ("SpiceFlow eAuction Suite") overflowed
            the narrower box and wrapped mid-name, which is what made the
            block look crooked. -->
-      <div style="text-align:center;color:#fff;padding:24px;max-width:860px;margin:0 auto">
-        <!-- The company logo is a PNG on a WHITE ground, not a transparent
-             one, so on this dark panel it lands as a bare white rectangle.
-             Making it a rounded chip turns that into something deliberate
-             rather than something that looks broken. -->
-        <img id="ss-logo" alt="" style="display:none;width:116px;height:116px;object-fit:contain;
-             margin:0 auto 24px;background:#fff;border-radius:22px;padding:12px;
-             box-shadow:0 10px 30px rgba(0,0,0,.28)">
+      <div style="position:relative;z-index:1;text-align:center;color:#fff;padding:24px;max-width:860px;margin:0 auto">
+        <!-- The APPLICATION's mark, not the customer's. logo-app.svg is drawn
+             for a dark ground, so it needs no white plate behind it — the old
+             chip existed only because the company PNG sits on white. -->
+        <img id="ss-logo" alt="" style="display:none;width:104px;height:104px;object-fit:contain;
+             margin:0 auto 22px;filter:drop-shadow(0 6px 18px rgba(0,0,0,.35))">
         <!-- clamp(), not a fixed 46px: the name is operator-typed and can be
              any length, so it scales with the viewport instead of spilling
              out of the box on a laptop or a phone. balance keeps a wrap, if
              one is still needed, from leaving a single orphan word. -->
         <div id="ss-app" style="font-size:clamp(27px,4.4vw,46px);font-weight:800;letter-spacing:1.5px;line-height:1.14;text-wrap:balance">SpiceFlow eAuction Suite</div>
-        <div id="ss-company" style="margin-top:10px;font-size:15px;font-weight:600;letter-spacing:3px;text-transform:uppercase;color:rgba(255,255,255,.72)"></div>
         <!-- Credit + support numbers, as one block under a hairline so they
              read as attribution rather than as part of the product name.
              The rule is drawn by the wrapper, so it disappears along with
@@ -12627,10 +12628,8 @@ function ssShow(){
   if (!el) return;
   const cfg = window._CCFG || {};
   const setText = (id, v) => { const n = document.getElementById(id); if (n) n.textContent = v; };
-  setText('ss-app', String(cfg.app_name || 'GreenGavel').trim() || 'GreenGavel');
-  // The customer's own name underneath, so a machine on a counter says whose
-  // office it is. Blank on an install that has not been branded yet.
-  setText('ss-company', String(cfg.trade_name || cfg.short_name || '').trim());
+  const FALLBACK_APP_NAME = 'SpiceFlow eAuction Suite';
+  setText('ss-app', String(cfg.app_name || FALLBACK_APP_NAME).trim() || FALLBACK_APP_NAME);
   // Credit and support numbers. Each line is dropped when blank, and the
   // whole block (hairline included) goes when neither is set — an unbadged
   // install shows no empty rule.
@@ -12642,18 +12641,196 @@ function ssShow(){
   hide('ss-credit', !credit);
   hide('ss-contact', !contact);
   hide('ss-by', !credit && !contact);
+  // The APPLICATION's mark. This used to copy the topbar image, which is the
+  // CUSTOMER's logo — the one thing this panel should not be showing, since
+  // the customer's name and logo are what the operator looks at all day on
+  // every other screen.
   const logo = document.getElementById('ss-logo');
-  const src = document.getElementById('topbar-logo-img');
-  if (logo && src && src.getAttribute('src')) {
-    logo.src = src.getAttribute('src');
-    logo.style.display = '';
+  const logoSrc = String(cfg.app_logo || '').trim();
+  if (logo) {
+    if (logoSrc) {
+      // A path that 404s must leave no gap where a mark would be.
+      logo.onerror = function(){ this.style.display = 'none'; };
+      if (logo.getAttribute('src') !== logoSrc) logo.src = logoSrc;
+      logo.style.display = '';
+    } else {
+      logo.style.display = 'none';
+    }
   }
   el.style.display = 'flex';
   _ss.on = true;
   ssTick();
   if (_ss.tick) clearInterval(_ss.tick);
   _ss.tick = setInterval(ssTick, 1000);
+  ssFxStart();
 }
+// ── Screensaver fireworks (screensaver_fireworks) ────────────────────
+//
+// This draws on a machine NOBODY IS SITTING AT, possibly until morning, so
+// it is written to be frugal before it is written to be pretty:
+//
+//   • at most SS_FX_MAX rockets in the air, and sparks die on a timer, so
+//     the particle count has a hard ceiling rather than growing with uptime;
+//   • the rAF loop is started by ssShow and cancelled by ssHide — nothing
+//     keeps running behind a dismissed screensaver;
+//   • a hidden tab stops it: browsers already park rAF there, and the frame
+//     guard below drops the oversized dt that arrives on the way back, so a
+//     machine waking after hours does not replay them as one lurch;
+//   • prefers-reduced-motion means no animation at all.
+//
+// Sizes are fractions of the panel, never pixels, so the same burst reads
+// the same on a counter-top laptop and on a wall display.
+const _ssFx = { raf: 0, cv: null, ctx: null, rockets: [], sparks: [], flashes: [], next: 0, last: 0, w: 0, h: 0 };
+const SS_FX_COLORS = ['#ffd166', '#ffb703', '#ff8f3f', '#ff5d5d', '#ffe9a8', '#b6f5c8', '#9fd8ff'];
+const SS_FX_MAX = 4;
+
+// Honours the setting first, then the operator's own OS-level motion
+// preference — a person who has asked the machine for less movement does
+// not get fireworks because an admin liked them.
+function ssFxEnabled(){
+  const cfg = window._CCFG || {};
+  const v = cfg.screensaver_fireworks;
+  if (v !== undefined && String(v) === 'false') return false;
+  try { if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false; } catch (_) {}
+  return true;
+}
+// Back the canvas with real device pixels, capped at 2× — a 3× phone panel
+// triples the fill cost for a difference nobody sees across a room.
+function ssFxSize(){
+  const cv = _ssFx.cv; if (!cv) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = cv.clientWidth || window.innerWidth;
+  const h = cv.clientHeight || window.innerHeight;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  _ssFx.w = w; _ssFx.h = h;
+  if (_ssFx.ctx) _ssFx.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+const ssFxPick = () => SS_FX_COLORS[(Math.random() * SS_FX_COLORS.length) | 0];
+
+function ssFxLaunch(){
+  const h = _ssFx.h;
+  _ssFx.rockets.push({
+    x: _ssFx.w * (0.12 + Math.random() * 0.76), y: h, py: h,
+    vy: -(h * 0.0128 + Math.random() * h * 0.0042),
+    // Detonate in the upper third, above the lockup. Bursting level with the
+    // name put sparks THROUGH it at the brightest moment; sparks still drift
+    // down across the panel afterwards, which is the part worth having.
+    burstY: h * (0.09 + Math.random() * 0.25),
+    color: ssFxPick(),
+  });
+}
+function ssFxBurst(r){
+  const h = _ssFx.h;
+  _ssFx.flashes.push({ x: r.x, y: r.y, life: 0, max: 220, r: h * 0.055, color: r.color });
+  const n = 68 + ((Math.random() * 30) | 0);
+  for (let i = 0; i < n; i++) {
+    // Jittered ring rather than pure random: an even spread reads as a
+    // burst, where clustering just looks like a handful of stray dots.
+    const a = (i / n) * Math.PI * 2 + Math.random() * 0.22;
+    const sp = h * (0.0062 + Math.random() * 0.0118);
+    _ssFx.sparks.push({
+      x: r.x, y: r.y, px: r.x, py: r.y,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: 0, max: 1150 + Math.random() * 1150,
+      // A few white sparks per burst give it a hot centre.
+      color: Math.random() < 0.18 ? '#ffffff' : r.color,
+    });
+  }
+}
+function ssFxFrame(ts){
+  if (!_ssFx.ctx) return;
+  // First frame, and any frame after a long park (hidden tab, lid closed),
+  // advances by one step instead of replaying the whole gap at once.
+  const raw = _ssFx.last ? ts - _ssFx.last : 16.7;
+  _ssFx.last = ts;
+  const dt = Math.min(raw, 50);
+  const f = dt / 16.7;
+  const { ctx, w, h } = _ssFx;
+  const g = h * 0.00026;
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+
+  _ssFx.next -= dt;
+  if (_ssFx.next <= 0 && _ssFx.rockets.length < SS_FX_MAX) {
+    ssFxLaunch();
+    _ssFx.next = 330 + Math.random() * 560;
+  }
+
+  for (let i = _ssFx.rockets.length - 1; i >= 0; i--) {
+    const r = _ssFx.rockets[i];
+    r.py = r.y; r.y += r.vy * f; r.vy += g * f;
+    if (r.y <= r.burstY || r.vy >= 0) { ssFxBurst(r); _ssFx.rockets.splice(i, 1); continue; }
+    ctx.strokeStyle = r.color;
+    ctx.beginPath(); ctx.moveTo(r.x, r.py); ctx.lineTo(r.x, r.y);
+    ctx.globalAlpha = 0.30; ctx.lineWidth = 6;   ctx.stroke();
+    ctx.globalAlpha = 0.95; ctx.lineWidth = 2.2; ctx.stroke();
+  }
+
+  for (let i = _ssFx.flashes.length - 1; i >= 0; i--) {
+    const fl = _ssFx.flashes[i];
+    fl.life += dt;
+    if (fl.life >= fl.max) { _ssFx.flashes.splice(i, 1); continue; }
+    const k = 1 - fl.life / fl.max;
+    const gr = ctx.createRadialGradient(fl.x, fl.y, 0, fl.x, fl.y, fl.r * (1.7 - k));
+    gr.addColorStop(0, fl.color); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = k * 0.55;
+    ctx.fillStyle = gr;
+    ctx.beginPath(); ctx.arc(fl.x, fl.y, fl.r * (1.7 - k), 0, Math.PI * 2); ctx.fill();
+  }
+
+  for (let i = _ssFx.sparks.length - 1; i >= 0; i--) {
+    const s = _ssFx.sparks[i];
+    s.life += dt;
+    if (s.life >= s.max) { _ssFx.sparks.splice(i, 1); continue; }
+    s.px = s.x; s.py = s.y;
+    s.x += s.vx * f; s.y += s.vy * f;
+    s.vy += g * 0.58 * f;
+    const drag = Math.pow(0.986, f);
+    s.vx *= drag; s.vy *= drag;
+    // Sparks hold their colour then go out fast — a linear fade reads as a
+    // slow dissolve, which is not what a cracker does. k^1.4 keeps them
+    // legible for most of their life and then drops them.
+    const k = 1 - s.life / s.max;
+    const a = Math.pow(k, 1.4);
+    ctx.strokeStyle = s.color;
+    ctx.beginPath(); ctx.moveTo(s.px, s.py); ctx.lineTo(s.x, s.y);
+    // Halo first, bright core over it. Two strokes per spark is what makes
+    // a 2px line read as a point of LIGHT on a dark panel rather than as a
+    // coloured dash — and it is still cheap at this particle count.
+    ctx.globalAlpha = a * 0.30; ctx.lineWidth = 7;   ctx.stroke();
+    ctx.globalAlpha = a;        ctx.lineWidth = 2.3; ctx.stroke();
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  _ssFx.raf = requestAnimationFrame(ssFxFrame);
+}
+function ssFxStart(){
+  ssFxStop();
+  if (!ssFxEnabled()) return;
+  const cv = document.getElementById('ss-fx');
+  if (!cv || !cv.getContext) return;
+  _ssFx.cv = cv;
+  _ssFx.ctx = cv.getContext('2d');
+  ssFxSize();
+  _ssFx.rockets = []; _ssFx.sparks = []; _ssFx.flashes = [];
+  _ssFx.last = 0;
+  _ssFx.next = 220;              // one goes up almost at once, not after a wait
+  _ssFx.raf = requestAnimationFrame(ssFxFrame);
+}
+function ssFxStop(){
+  if (_ssFx.raf) { cancelAnimationFrame(_ssFx.raf); _ssFx.raf = 0; }
+  _ssFx.rockets = []; _ssFx.sparks = []; _ssFx.flashes = [];
+  _ssFx.last = 0;
+  if (_ssFx.ctx && _ssFx.w) _ssFx.ctx.clearRect(0, 0, _ssFx.w, _ssFx.h);
+}
+// The panel is fixed to the viewport, so a resized window must re-back the
+// canvas or the burst stretches. Only while it is actually up.
+window.addEventListener('resize', () => { if (_ss.on && _ssFx.ctx) ssFxSize(); });
+
 function ssTick(){
   // IST, not the device clock — same rule as every other stamp in the app
   // (see ist.js). A machine left on UTC would otherwise show the wrong time
@@ -12667,6 +12844,7 @@ function ssTick(){
 }
 function ssHide(){
   if (_ss.tick) { clearInterval(_ss.tick); _ss.tick = null; }
+  ssFxStop();
   const el = document.getElementById('screensaver');
   if (el) el.style.display = 'none';
   _ss.on = false;
@@ -28109,7 +28287,7 @@ const SET_FIELD_GROUPS = {
   ],
   company: [
     { title:'Name & Identity', icon:'🏢', hint:'What the company is called on every document — the trade name, its legal suffix, and the short code used in file names. The first three fields are a different thing: the name of THIS SOFTWARE and the credit / support numbers shown beneath it on the screensaver. None of the three appears on any document.',
-      keys:['app_name','app_credit','app_contact','trade_name','legal_name','short_name','logo'] },
+      keys:['app_name','app_logo','app_credit','app_contact','trade_name','legal_name','short_name','logo'] },
     { title:'Constitution', icon:'🤝', hint:'Partnership firms print the firm name / registration number under the company name.',
       keys:['is_partnership','partnership_name'] },
     { title:'Statutory Registrations', icon:'📜', hint:'Numbers printed in the invoice header and quoted in the Spice Board returns.',
@@ -28159,7 +28337,7 @@ const SET_FIELD_GROUPS = {
     { title:'Concurrent Sign-ins', icon:'🔐', hint:'Whether one username may be signed in twice, and how long a quiet session keeps holding the name. The last field is a different question: how long an UNATTENDED screen stays signed in — leave it 0 and nobody is ever signed out automatically. Idle there means no mouse, key or touch; the app’s background polling does not count, and a countdown warns before it happens.',
       keys:['single_session','session_idle_minutes','auto_logout_minutes'] },
     { title:'Screensaver', icon:'🖥', hint:'Covers the screen after a few quiet minutes — an office machine sits on a priced lot grid or a seller’s bank details all day, in a room people walk through. Any key or click clears it. Separate from the sign-out above: that still runs on its own clock, and its countdown draws OVER the screensaver so it can never be hidden. 0 = never.',
-      keys:['screensaver_minutes'] },
+      keys:['screensaver_minutes','screensaver_fireworks'] },
     { title:'Admin Notifications', icon:'🔔', hint:'Tell admins when another admin signs in.',
       keys:['admin_login_alert'] },
   ],

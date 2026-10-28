@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="SpiceFlow">
+  <!-- SpiceFlow's own mark — the SOFTWARE's logo, as against logo-ispl.png
+       which is the customer's company logo and is uploaded per install.
+       This one ships with the build, so it is an SVG rather than an upload:
+       it scales from a 20px tab icon to a wall display with no second file.
+
+       Drawn for a DARK ground (the screensaver panel). Everything is gold
+       and cream with no white plate behind it, so it sits on the gradient
+       rather than on a rectangle. -->
+  <defs>
+    <linearGradient id="sf-pod" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe9a8"/>
+      <stop offset="0.55" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#ff8f3f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- An OPEN ring, not a closed one: the gap is the flow, and it is what
+       keeps the mark from reading as a static badge. An earlier version put
+       an S-curve ribbon through the middle instead — behind the pod it broke
+       into two stubs that looked like a twig, and at tab size it was noise.
+       Circumference is 2*pi*53 = 333, so 272 on / 61 off leaves one gap,
+       rotated to sit at the top right. -->
+  <circle cx="60" cy="60" r="53" fill="none" stroke="#ffd166" stroke-opacity="0.5"
+          stroke-width="3.2" stroke-linecap="round"
+          stroke-dasharray="272 61" transform="rotate(-62 60 60)"/>
+
+  <!-- Cardamom pod, upright at the centre: three ribs and a stem, the way
+       the pod is actually drawn in the trade. -->
+  <path d="M60 23 C82 41 84 62 60 97 C36 62 38 41 60 23 Z" fill="url(#sf-pod)"/>
+  <path d="M60 32 L60 88" stroke="#8a4b12" stroke-opacity="0.45" stroke-width="2" stroke-linecap="round"/>
+  <path d="M60 46 C66 52 68 60 65 72" fill="none" stroke="#8a4b12" stroke-opacity="0.28" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M60 46 C54 52 52 60 55 72" fill="none" stroke="#8a4b12" stroke-opacity="0.28" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M60 24 L60 15" stroke="#b6f5c8" stroke-opacity="0.85" stroke-width="3" stroke-linecap="round"/>
+</svg>

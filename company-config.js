@@ -96,6 +96,12 @@ const DEFAULTS = [
   // Blank either one and its line simply does not render — an install with no
   // support number must not show an empty row where one should be.
   { key: 'app_credit',       value: 'Powered by KJ & Co', category: 'company', label: 'Screensaver credit line', type: 'text' },
+  // The SOFTWARE's mark, which is not the customer's logo: `logo-ispl.png`
+  // is uploaded per install and belongs to the auction house, this one ships
+  // with the build and belongs to the product. A path rather than an upload
+  // so a reseller can point it at their own file without a rebuild; blank
+  // shows no mark at all.
+  { key: 'app_logo',         value: '/logo-app.svg', category: 'company', label: 'Application logo (path)', type: 'text' },
   { key: 'app_contact',      value: '9790745462 / 8248922434', category: 'company', label: 'Screensaver support number(s)', type: 'text' },
   { key: 'trade_name',       value: '', category: 'company',     label: 'Trade Name',               type: 'text' },
   { key: 'legal_name',       value: '', category: 'company',     label: 'Legal Name Suffix',        type: 'text' },
@@ -915,6 +921,13 @@ const DEFAULTS = [
   // 0 = never, and that is the default: an install that never asked for this
   // must not start blanking screens on upgrade.
   { key: 'screensaver_minutes',   value: '0',    category: 'security', label: 'Screensaver after inactivity (minutes; 0 = never)', type: 'number'  },
+  // Fireworks on the screensaver panel. On by default, but that costs an
+  // install nothing: the screensaver itself is off until somebody sets the
+  // minutes above, so nothing animates on an install that never asked.
+  //
+  // Switchable because this is taste, and because a machine driving a wall
+  // display over remote desktop is better off with a still panel.
+  { key: 'screensaver_fireworks', value: 'true', category: 'security', label: 'Screensaver: fireworks animation', type: 'boolean' },
   // Cross-notify concurrent admins: when an admin signs in while another
   // admin is already online, both are told. The one signing in sees it on
   // the login screen; the one already online gets a banner from the
