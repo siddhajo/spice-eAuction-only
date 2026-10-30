@@ -92,7 +92,7 @@ const {
   generSalesXML, generSalesIspXML, generSalesAspXML, generIspPurchaseXML,
   generMerchantsXML,
   generRDPurchaseXML, generURDPurchaseXML, generDebitNoteXML, generLedgerXML,
-  buildSalesRows, buildSalesIspRows, buildSalesAspRows, buildIrpJson, buildDebitNoteIrpJson, buildEwbJson,
+  buildSalesRows, buildSalesIspRows, buildSalesAspRows, buildIrpJson, buildDebitNoteIrpJson,
   buildRDPurchaseRows, buildURDPurchaseRows, buildDebitNoteRows, buildDebitNotePlanterRows, buildLedgerRows,
   buildSalesPartyLedgerRows, buildRDPartyLedgerRows, buildURDPartyLedgerRows,
   listAuctionParties,
@@ -20706,14 +20706,6 @@ app.get('/api/tally/invoice-voucher/:auctionId', requireExport, (req, res) => {
     const safeName = String(label).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
     const ispCompany = resolveTallyCompanyName(cfg, 'isp');
     const fmt = String(req.query.format || '').toLowerCase();
-    // ?format=ewb → this one invoice as an e-way bill bulk-upload JSON.
-    if (fmt === 'ewb') {
-      return sendEwbJson(res, rows, cfg, {
-        companyName: ispCompany,
-        filename: `${exportFileName('EWayBill', safeName, anoForFilename(db, auctionId))}.json`,
-        wantReport: String(req.query.report || '') === '1',
-      });
-    }
     // ?format=irp → this single invoice as GST e-Invoice (IRP / NIC) JSON.
     if (fmt === 'irp') {
       const irp = buildIrpJson(rows, cfg, { companyName: ispCompany });
@@ -20754,18 +20746,13 @@ app.get('/api/tally/invoice-voucher/:auctionId', requireExport, (req, res) => {
 // ids we hand back ARE that table's primary keys (invoices.id,
 // purchases.id, bills.id, debit_notes.id, debit_notes_planter.id), so
 // the client posts them straight through — no second resolution step.
-// `ewb` = can produce an e-way bill bulk-upload JSON. Only the sales
-// vouchers can: an e-way bill accompanies a MOVEMENT of goods, and the sales
-// invoice is the only document here that moves any. A debit note bills
-// commission on cardamom that never leaves on its account, so it carries no
-// consignment to document — hence irp: true but ewb: false.
 const TALLY_VOUCHER_KINDS = {
-  sales_isp:          { pdf: '/api/invoices/pdf-bulk',            docType: 'sales-invoice',    irp: true,  ewb: true  },
-  sales:              { pdf: '/api/invoices/pdf-bulk',            docType: 'sales-invoice',    irp: true,  ewb: true  },
-  rd_purchase:        { pdf: '/api/purchases/pdf-bulk',           docType: 'purchase-invoice', irp: false, ewb: false },
-  urd_purchase:       { pdf: '/api/bills/pdf-bulk',               docType: 'agri-bill',        irp: false, ewb: false },
-  debit_note:         { pdf: '/api/debit-notes/pdf-bulk',         docType: 'debit-note',       irp: true,  ewb: false },
-  debit_note_planter: { pdf: '/api/debit-notes-planter/pdf-bulk', docType: 'debit-note',       irp: false, ewb: false },
+  sales_isp:          { pdf: '/api/invoices/pdf-bulk',            docType: 'sales-invoice',    irp: true  },
+  sales:              { pdf: '/api/invoices/pdf-bulk',            docType: 'sales-invoice',    irp: true  },
+  rd_purchase:        { pdf: '/api/purchases/pdf-bulk',           docType: 'purchase-invoice', irp: false },
+  urd_purchase:       { pdf: '/api/bills/pdf-bulk',               docType: 'agri-bill',        irp: false },
+  debit_note:         { pdf: '/api/debit-notes/pdf-bulk',         docType: 'debit-note',       irp: true  },
+  debit_note_planter: { pdf: '/api/debit-notes-planter/pdf-bulk', docType: 'debit-note',       irp: false },
 };
 
 // Flatten one builder row into the shape the picker renders.
@@ -20863,45 +20850,7 @@ app.get('/api/tally/filter-options/:type/:auctionId', requireExport, (req, res) 
   }
 });
 
-// ── GST e-WAY BILL bulk-upload JSON ──────────────────────────
-// One responder so the full export, the ticked selection and the single
-// invoice all answer ?format=ewb the same way.
-//
-// This is a FILE for the portal's Generate Bulk screen, not an API call to
-// it. Direct e-way bill API access needs AATO >= 10 cr with up to four Indian
-// STATIC IPs whitelisted by NIC, or a GSP contract; this app runs as a
-// desktop build on office broadband and as a Railway service, and neither can
-// hold a static Indian IP. See buildEwbJson's header in tally-xml.js.
-//
-// ?report=1 returns the builder's report INSTEAD of the file: which invoices
-// were left out and why, and which went in needing attention (no lorry number
-// yet, no saved route distance, buyer unregistered). The Tally screen asks
-// for that first, so the operator reads it before anything reaches the portal.
-function sendEwbJson(res, rows, cfg, opts = {}) {
-  const built = buildEwbJson(rows, cfg, { companyName: opts.companyName });
-  if (opts.wantReport) {
-    return res.json({ version: built.json.version, ...built.report });
-  }
-  // A configuration fault (no seller GSTIN / PIN) blocks every row at once —
-  // the builder says so in one sentence rather than repeating it per invoice.
-  if (built.report.blocked) return res.status(400).json({ error: built.report.blocked });
-  if (!built.json.billLists.length) {
-    return res.status(400).json({
-      error: 'None of these invoices can go on an e-way bill yet — see the skipped list for what each one is missing.',
-      skipped: built.report.skipped,
-    });
-  }
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${opts.filename}"`);
-  // Counts ride along as headers so a download that quietly went out Part-A
-  // only still leaves a trace, even when nobody opened the report first.
-  res.setHeader('X-EWB-Included', String(built.report.included));
-  res.setHeader('X-EWB-Skipped',  String(built.report.skipped.length));
-  res.setHeader('X-EWB-Warnings', String(built.report.warnings.length));
-  return res.send(JSON.stringify(built.json, null, 2));
-}
-
-// Export just the ticked vouchers. Body: { ids: [...], format?: 'xml'|'json'|'irp'|'ewb' }
+// Export just the ticked vouchers. Body: { ids: [...], format?: 'xml'|'json'|'irp' }
 // Same generators as the full export — we only narrow the row set.
 app.post('/api/tally/export-selected/:type/:auctionId', requireExport, (req, res) => {
   const { type, auctionId } = req.params;
@@ -20934,16 +20883,6 @@ app.post('/api/tally/export-selected/:type/:auctionId', requireExport, (req, res
     const targetCompany = resolveTallyCompanyName(cfg, def.company);
     const fmt = String((req.body && req.body.format) || 'xml').toLowerCase();
     const stamp = `${anoForFilename(db, auctionId)}_${rows.length}`;
-    if (fmt === 'ewb') {
-      if (!kind.ewb) {
-        return res.status(400).json({ error: `An e-way bill accompanies a movement of goods; ${def.label} does not move any.` });
-      }
-      return sendEwbJson(res, rows, cfg, {
-        companyName: targetCompany,
-        filename: `EWayBill_${def.name}_Selected_${stamp}.json`,
-        wantReport: !!(req.body && req.body.report),
-      });
-    }
     if (fmt === 'irp') {
       if (!kind.irp) {
         return res.status(400).json({ error: `IRP e-invoice JSON is not available for ${def.label}.` });
@@ -21021,18 +20960,6 @@ app.get('/api/tally/export/:type/:auctionId', requireExport, (req, res) => {
     // (commission billed to registered dealers) — both row shapes carry the
     // buyer GSTIN / address the schema needs. Debit notes route to the
     // dedicated commission-line builder; everything else is rejected.
-    // ?format=ewb → e-way bill bulk-upload JSON. Sales vouchers only; a
-    // debit note bills commission and ships nothing.
-    if (fmt === 'ewb') {
-      if (def.builder !== buildSalesIspRows && def.builder !== buildSalesRows) {
-        return res.status(400).json({ error: 'e-Way bill JSON is only available for Sales Vouchers ("sales_isp") — an e-way bill accompanies a movement of goods.' });
-      }
-      return sendEwbJson(res, rows, cfg, {
-        companyName: targetCompany,
-        filename: `EWayBill_${def.name}${saleSuffix}_${anoForFilename(db, auctionId)}.json`,
-        wantReport: String(req.query.report || '') === '1',
-      });
-    }
     if (fmt === 'irp') {
       let irp;
       if (def.builder === buildSalesIspRows) {

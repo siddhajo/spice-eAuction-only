@@ -203,6 +203,15 @@ const DEFAULTS = [
     label: 'Spices Board Address (TN)', type: 'textarea' },
   { key: 'spices_board_addr_kl', value: '', category: 'branches',
     label: 'Spices Board Address (KL)', type: 'textarea' },
+  // The Board's GSTIN for each state. It goes in the consignee box of a
+  // Spices Board delivery challan — and its leading two digits ARE the GST
+  // state code, so the Code line on that challan is taken from here rather
+  // than from a constant: a code that disagrees with the GSTIN printed beside
+  // it is a defect on the face of the document.
+  { key: 'spices_board_gstin_tn', value: '', category: 'branches',
+    label: 'Spices Board GSTIN (TN)', type: 'text' },
+  { key: 'spices_board_gstin_kl', value: '', category: 'branches',
+    label: 'Spices Board GSTIN (KL)', type: 'text' },
 
   // ── RATES ──────────────────────────────────────────────────
   // deduction1 / deduction2 / refund (Sample Refund Kgs) intentionally REMOVED.

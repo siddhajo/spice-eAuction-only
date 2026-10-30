@@ -89,6 +89,7 @@ function cleanup() {
     hsn_cardamom: '09083120', hsn_gunny: '63051040', gunny_rate: '165',
     spices_board_addr_tn: 'SPICES BOARD E-AUCTION CENTRE\nBODINAYAKANUR\nTHENI-625513',
     spices_board_addr_kl: 'SPICES BOARD E-AUCTION CENTRE\nPUTTADY\nIDUKKI-685551',
+    spices_board_gstin_tn: '33AAAGS1234F1Z5', spices_board_gstin_kl: '32AAAGS1234F1Z7',
     // The challan's SAMPLES row is lots x (refund + trader sample), the same
     // two boxes the Commission Bill deducts — NOT the lots' own sample_wt.
     sb_refund: '0.400', sb_trader_sample: '0.100',
@@ -710,7 +711,12 @@ function cleanup() {
       inNavGroups: NAV_GROUPS.some(g => (g.items || []).some(i => i.tab === 'delivery-chalan')),
       sticky: getComputedStyle(document.querySelector('#tc-delivery-chalan .cardhead-sticky')).position,
       branch: v('dc-branch'), qty: v('dc-qty'), bags: v('dc-bags'),
-      head: v('dc-head'), addr: v('dc-address'), to: v('dc-to'), raddr: v('dc-raddr'),
+      // Both address blocks were removed from the SCREEN too — it derives
+      // them from the Branch, exactly as the dialog does.
+      headGone: !document.getElementById('dc-head'),
+      addrGone: !document.getElementById('dc-address'),
+      receiverGone: !document.getElementById('dc-raddr'),
+      swapGone: !document.getElementById('dc-swap'),
       previewHtml: fr && fr.contentDocument ? fr.contentDocument.body.innerHTML : '',
     };
   });
@@ -721,10 +727,14 @@ function cleanup() {
   check('it opens on a branch with lots', screen.branch === 'BODI', screen.branch);
   check('…covering that whole branch', screen.qty === '1200.000' && screen.bags === '30',
         JSON.stringify({ qty: screen.qty, bags: screen.bags }));
-  check('BOTH address blocks are editable here, seeded from the branch',
-        screen.head === 'CARDAMOM COLLECTION CENTRE' && /GATE ROAD/.test(screen.addr)
-        && screen.to === 'RNS SPICES' && /RNS BUILDING/.test(screen.raddr),
-        JSON.stringify({ head: screen.head, to: screen.to }));
+  check('neither address block is typed here either',
+        screen.headGone && screen.addrGone && screen.receiverGone && screen.swapGone,
+        JSON.stringify(screen));
+  // They are not gone from the DOCUMENT — they are derived, and the preview
+  // beside the form is where the operator sees them.
+  check('…but both still print, from the branch and the settings',
+        /CARDAMOM COLLECTION CENTRE/.test(screen.previewHtml)
+        && /RNS BUILDING/.test(screen.previewHtml), screen.previewHtml.slice(0, 300));
   // The preview IS the paper — same builder, in an iframe so the app's own
   // stylesheet cannot repaint it.
   check('the preview renders the document inline',
@@ -744,25 +754,6 @@ function cleanup() {
   check('typing re-renders the paper', /TN 99 ZZ 0001/.test(typed) && /1,000\.000/.test(typed),
         'expected the typed vehicle and qty');
 
-  // Swap lives here, where both blocks exist.
-  const swapped = await page.evaluate(() => {
-    const v = (id) => document.getElementById(id).value;
-    const before = { head: v('dc-head'), to: v('dc-to'), addr: v('dc-address'), raddr: v('dc-raddr'),
-                     rgstin: v('dc-rgstin') };
-    leChalanSwapAddresses('dc-');
-    const after = { head: v('dc-head'), to: v('dc-to'), addr: v('dc-address'), raddr: v('dc-raddr'),
-                    rgstin: v('dc-rgstin') };
-    leChalanSwapAddresses('dc-');
-    return { before, after };
-  });
-  check('the heading changes places with the receiver\'s name',
-        swapped.after.head === swapped.before.to && swapped.after.to === swapped.before.head,
-        JSON.stringify(swapped.after));
-  check('…and the addresses with each other',
-        swapped.after.addr === swapped.before.raddr, JSON.stringify(swapped.after));
-  check('the receiver\'s GST identity stays put',
-        swapped.after.rgstin === swapped.before.rgstin, swapped.after.rgstin);
-
   console.log('\n[10] Spices Board — the auction samples, not a branch load');
   const sb = await page.evaluate(async () => {
     const el = document.getElementById('dc-branch');
@@ -772,7 +763,6 @@ function cleanup() {
     return {
       lots: _dc.lots.length, sampleOnly: _dc.sampleOnly,
       qty: v('dc-qty'), bags: v('dc-bags'), sampleQty: v('dc-sample-qty'),
-      to: v('dc-to'), raddr: v('dc-raddr'), rstate: v('dc-rstate'), rcode: v('dc-rcode'),
       goodsDisabled: document.getElementById('dc-goods').disabled,
       qtyShown: getComputedStyle(document.getElementById('dc-qty').closest('.fg')).display,
       html: document.getElementById('dc-preview').contentDocument.body.innerHTML,
@@ -791,22 +781,46 @@ function cleanup() {
   check('bags are left for the operator to count', sb.bags === '', JSON.stringify(sb.bags));
   check('Goods is locked — samples are neither a cardamom nor a gunny load',
         sb.goodsDisabled === true, String(sb.goodsDisabled));
+  // Read off the PAPER, which is the only place the parties appear now.
   check('the RECEIVER becomes the Spices Board, at its configured address',
-        sb.to === 'SPICES BOARD' && /BODINAYAKANUR/.test(sb.raddr), JSON.stringify({ to: sb.to }));
-  check('…with that state and its GST code', sb.rstate === 'TAMIL NADU' && sb.rcode === '33',
-        JSON.stringify({ state: sb.rstate, code: sb.rcode }));
+        /SPICES BOARD/.test(sb.html) && /BODINAYAKANUR/.test(sb.html), sb.html.slice(0, 300));
+  check('…with that state and its GST code',
+        /TAMIL NADU/.test(sb.html) && /: 33</.test(sb.html), 'expected TAMIL NADU / 33');
+  check('…and the Board\'s own GSTIN', /33AAAGS1234F1Z5/.test(sb.html), 'expected the TN GSTIN');
+  // The Code line is taken FROM the GSTIN, so the two can never disagree on
+  // the face of the document.
+  check('the code is the GSTIN\'s own leading pair, not a constant', (() => {
+    const g = (sb.html.match(/GSTIN\s*<\/span><span>: ([0-9A-Z]+)/) || [])[1]
+           || (sb.html.match(/: (3\dAAAGS[0-9A-Z]+)/) || [])[1] || '';
+    const c = (sb.html.match(/Code<\/span><span>: (\d+)/) || [])[1] || '';
+    return g.slice(0, 2) === c;
+  })(), 'code must equal the GSTIN prefix');
   check('the paper shows one SAMPLES line', /SAMPLES/.test(sb.html) && !/>CARDAMOM</.test(sb.html));
   check('…and the Board as consignee', /SPICES BOARD/.test(sb.html));
+  const codes = await page.evaluate(async () => {
+    const cfg = await j('/api/company-settings/flat');
+    const mk = (over) => leChalanPartyBlocks({ ...cfg, ...over }, '__SB_TN__').receiver;
+    return {
+      fromGstin: mk({}).code,
+      // An install that has not entered the Board's GSTIN still gets a code.
+      fallback:  mk({ spices_board_gstin_tn: '' }).code,
+      odd:       mk({ spices_board_gstin_tn: 'NOTAGSTIN' }).code,
+    };
+  });
+  check('the code is read off the GSTIN', codes.fromGstin === '33', codes.fromGstin);
+  check('…falling back to the state constant when none is entered',
+        codes.fallback === '33', codes.fallback);
+  check('…and when what is entered is not a GSTIN at all', codes.odd === '33', codes.odd);
+
   const sbKl = await page.evaluate(async () => {
     const el = document.getElementById('dc-branch');
     el.value = '__SB_KL__'; el.dispatchEvent(new Event('change'));
-    await new Promise(r => setTimeout(r, 200));
-    const v = (id) => document.getElementById(id).value;
-    return { raddr: v('dc-raddr'), rstate: v('dc-rstate'), rcode: v('dc-rcode') };
+    await new Promise(r => setTimeout(r, 400));
+    return document.getElementById('dc-preview').contentDocument.body.innerHTML;
   });
-  check('the Kerala entry brings the Kerala address and code',
-        /PUTTADY/.test(sbKl.raddr) && sbKl.rstate === 'KERALA' && sbKl.rcode === '32',
-        JSON.stringify(sbKl));
+  check('the Kerala entry brings the Kerala address, GSTIN and code',
+        /PUTTADY/.test(sbKl) && /KERALA/.test(sbKl) && /: 32</.test(sbKl)
+        && /32AAAGS1234F1Z7/.test(sbKl), sbKl.slice(0, 300));
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log('--- server log tail ---\n' + srvLog.split('\n').slice(-15).join('\n'));

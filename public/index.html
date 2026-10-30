@@ -9059,7 +9059,6 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <button class="btn btn-orange" onclick="tallyPrintAll('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the sales invoice PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp','irp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">JSON</button>
-              <button class="btn btn-g" onclick="tallyEwbDownload('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="e-Way bill bulk-upload JSON — upload at ewaybillgst.gov.in under e-Waybill → Generate Bulk. Checks every invoice first and tells you what is missing.">e-Way Bill</button>
             </div>
           </div>
 
@@ -9352,33 +9351,14 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
             <div id="dc-totals" style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;margin:12px 0 0;padding:9px 12px;background:var(--spice-line);border-radius:8px;font-size:12.5px"></div>
 
-            <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 6px">Below the company name</div>
-            <div class="fg" style="margin:0"><label>Heading</label>
-              <input type="text" id="dc-head" autocomplete="off" oninput="dcPreview()"></div>
-            <div class="fg" style="margin:10px 0 0"><label>Address</label>
-              <textarea id="dc-address" rows="3" oninput="dcPreview()" style="width:100%;resize:vertical"></textarea></div>
-
-            <div style="display:flex;justify-content:center;margin:12px 0 2px">
-              <button type="button" class="btn btn-o" id="dc-swap" onclick="leChalanSwapAddresses('dc-')"
-                      style="font-size:12px;padding:5px 14px"
-                      title="Exchange this block with the Details of Receiver below — for a consignment running the other way">
-                ⇅ Swap with receiver
-              </button>
-            </div>
-
-            <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 6px">Details of Receiver</div>
-            <div class="fg" style="margin:0"><label>Name</label>
-              <input type="text" id="dc-to" autocomplete="off" oninput="dcPreview()"></div>
-            <div class="fg" style="margin:10px 0 0"><label>Address</label>
-              <textarea id="dc-raddr" rows="3" oninput="dcPreview()" style="width:100%;resize:vertical"></textarea></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
-              <div class="fg" style="margin:0"><label>State</label>
-                <input type="text" id="dc-rstate" autocomplete="off" oninput="dcPreview()"></div>
-              <div class="fg" style="margin:0"><label>Code</label>
-                <input type="text" id="dc-rcode" autocomplete="off" oninput="dcPreview()"></div>
-              <div class="fg" style="margin:0;grid-column:1 / -1"><label>GSTIN</label>
-                <input type="text" id="dc-rgstin" autocomplete="off" oninput="dcPreview()"></div>
-            </div>
+            <!-- Neither address block is typed on this screen either. Both
+                 follow from the Branch above — its own heading and address
+                 under the company name, the configured receiver (or the
+                 Spices Board) in Details of Receiver — and the preview beside
+                 this form shows exactly what they will print. They are
+                 maintained in Settings: Branches & Contacts for the branches
+                 and the two Spices Board addresses, Lot Entry for the
+                 receiver. -->
           </div>
 
           <!-- RIGHT: the document itself, rendered from the same builder the
@@ -15803,10 +15783,10 @@ function renderHubKpi(kpi){
 // The colour was saying a second time what the words already said.
 
 const HUB_FMT_SHORT = { xlsx: 'XLS', pdf: 'PDF', csv: 'CSV', xml: 'XML',
-                        dbf: 'DBF', json: 'JSON', irp: 'GST', ewb: 'EWB' };
+                        dbf: 'DBF', json: 'JSON', irp: 'GST' };
 const HUB_FMT_LABEL = {
   xlsx: 'XLSX', pdf: 'PDF', csv: 'CSV', xml: 'XML', dbf: 'DBF',
-  json: 'JSON', irp: 'e-Invoice JSON', ewb: 'e-Way Bill JSON',
+  json: 'JSON', irp: 'e-Invoice JSON',
 };
 
 // ── Per-format glyphs ────────────────────────────────────────────
@@ -15849,8 +15829,6 @@ const HUB_FMT_ICON = {
                  + 'v-1.5c-.5 0-.8-.3-.8-.8V14c0-1.2-.7-1.9-1.95-1.9z"/>',
   // e-Invoice JSON is JSON — the portal's name for it is not a file format.
   irp:  null,
-  // Same for the e-way bill bulk file.
-  ewb:  null,
   // A database table, for the legacy DBF exports.
   dbf:  '<ellipse cx="12" cy="6.4" rx="6.4" ry="2.8"/>'
       + '<path d="M5.6 9.4v3.3c0 1.5 2.9 2.8 6.4 2.8s6.4-1.3 6.4-2.8V9.4'
@@ -15859,7 +15837,6 @@ const HUB_FMT_ICON = {
       + 'c-1.4 1.1-3.8 1.7-6.4 1.7s-5-.6-6.4-1.7z" opacity=".55"/>',
 };
 HUB_FMT_ICON.irp = HUB_FMT_ICON.json;
-HUB_FMT_ICON.ewb = HUB_FMT_ICON.json;
 
 // Which format a tile is badged as. A GENERATED DOCUMENT reads as PDF
 // whatever formats it declares — it is a numbered, printed paper, and that is
@@ -16097,7 +16074,6 @@ Object.assign(HUB_ICONS, {
   'fmt-xml':  '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
   'fmt-json': '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
   'fmt-irp':  HUB_ICONS.statutory,
-  'fmt-ewb':  HUB_ICONS.statutory,
   'fmt-dbf':  HUB_ICONS.dbf,
   'fmt-generated': HUB_ICONS.documents,
 });
@@ -16125,7 +16101,7 @@ function hubSetGrouping(mode){
 
 // Order file-type groups by how the office actually files things, not
 // alphabetically. Anything unlisted falls to the end in encounter order.
-const HUB_FMT_ORDER = ['pdf', 'xlsx', 'csv', 'xml', 'json', 'irp', 'ewb', 'dbf'];
+const HUB_FMT_ORDER = ['pdf', 'xlsx', 'csv', 'xml', 'json', 'irp', 'dbf'];
 const HUB_FMT_GROUP = {
   pdf:  { label: 'PDF',            hint: 'Print-ready documents' },
   xlsx: { label: 'Excel (XLSX)',   hint: 'Spreadsheets' },
@@ -16133,7 +16109,6 @@ const HUB_FMT_GROUP = {
   xml:  { label: 'XML',            hint: 'Tally import' },
   json: { label: 'JSON',           hint: 'Machine-readable rows' },
   irp:  { label: 'e-Invoice JSON', hint: 'GST portal (IRP / NIC)' },
-  ewb:  { label: 'e-Way Bill JSON', hint: 'e-way bill portal, bulk upload' },
   dbf:  { label: 'DBF',            hint: 'Legacy database files' },
 };
 
@@ -27944,28 +27919,10 @@ function leChalanGoods() {
   return (el && el.value === 'gunny') ? 'gunny' : 'cardamom';
 }
 
-// Exchange the block under the company name with the Details of Receiver.
-//
-// The two are counterparts — a place and what it is called — so the heading
-// trades with the receiver's NAME and the two addresses trade with each
-// other. State, Code and GSTIN do NOT move: they label the receiver BOX, not
-// whichever address is currently sitting in it, and carrying them across
-// would quietly relabel the consignee's GST identity.
-//
-// Lives on the Delivery Chalan SCREEN, which is where the two blocks are
-// typed; the quick-print dialog derives both from the Branch and has nothing
-// to swap. `p` is that screen's id prefix.
-function leChalanSwapAddresses(p) {
-  p = p || 'dc-';
-  const swap = (a, b) => {
-    const ea = document.getElementById(p + a), eb = document.getElementById(p + b);
-    if (!ea || !eb) return;
-    const t = ea.value; ea.value = eb.value; eb.value = t;
-  };
-  swap('head', 'to');
-  swap('address', 'raddr');
-  if (typeof dcPreview === 'function') dcPreview();
-}
+// (The address blocks used to be swappable, back when a surface let them be
+// typed. Both now follow from the Branch on both surfaces, so there is
+// nothing to exchange: a consignment running the other way is a different
+// Branch, which is the control that already says so.)
 
 async function leConfirmChalan() {
   if (!_le_chalan) return;
@@ -28083,15 +28040,20 @@ function leChalanPartyBlocks(cfg, branch) {
   cfg = cfg || {};
   if (leChalanIsSB(branch)) {
     const kl = branch === LE_SB_KL;
+    const gstin = String((kl ? cfg.spices_board_gstin_kl : cfg.spices_board_gstin_tn) || '').trim();
     return {
       heading: '', address: '',
       receiver: {
         name: 'SPICES BOARD',
         address: String((kl ? cfg.spices_board_addr_kl : cfg.spices_board_addr_tn) || '').trim(),
-        // GST state codes, the same pair the rest of the app uses.
         state: kl ? 'KERALA' : 'TAMIL NADU',
-        code:  kl ? '32' : '33',
-        gstin: '',
+        // The CODE comes out of the GSTIN when there is one — its leading two
+        // digits are the GST state code, and a Code line that disagrees with
+        // the GSTIN printed beside it is a defect on the face of the
+        // document. The constant is only the fallback for an install that has
+        // not entered the Board's GSTIN yet.
+        code:  /^\d{2}/.test(gstin) ? gstin.slice(0, 2) : (kl ? '32' : '33'),
+        gstin,
       },
     };
   }
@@ -28520,17 +28482,6 @@ function dcBranchChanged() {
   const goodsEl = document.getElementById('dc-goods');
   if (goodsEl) { if (sb) goodsEl.value = 'cardamom'; goodsEl.disabled = sb; }
 
-  // Both ends, seeded from the choice — and editable here, which is the whole
-  // point of this screen.
-  const parties = leChalanPartyBlocks(cfg, branch);
-  set('dc-head',   parties.heading);
-  set('dc-address', parties.address);
-  set('dc-to',     parties.receiver.name);
-  set('dc-raddr',  parties.receiver.address);
-  set('dc-rstate', parties.receiver.state);
-  set('dc-rcode',  parties.receiver.code);
-  set('dc-rgstin', parties.receiver.gstin);
-
   dcGoodsChanged();
 }
 
@@ -28570,9 +28521,8 @@ function dcCollect() {
     rate: parseFloat(v('dc-rate')) || 0,
     qty: numOrNull('dc-qty'), sampleQty: numOrNull('dc-sample-qty'),
     bags: v('dc-bags'), sampleBags: v('dc-sample-bags'),
-    heading: v('dc-head'), address: v('dc-address'),
-    receiver: { name: v('dc-to'), address: v('dc-raddr'), state: v('dc-rstate'),
-                code: v('dc-rcode'), gstin: v('dc-rgstin') },
+    // Both ends follow from the Branch — see the note in the markup.
+    ...leChalanPartyBlocks(_dc.cfg || {}, String((document.getElementById('dc-branch') || {}).value || '')),
   };
 }
 
@@ -47389,18 +47339,15 @@ async function tallyDownload(type,format){
   const aid=document.getElementById('tally-auction')?.value;
   if(!aid){alert('Select an auction first');return}
   const label=TALLY_LABELS[type]||type;
-  // Four output formats:
+  // Three output formats:
   //   'irp'  → GST e-Invoice (IRP / NIC) JSON, ready for the trade portal.
   //            Sales (ISP) only — the endpoint rejects other types.
-  //   'ewb'  → e-way bill bulk-upload JSON. Sales only, same reason. Reached
-  //            through tallyEwbDownload(), which runs the preflight check
-  //            first; calling it here directly still works.
   //   'json' → internal Tally-row JSON (still reachable, not surfaced here).
   //   xml    → Tally import XML (default).
-  const fmt=(format==='irp')?'irp':(format==='ewb')?'ewb':(format==='json')?'json':'xml';
+  const fmt=(format==='irp')?'irp':(format==='json')?'json':'xml';
   const ext=(fmt==='xml')?'xml':'json';
-  const kind=(fmt==='irp')?'e-Invoice JSON':(fmt==='ewb')?'e-Way Bill JSON':fmt.toUpperCase();
-  const namePrefix=(fmt==='irp')?'EInvoice':(fmt==='ewb')?'EWayBill':'Tally';
+  const kind=(fmt==='irp')?'e-Invoice JSON':fmt.toUpperCase();
+  const namePrefix=(fmt==='irp')?'EInvoice':'Tally';
 
   // Sale-type split — when the card's dropdown is set to L / I / E the
   // export carries only that sale type, in both XML and JSON, and the
@@ -47432,57 +47379,6 @@ async function tallyDownload(type,format){
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
     toast(`Downloaded ${label}${saleLabel} ${kind}`);
   });
-}
-
-// ── e-Way bill bulk JSON, with a preflight ───────────────
-// An e-way bill is a statutory document that travels with the lorry, and the
-// portal rejects a bulk file row by row with little explanation. So ask the
-// server what it WOULD generate first (?report=1 runs the same builder and
-// returns no file), show the operator what is missing, and only then download.
-//
-// Nothing here talks to ewaybillgst.gov.in. The file goes to the portal by
-// hand, under e-Waybill → Generate Bulk — direct API access needs a static
-// Indian IP whitelisted by NIC or a GSP contract, neither of which this app
-// can hold. See sendEwbJson() in server.js.
-async function tallyEwbDownload(type){
-  const aid=document.getElementById('tally-auction')?.value;
-  if(!aid){alert('Select an auction first');return}
-  const sale=tallySaleFilter(type);
-  const q=['format=ewb','report=1'];
-  if(sale)q.push('sale='+encodeURIComponent(sale));
-  let rep=null;
-  await withOverlay('Checking invoices for the e-way bill…', async () => {
-    const r=await fetch(B+'/api/tally/export/'+type+'/'+aid+'?'+q.join('&'),
-                        {headers:{'Authorization':'Bearer '+T}});
-    try{rep=await r.json()}catch(x){rep=null}
-    if(!r.ok){toast((rep&&rep.error)||'e-Way bill check failed');rep=null}
-  });
-  if(!rep)return;
-  if(rep.blocked){alert('e-Way bill: '+rep.blocked);return}
-  // Group the per-row notes by reason — ten invoices missing a lorry number
-  // is one thing to fix, not ten lines to read.
-  const group=(list)=>{
-    const m=new Map();
-    for(const n of (list||[])){
-      if(!m.has(n.why))m.set(n.why,[]);
-      m.get(n.why).push(n.doc||('#'+n.id));
-    }
-    return [...m.entries()].map(([why,docs])=>
-      '• '+why+'\n   ('+docs.length+': '+docs.slice(0,8).join(', ')+(docs.length>8?', …':'')+')');
-  };
-  if(!rep.included){
-    alert('No invoice in this trade can go on an e-way bill yet.\n\n'+group(rep.skipped).join('\n\n'));
-    return;
-  }
-  const parts=[];
-  if((rep.skipped||[]).length)  parts.push('LEFT OUT ('+rep.skipped.length+' invoice(s)):\n'+group(rep.skipped).join('\n\n'));
-  if((rep.warnings||[]).length) parts.push('GOING IN, BUT CHECK:\n'+group(rep.warnings).join('\n\n'));
-  if(parts.length){
-    const ok=confirm(rep.included+' of '+rep.total+' invoice(s) will be written to the e-way bill file.\n\n'
-                     +parts.join('\n\n')+'\n\nDownload the file anyway?');
-    if(!ok)return;
-  }
-  await tallyDownload(type,'ewb');
 }
 
 // ── Single-party picker ──────────────────────────────────
