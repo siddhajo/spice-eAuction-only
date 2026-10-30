@@ -7627,7 +7627,6 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                flag_delivery_chalan. -->
           <button id="le-chalan-btn" type="button" onclick="leOpenChalan()" class="le-toolbar-btn le-tb-secondary feat-delivery-chalan" style="display:none" title="Print a delivery challan for the ticked lots">
             <span aria-hidden="true">🚚</span> Delivery Chalan
-            <span id="le-chalan-count" class="le-tb-badge"></span>
           </button>
           <button id="le-print-clear-btn" type="button" onclick="leClearPrintSelection()" class="le-toolbar-btn le-tb-ghost" style="display:none">Clear</button>
         </div>
@@ -7773,6 +7772,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <p id="le-chalan-summary" style="font-size:12px;color:var(--text3);margin:0 0 12px"></p>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <!-- WHOSE lots. A challan is a lorry leaving a BRANCH, so it
+               covers that branch's whole trade — not whichever rows happened
+               to be ticked on the page the operator was looking at. Changing
+               it re-reads the quantities, the bag count AND the address block
+               under the company name. -->
+          <div class="fg" style="margin:0"><label>Branch</label>
+            <select id="le-chalan-branch" onchange="leChalanBranchChanged()"></select></div>
           <div class="fg" style="margin:0"><label>Serial No. of Challan</label>
             <input type="text" id="le-chalan-no" autocomplete="off"
                    title="Next number in the challan book, wrapped in the configured prefix and suffix. Printing advances the book; edit it here to print a one-off number without moving the counter."></div>
@@ -27137,14 +27143,15 @@ function leUpdatePrintToolbar() {
   }
   if (bySeller) bySeller.style.display = (n > 0 && sellerCount > 1) ? 'inline-flex' : 'none';
   if (seBadge)  seBadge.textContent = sellerCount;
-  // Delivery Challan follows the same selection rule as Print Selected. The
-  // feature gate is CSS (.feat-delivery-chalan), so this only decides whether
-  // there is anything to put ON a challan — with the flag off the button stays
-  // collapsed whatever this sets.
+  // Delivery Challan does NOT follow the selection: it covers a whole
+  // branch's lots, chosen inside the dialog, so gating it on ticks would hide
+  // the button from someone who has not ticked anything and does not need to.
+  // It shows whenever this trade has lots at all; the count badge is gone
+  // because the number depends on the branch picked inside. The feature gate
+  // is CSS (.feat-delivery-chalan) — with the flag off it stays collapsed
+  // whatever this sets.
   const chalan = document.getElementById('le-chalan-btn');
-  const chBadge = document.getElementById('le-chalan-count');
-  if (chalan)  chalan.style.display = n > 0 ? 'inline-flex' : 'none';
-  if (chBadge) chBadge.textContent = n;
+  if (chalan) chalan.style.display = (_le.recentLots && _le.recentLots.length) ? 'inline-flex' : 'none';
 }
 
 // ── Change Seller modal ────────────────────────────────────
@@ -27656,10 +27663,20 @@ async function leConfirmPrint() {
 let _le_chalan = null;      // { lots, cfg, auction, previewNo } while the modal is open
 
 async function leOpenChalan() {
-  const ids = _le.selectedForPrint || new Set();
-  if (!ids.size) { toast('Tick at least one lot for the chalan'); return; }
-  const lots = (_le.recentLots || []).filter(l => ids.has(l.id));
-  if (!lots.length) { toast('Selected lots no longer in view — reload and retry'); return; }
+  // The WHOLE trade, not the recent-entries window. A challan is one lorry
+  // leaving one branch with that branch's goods on it, so it must not depend
+  // on which page of the panel is loaded or which rows are ticked — those
+  // would silently leave lots off a document that says what is on the lorry.
+  // godown=0: stored stock belongs to no trade and is not going anywhere.
+  const aid = document.getElementById('le-auction').value;
+  if (!aid) { toast('Pick a trade first'); return; }
+  let all = [];
+  try {
+    const data = await j(`/api/lots/${aid}?godown=0`);
+    all = Array.isArray(data) ? data : (data && Array.isArray(data.rows) ? data.rows : []);
+  } catch (e) { toast('Could not read this trade\u2019s lots'); return; }
+  all = all.filter(l => !Number(l.godown));
+  if (!all.length) { toast('No lots in this trade yet'); return; }
 
   let cfg = {};
   try { cfg = await j('/api/company-settings/flat'); refreshMaskCfg(cfg); } catch (_) {}
@@ -27667,9 +27684,8 @@ async function leOpenChalan() {
   // challan, so it falls back to no trade rather than refusing to print.
   let auction = null;
   try {
-    const aid = document.getElementById('le-auction').value;
-    const all = await j('/api/auctions');
-    auction = (all || []).find(a => String(a.id) === String(aid)) || null;
+    const auctions = await j('/api/auctions');
+    auction = (auctions || []).find(a => String(a.id) === String(aid)) || null;
   } catch (_) {}
 
   // The serial is a PREVIEW — read, not claimed. Cancelling must not burn a
@@ -27677,10 +27693,25 @@ async function leOpenChalan() {
   let previewNo = '';
   try { const r = await j('/api/delivery-chalan/next-no'); previewNo = (r && r.no) || ''; } catch (_) {}
 
-  const bags = lots.reduce((n, l) => n + (Number(l.bags) || 0), 0);
-  const sellers = [...new Set(lots.map(l => l.name || '').filter(Boolean))];
-
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+
+  // Which branches this trade actually has lots in — never the whole branch
+  // master, or the operator can pick one with nothing to send.
+  const branches = [...new Set(all.map(l => String(l.branch || '').trim()).filter(Boolean))].sort();
+  const sel = document.getElementById('le-chalan-branch');
+  if (sel) {
+    sel.innerHTML = branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')
+      || '<option value="">(no branch on these lots)</option>';
+    // Open on the branch the operator is already working in: the one they
+    // have ticked, else the recent-entries branch filter, else the first.
+    const ids = _le.selectedForPrint || new Set();
+    const ticked = [...new Set((_le.recentLots || [])
+      .filter(l => ids.has(l.id)).map(l => String(l.branch || '').trim()).filter(Boolean))];
+    const filterBr = String((document.getElementById('le-recent-branch') || {}).value || '').trim();
+    const want = (ticked.length === 1 && branches.includes(ticked[0])) ? ticked[0]
+      : (branches.includes(filterBr) ? filterBr : branches[0] || '');
+    sel.value = want;
+  }
   const noEl = document.getElementById('le-chalan-no');
   if (noEl) { noEl.value = previewNo; noEl.dataset.preview = previewNo; }
   const now = new Date();
@@ -27695,20 +27726,12 @@ async function leOpenChalan() {
   if (rateEl0) rateEl0.dataset.seeded = rateEl0.value;   // so switching goods may replace it
   set('le-chalan-mode', cfg.chalan_transport_mode || 'By Road');
   set('le-chalan-pos',  cfg.chalan_place_of_supply || '');
-  const netQty = lots.reduce((n, l) => n + (Number(l.qty) || 0), 0);
-  const smpQty = leChalanSampleQty(lots, cfg);
-  set('le-chalan-qty', netQty ? netQty.toFixed(3) : '');
-  set('le-chalan-sample-qty', smpQty ? smpQty.toFixed(3) : '');
-  set('le-chalan-bags', bags ? String(bags) : '');
+
   // Sample bags are a COUNT OF BAGS, not a weight, and nothing on the lot
   // records it — the operator counts them onto the lorry. Printed as the
   // "+5" in "194+5".
   set('le-chalan-sample-bags', '');
-  // The branch the goods are leaving from decides the block under the company
-  // name — what the place is called, and where it is.
-  const blk = leChalanBranchBlock(cfg, (lots[0] || {}).branch);
-  set('le-chalan-head',    blk.heading || cfg.chalan_heading || '');
-  set('le-chalan-address', blk.address || cfg.chalan_address || '');
+
   // Receiver — usually the same destination every time (a branch transfer),
   // so it comes from settings and is edited here only for a one-off.
   set('le-chalan-to',     cfg.chalan_receiver_name    || '');
@@ -27719,16 +27742,52 @@ async function leOpenChalan() {
 
   const err = document.getElementById('le-chalan-err');
   if (err) { err.style.display = 'none'; err.textContent = ''; }
-  const sum = document.getElementById('le-chalan-summary');
-  if (sum) {
-    const qty = lots.reduce((n, l) => n + (Number(l.qty) || 0), 0);
-    sum.textContent = `${lots.length} lot${lots.length === 1 ? '' : 's'} · `
-      + `${sellers.length === 1 ? sellers[0] : sellers.length + ' sellers'} · `
-      + `${bags} bag${bags === 1 ? '' : 's'} · ${qty.toFixed(3)} kg`;
-  }
-  _le_chalan = { lots, cfg, auction, previewNo };
+
+  _le_chalan = { all, lots: [], cfg, auction, previewNo };
+  leChalanBranchChanged();       // lots of the chosen branch, and everything off them
   leChalanGoodsChanged();        // labels + visibility + the first total
   showModal('le-chalan-modal');
+}
+
+// The chosen branch decides WHICH lots the challan covers — and therefore the
+// quantities, the bag count, the lot count the sample draw is taken over, and
+// the address block under the company name. All of it is re-derived here so
+// changing branch cannot leave one figure behind from the last one.
+//
+// Figures the operator has typed over are replaced: they belong to the branch
+// that was showing when they were typed, and carrying them to another branch
+// would put one branch's weights on another's challan.
+function leChalanBranchChanged() {
+  if (!_le_chalan) return;
+  const cfg = _le_chalan.cfg || {};
+  const sel = document.getElementById('le-chalan-branch');
+  const branch = sel ? String(sel.value || '').trim() : '';
+  const norm = (v) => String(v == null ? '' : v).trim().toUpperCase();
+  const lots = (_le_chalan.all || []).filter(l => norm(l.branch) === norm(branch));
+  _le_chalan.lots = lots;
+
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const bags   = lots.reduce((n, l) => n + (Number(l.bags) || 0), 0);
+  const netQty = lots.reduce((n, l) => n + (Number(l.qty) || 0), 0);
+  const smpQty = leChalanSampleQty(lots, cfg);
+  set('le-chalan-qty', netQty ? netQty.toFixed(3) : '');
+  set('le-chalan-sample-qty', smpQty ? smpQty.toFixed(3) : '');
+  set('le-chalan-bags', bags ? String(bags) : '');
+
+  const blk = leChalanBranchBlock(cfg, branch);
+  set('le-chalan-head',    blk.heading || cfg.chalan_heading || '');
+  set('le-chalan-address', blk.address || cfg.chalan_address || '');
+
+  const sum = document.getElementById('le-chalan-summary');
+  if (sum) {
+    const sellers = new Set(lots.map(l => l.name || '').filter(Boolean));
+    sum.textContent = lots.length
+      ? `Every lot in ${branch} — ${lots.length} lot${lots.length === 1 ? '' : 's'} · `
+        + `${sellers.size} seller${sellers.size === 1 ? '' : 's'} · `
+        + `${bags} bag${bags === 1 ? '' : 's'} · ${netQty.toFixed(3)} kg`
+      : `No lots in ${branch || 'this branch'}`;
+  }
+  leChalanSyncTotals();
 }
 
 // Cardamom or gunny — the choice drives four things at once, which is why it
