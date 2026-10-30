@@ -1013,6 +1013,8 @@ const COLS = {
     { header: 'PROFORMA', key: 'invo', width: 9  },
     { header: 'TRADERNAME', key: 'tradername', width: 24 },
     { header: 'BIDDER', key: 'bidder', width: 9  },
+    // ALT CODE — the per-lot tag from Price Entry, beside the bidder it names.
+    { header: 'ALT CODE', key: 'alt_code', width: 9 },
     { header: 'BAG',    key: 'bag',    width: 5  },
     { header: 'QTY',    key: 'qty',    width: 10 },
     { header: 'AMOUNT', key: 'amount', width: 13 },

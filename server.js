@@ -16,7 +16,7 @@ const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getSettingBool, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
         SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, planterDebitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, pinAuctionRates, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, planterDebitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, pinAuctionRates, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql, hydrateAltCodes } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 // Faint company-logo watermark shared by BOTH PDF engines — the debit notes
 // and the Commission Bill (Format 2) draw their own PDFKit layouts here rather
@@ -9823,6 +9823,46 @@ app.post('/api/lots/dummy-code/bulk', requireLotWrite, (req, res) => {
   res.json({ success: true, updated, skippedLocked, value });
 });
 
+// ── Delivery challan serial ────────────────────────────────────────
+//
+// GET  reports the serial the next challan will carry, for pre-filling the
+//      print form. It CLAIMS nothing — opening the form and cancelling must
+//      not burn a number out of a paper book.
+// POST claims it: returns that serial and advances the counter in the same
+//      synchronous step, so two operators printing at the same moment are
+//      handed different numbers. (Read-then-write with no await between the
+//      two is indivisible on Node's single thread; an await in the middle
+//      would make this a genuine race.)
+//
+// The counter is ONE install-wide series, deliberately — a challan is a gate
+// pass and its book runs continuously through the year, whichever trade the
+// goods came off. A per-trade counter would re-issue number 1 every auction.
+// See `chalan_next_no` in company-config.js.
+const _chalanSerial = (db, n) => {
+  const prefix = String(getSetting(db, 'chalan_prefix') || '');
+  return prefix + String(n);
+};
+const _chalanNext = (db) => {
+  const raw = parseInt(String(getSetting(db, 'chalan_next_no') || '').trim(), 10);
+  return (Number.isFinite(raw) && raw > 0) ? raw : 1;
+};
+app.get('/api/delivery-chalan/next-no', requireView, (req, res) => {
+  const db = getDb();
+  const n = _chalanNext(db);
+  res.json({ serial: n, no: _chalanSerial(db, n) });
+});
+app.post('/api/delivery-chalan/claim-no', requireLotWrite, (req, res) => {
+  const db = getDb();
+  const n = _chalanNext(db);
+  db.run(
+    `INSERT INTO company_settings (key, value, category, label, field_type)
+     VALUES ('chalan_next_no', ?, 'lot_entry', 'Delivery Challan: Next Serial No', 'number')
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [String(n + 1)]
+  );
+  res.json({ serial: n, no: _chalanSerial(db, n), next: n + 1 });
+});
+
 // ── Bulk-set the DUMMY SELLER IDENTITY on many lots at once ──────────
 // Powers the Lots tab's "🎭 Dummy Details" modal. Writes up to four
 // fields — dummy_name / dummy_tel / dummy_cr / dummy_grade — which stand
@@ -12042,64 +12082,21 @@ app.get('/api/invoices', requireView, (req, res) => {
 
   // ── Alt code — the ALTERNATE CODE typed per lot in Price Entry ──────
   //
-  // `lots.dummy_code`: the free-text tag the operator puts on a lot at
-  // pricing time, and the same value the Checklist and Tharai List print
-  // under "ALT CODE". It is NOT buyers.code (the buyer master's short
-  // alias) — the two genuinely differ, because this one is set per trade:
-  // the buyer ERPL carries ER, ERP and ERJ on three different invoices.
-  //
-  // Resolved through the invoice's LOTS, since that is where the tag lives.
-  // Linkage matches invoiceLotNos(): an original stamps lots.invo, while a
-  // PROFORMA stamps lots.proforma_invo and deliberately leaves lots.invo
-  // empty — so a draft keyed on `invo` would find nothing and show blank.
-  //
-  // An invoice's lots carry at most ONE distinct code in practice (checked:
-  // 130 invoices with exactly one, 54 with none, never more). Distinct
-  // values are still joined rather than one being picked arbitrarily, so if
-  // a trade ever does mix them the row shows that instead of hiding it.
-  //
-  // NULL, exactly as the asp_invo block documents: SQL never matches NULL
-  // with `=`, and a JS Map keyed on String(invo) would collapse NULL to ''
-  // and let an invoice inherit a code from an unrelated lot. Both sides
-  // exclude NULL explicitly.
-  const altByKey = new Map();            // key(auction_id, buyer, col, invo) -> Set(code)
-  const altBuyersByAuction = new Map();  // auction_id -> Set(buyer)
+  // One implementation, shared with the Pending Sales register, which shows
+  // the same column; see hydrateAltCodes for why it keys on the proforma
+  // column for drafts and how NULL is excluded on both sides.
+  hydrateAltCodes(db, rows, (r) => ({
+    auctionId: r.auction_id, buyer: r.buyer, invo: r.invo,
+    proforma: !!Number(r.is_proforma),
+  }));
+  // The stopped-lot block below walks the same (auction_id, buyer) sets under
+  // the same NULL rule, so they are built once here rather than twice.
   const _altUnmatchable = (r) => r.auction_id == null || r.buyer == null || r.invo == null;
+  const altBuyersByAuction = new Map();  // auction_id -> Set(buyer)
   for (const r of rows) {
     if (_altUnmatchable(r)) continue;
     if (!altBuyersByAuction.has(r.auction_id)) altBuyersByAuction.set(r.auction_id, new Set());
     altBuyersByAuction.get(r.auction_id).add(r.buyer);
-  }
-  try {
-    for (const [aid, buyerSet] of altBuyersByAuction) {
-      for (const buyers of _chunk([...buyerSet], 400)) {
-        const found = db.all(
-          `SELECT buyer, invo, proforma_invo, TRIM(dummy_code) AS dummy_code FROM lots
-            WHERE auction_id = ? AND buyer IN (${buyers.map(() => '?').join(',')})
-              AND dummy_code IS NOT NULL AND TRIM(dummy_code) != ''`,
-          [aid, ...buyers]
-        );
-        for (const f of found) {
-          if (f.buyer == null) continue;   // cannot be matched by `buyer = ?`
-          // One lot can back an original AND a draft, so index both columns.
-          for (const [col, val] of [['invo', f.invo], ['proforma_invo', f.proforma_invo]]) {
-            if (val == null) continue;     // NULL never matched under `= ?`
-            const k = _aspKey(aid, f.buyer, col, val);
-            if (!altByKey.has(k)) altByKey.set(k, new Set());
-            altByKey.get(k).add(f.dummy_code);
-          }
-        }
-      }
-    }
-  } catch (e) {
-    // dummy_code is added by migration; an older DB must not break the list.
-    console.warn('[invoices] alt code hydration failed:', e.message);
-  }
-  for (const r of rows) {
-    if (_altUnmatchable(r)) { r.alt_code = ''; continue; }
-    const col = Number(r.is_proforma) ? 'proforma_invo' : 'invo';
-    const hit = altByKey.get(_aspKey(r.auction_id, r.buyer, col, r.invo));
-    r.alt_code = hit ? [...hit].filter(Boolean).join(', ') : '';
   }
 
   // ── Stopped lots behind each invoice ───────────────────────────────

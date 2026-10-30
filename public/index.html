@@ -706,6 +706,11 @@ body[data-login="midnight"] #login .login-card .fg input:focus{background:rgba(2
 .login-feats .ck svg{width:15px;height:15px;fill:none;stroke:#fff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
 @keyframes featIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .login-hero-foot{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:30px;font-size:12px;font-weight:500;color:#64748B}
+/* The product's own name, leading the footer. Heavier than the copyright
+   beside it so it reads as a name rather than more small print, and it
+   inherits the footer's colour so it stays legible on every login layout
+   (the coloured panels repaint that colour). */
+.login-hero-app{font-weight:800;letter-spacing:.3px;color:inherit;opacity:.95}
 
 /* status pill — shared by hero footer */
 .login-card-status{display:inline-flex;align-items:center;gap:6px;color:var(--spice-saffron-dk);font-weight:700}
@@ -861,7 +866,10 @@ body[data-login-layout="topbar"] .login-feats{display:none}
 body[data-login-layout="topbar"] .login-eyebrow{margin:0;background:none;border:none;padding:0;font-size:14px;letter-spacing:.2px;text-transform:none;color:var(--spice-saffron-dk)}
 body[data-login-layout="topbar"] .login-eyebrow .dot{width:9px;height:9px}
 body[data-login-layout="topbar"] .login-hero-foot{margin:0;font-size:12px}
-body[data-login-layout="topbar"] .login-hero-foot > span:first-child{display:none}
+/* Compact bar: the copyright is dropped for width — by NAME, not by
+   position, because the app name now leads this row and is exactly what
+   a one-line bar should keep. */
+body[data-login-layout="topbar"] .login-hero-foot .login-hero-copy{display:none}
 /* the card centers in the space beneath the bar */
 body[data-login-layout="topbar"] .login-card{grid-row:2;justify-self:center;align-self:center;max-width:432px;left:0;margin:0}
 
@@ -1674,6 +1682,27 @@ html.sidebar-collapsed .sidebar .nav-group:hover::after{
      past show through the gutters either side of the strip. */
   padding:4px 36px 0;margin-left:-36px;margin-right:-36px
 }
+/* ── A screen's own filter row, pinned under the tabs ──────────────
+   Some screens are a filter bar plus one very long result (Pre-Invoice is a
+   whole trade's invoices). Scrolling to the bottom of that and wanting a
+   different buyer meant scrolling all the way back up, so the bar that
+   CHOOSES what you are looking at now stays on screen with it.
+
+   `top` is the measured top bar PLUS the measured tab strip (--stick-top,
+   set by _syncTopbarHeight). Both are measured for the same reason the tab
+   strip measures the bar: they re-flow with window width and the text-size
+   control, so any constant is wrong at every size but one.
+
+   z-index sits under the tab strip's 20, so the strip covers this bar rather
+   than the other way round; the opaque background stops rows showing through
+   as they scroll beneath. The negative side margins + matching padding let
+   the background span the .content gutters. */
+.filterbar-sticky{
+  position:sticky;top:var(--stick-top,112px);z-index:15;
+  background:var(--card);
+  padding:10px 36px;margin-left:-36px;margin-right:-36px;
+  border-bottom:1px solid var(--spice-line)
+}
 /* Collapsed: the rows fold away and only the re-open handle is left, for an
    operator who wants the full height for a long grid. The strip itself stays
    in flow so the handle keeps its place. */
@@ -2167,6 +2196,11 @@ body:not([data-feat-immediate-reserve="1"]) .feat-immediate-reserve{display:none
    on plain wrappers (not on a .needs-*-write button), so no permission rule
    competes with it. */
 body:not([data-feat-godown="1"]) .feat-godown{display:none !important}
+/* Delivery Challan (Lot Entry recent entries) — gated by flag_delivery_chalan.
+   When OFF the toolbar button collapses via .feat-delivery-chalan. It sits on
+   a plain toolbar button, not a .needs-*-write one, so no permission rule
+   competes with this single-class gate. */
+body:not([data-feat-delivery-chalan="1"]) .feat-delivery-chalan{display:none !important}
 /* Entry Type chooser — two segments, the picked one filled. Teal for the
    godown side so it never reads as the green "booked" state anywhere. */
 .le-mode{display:flex;gap:0;border:1.5px solid var(--border);border-radius:9px;overflow:hidden}
@@ -4999,7 +5033,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <li><span class="ck"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>Trade reports, journals &amp; Tally XML export — no re-keying</li>
       </ul>
       <div class="login-hero-foot">
-        <span>&copy; <span id="login-hero-year"></span> &middot; <span id="login-hero-credit">Powered by KJ &amp; Co</span></span>
+        <!-- The name of THIS SOFTWARE (app_name), not the customer's company.
+             The sign-in card and the top bar deliberately keep the customer's
+             own name — this footer is where the product says what it is.
+             Hidden when app_name is blank rather than printing an empty gap. -->
+        <span id="login-hero-app" class="login-hero-app" hidden></span>
+        <span class="login-hero-copy">&copy; <span id="login-hero-year"></span> &middot; <span id="login-hero-credit">Powered by KJ &amp; Co</span></span>
         <span class="login-card-status">Server live</span>
       </div>
     </section>
@@ -7148,7 +7187,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           </div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Lot</th><th>Crop Receipt</th><th>Name</th><th>Branch</th><th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th><th>Buyer</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Payable</th><th>Actions</th></tr></thead><tbody id="lots-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Lot</th><th>CropRept</th><th>Actions</th><th>Name</th><th>Branch</th><th>Bags</th><th>Qty</th><th>Price</th><th>Amount</th><th>Buyer</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Payable</th></tr></thead><tbody id="lots-list"></tbody></table></div>
         <!-- Pager — same shape as Sales / Purchases / Bills / DN tabs.
              renderPager() hides itself when there's only one page worth
              of rows, and is bypassed entirely when a search filter is
@@ -7578,6 +7617,14 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <span aria-hidden="true">↻</span> Change Seller
             <span id="le-change-seller-count" class="le-tb-badge"></span>
           </button>
+          <!-- Delivery Challan — the gate pass for the ticked lots. Not a
+               receipt and not an invoice: one vehicle, one rate, a bag count
+               and a serial out of the install-wide challan book. Gated by
+               flag_delivery_chalan. -->
+          <button id="le-chalan-btn" type="button" onclick="leOpenChalan()" class="le-toolbar-btn le-tb-secondary feat-delivery-chalan" style="display:none" title="Print a delivery challan for the ticked lots">
+            <span aria-hidden="true">🚚</span> Delivery Chalan
+            <span id="le-chalan-count" class="le-tb-badge"></span>
+          </button>
           <button id="le-print-clear-btn" type="button" onclick="leClearPrintSelection()" class="le-toolbar-btn le-tb-ghost" style="display:none">Clear</button>
         </div>
         <!-- Seller filter: type-ahead by seller name. Hits /api/lots's
@@ -7701,6 +7748,54 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button class="btn btn-g" id="le-print-confirm" onclick="leConfirmPrint()">🖨 Print</button>
         </div>
       </div></div>
+
+      <!-- ───────────────────────────────────────────────────────────
+           Delivery Challan modal — the gate pass for the ticked lots.
+           A challan is not an invoice: it carries no tax and no money
+           the ledger reads. Four of its five fields are typed here
+           because they are facts about THIS despatch, not about the
+           lots: which lorry, what rate was agreed, how many bags are
+           actually going, and the address the goods leave from. Each
+           pre-fills from its setting (Settings - Lot Entry - Delivery
+           Challan) since in practice the same lorry and rate repeat
+           all day.
+
+           The fifth, the serial, comes out of the install-wide challan
+           book. The number shown here is a PREVIEW: it is claimed (and
+           the counter advanced) only on Print, so opening this and
+           cancelling never burns a number. -->
+      <div class="modal-bg" id="le-chalan-modal"><div class="modal" style="max-width:560px">
+        <h2 style="margin-bottom:6px">Delivery Chalan</h2>
+        <p id="le-chalan-summary" style="font-size:12px;color:var(--text3);margin:0 0 12px"></p>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="fg" style="margin:0"><label>Chalan No</label>
+            <input type="text" id="le-chalan-no" autocomplete="off"
+                   title="Next number in the challan book. Printing advances the book; edit it here to print a one-off number without moving the counter."></div>
+          <div class="fg" style="margin:0"><label>Date</label>
+            <input type="date" id="le-chalan-date"></div>
+          <div class="fg" style="margin:0"><label>Veh No</label>
+            <input type="text" id="le-chalan-veh" placeholder="TN 00 AA 0000" autocomplete="off"></div>
+          <div class="fg" style="margin:0"><label>Rate (per kg)</label>
+            <input type="number" id="le-chalan-rate" step="0.01" min="0" placeholder="0.00"></div>
+          <div class="fg" style="margin:0"><label>Bags</label>
+            <input type="number" id="le-chalan-bags" step="1" min="0"
+                   title="Bags actually loaded. Defaults to the total on the ticked lots — change it if part of the stock is going."></div>
+          <div class="fg" style="margin:0"><label>Consignee / To</label>
+            <input type="text" id="le-chalan-to" autocomplete="off"
+                   title="Who the goods are going to. Defaults to the seller on the ticked lots."></div>
+        </div>
+        <div class="fg" style="margin:10px 0 0"><label>Address (below company name)</label>
+          <input type="text" id="le-chalan-address" autocomplete="off"
+                 placeholder="Leave blank to print the company's registered address"></div>
+
+        <div id="le-chalan-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin:12px 0 0"></div>
+
+        <div class="actions">
+          <button class="btn btn-o" onclick="hideModal('le-chalan-modal')">Cancel</button>
+          <button class="btn btn-g" id="le-chalan-print" onclick="leConfirmChalan()">🖨 Print Chalan</button>
+        </div>
+      </div></div>
     </div>
 
     <!-- INVOICES -->
@@ -7808,7 +7903,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <button class="needs-invoice-revert btn" style="height:38px;padding:0 14px;background:var(--spice-turmeric);color:#fff;font-weight:600" onclick="revertAllInvoices()" title="Revert all invoices — deletes them and re-enables lots for re-invoicing">⟲ Revert All</button>          </div>
         </div>
 
-        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Dist (km)</th><th>Buyer</th><th>Alt Code</th><th>Trade Name</th><th>Bags</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th>Actions</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
+        <div style="overflow-x:auto"><table><thead><tr><th style="width:32px"></th><th>Sale</th><th>Inv#</th><th>Lorry</th><th>Dist (km)</th><th>Actions</th><th>Buyer</th><th>Alt Code</th><th>Trade Name</th><th>Bags</th><th>Qty</th><th>Amount</th><th>Insurance</th><th>Transport</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th></tr></thead><tbody id="invoices-list"></tbody></table></div>
         <div id="invoices-pager" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;font-size:12.5px;color:var(--text2);flex-wrap:wrap"></div>
       </div>
     </div>
@@ -7819,7 +7914,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
     <div class="tc" id="tc-preinvoice">
       <div class="card">
         <h2>Pre-Invoice <span style="font-weight:400;font-size:12px;color:var(--text3)">Preview how each sales invoice will look — before you generate. Nothing is saved.</span></h2>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px">
+        <!-- Pinned: this bar chooses WHICH invoice the long preview below is
+             showing, so it has to stay reachable from the bottom of it. -->
+        <div class="filterbar-sticky" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px">
           <div class="fg" style="margin:0;min-width:180px"><label>Auction</label>
             <select id="pi-auction" onchange="loadPreInvoiceBuyers()" style="width:100%;height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px"></select>
           </div>
@@ -11740,6 +11837,29 @@ const StatusBlock = (function(){
   return { show, clear, html };
 })();
 
+/* ── Put one column back where the operator can reach it ───────────
+   Wide grids (Lots, Sales Invoices) carry 20+ columns, and the Actions
+   column — the one you came to the row to USE — sat at the far right,
+   off the end of a horizontal scroll. This lifts a column out of an
+   assembled array and drops it straight after a named one, so the
+   column DEFINITIONS stay where they are (next to the data they
+   describe) and only the running order changes.
+
+   Returns a new array; a missing `key` or `after` is a no-op rather
+   than an error, because the arrays are assembled conditionally (a
+   trade grid has no auction columns) and a reorder must never be the
+   thing that empties a table. */
+function reorderColumn(columns, key, after){
+  const from = columns.findIndex(c => c && c.key === key);
+  if (from < 0) return columns;
+  const out = columns.slice();
+  const [col] = out.splice(from, 1);
+  const at = out.findIndex(c => c && c.key === after);
+  if (at < 0) { out.splice(from, 0, col); return out; }   // anchor gone: leave as-was
+  out.splice(at + 1, 0, col);
+  return out;
+}
+
 const DataTable = (function(){
   const PAGE_SIZE = 100;       // rows shown per load
   const state = {}; // keyed by tbodyId: { data, cols, sort, search, visible }
@@ -13092,6 +13212,12 @@ async function applyFeatureFlags() {
   }
   document.body.setAttribute('data-feat-dash-quick-actions',
     (cfg && cfg.flag_dash_quick_actions !== undefined && !on(cfg.flag_dash_quick_actions)) ? '0' : '1');
+  // Delivery Challan button on Lot Entry's recent-entries toolbar. Default ON
+  // (the attribute is only '0' when the setting is explicitly false) — it is a
+  // print button on a panel the operator is already using, and nothing is
+  // numbered until it is pressed.
+  document.body.setAttribute('data-feat-delivery-chalan',
+    (cfg && cfg.flag_delivery_chalan !== undefined && !on(cfg.flag_delivery_chalan)) ? '0' : '1');
   // Flag turned off mid-session: pin the form back to a booking so a stale
   // godown selection can't survive inside a now-hidden chooser.
   if (!godownOn && typeof leSetEntryMode === 'function' && typeof _le === 'object'
@@ -13183,6 +13309,17 @@ async function applyBranding(){
   // Sub-line under the hero brand: branch + GSTIN. The sign-in card keeps
   // the static "Enter your credentials to continue." copy.
   if (sub) setText('login-hero-sub', sub);
+
+  // The app's own name in the hero footer (app_name — the SOFTWARE, not the
+  // customer's company, which is what every other slot on this page shows).
+  // Public, because the login page is pre-auth: it rides /api/branding with
+  // the trade name and the logo.
+  const appEl = document.getElementById('login-hero-app');
+  if (appEl) {
+    const appName = String(b.appName || '').trim();
+    appEl.textContent = appName;
+    appEl.hidden = !appName;     // no empty gap in the footer row
+  }
 
   // Copyright year — current FY so the footer stays accurate without a
   // manual edit each April.
@@ -17751,6 +17888,12 @@ function _syncTopbarHeight(){
   if (!bar) return;
   const h = Math.round(bar.getBoundingClientRect().height);
   if (h > 0) document.documentElement.style.setProperty('--topbar-h', h + 'px');
+  // …and where a screen's OWN sticky row has to start: below the bar AND the
+  // tab strip. Measured together because the strip folds (toggleTabstrip) and
+  // both re-flow with width and text size — see .filterbar-sticky.
+  const strip = document.getElementById('tabstrip');
+  const sh = strip ? Math.round(strip.getBoundingClientRect().height) : 0;
+  document.documentElement.style.setProperty('--stick-top', ((h > 0 ? h : 64) + sh) + 'px');
 }
 // Re-measure whenever the bar can change shape: window resize, and the
 // text-size control (which re-flows it). ResizeObserver catches both plus
@@ -17759,7 +17902,15 @@ function _watchTopbarHeight(){
   _syncTopbarHeight();
   const bar = document.querySelector('.topbar');
   if (bar && typeof ResizeObserver === 'function') {
-    try { new ResizeObserver(_syncTopbarHeight).observe(bar); return; } catch (_) {}
+    try {
+      const ro = new ResizeObserver(_syncTopbarHeight);
+      ro.observe(bar);
+      // The tab strip is the other half of --stick-top, and it changes height
+      // on its own (folding, wrapping) without the bar moving at all.
+      const strip = document.getElementById('tabstrip');
+      if (strip) ro.observe(strip);
+      return;
+    } catch (_) {}
   }
   window.addEventListener('resize', _syncTopbarHeight);   // fallback
 }
@@ -26905,6 +27056,14 @@ function leUpdatePrintToolbar() {
   }
   if (bySeller) bySeller.style.display = (n > 0 && sellerCount > 1) ? 'inline-flex' : 'none';
   if (seBadge)  seBadge.textContent = sellerCount;
+  // Delivery Challan follows the same selection rule as Print Selected. The
+  // feature gate is CSS (.feat-delivery-chalan), so this only decides whether
+  // there is anything to put ON a challan — with the flag off the button stays
+  // collapsed whatever this sets.
+  const chalan = document.getElementById('le-chalan-btn');
+  const chBadge = document.getElementById('le-chalan-count');
+  if (chalan)  chalan.style.display = n > 0 ? 'inline-flex' : 'none';
+  if (chBadge) chBadge.textContent = n;
 }
 
 // ── Change Seller modal ────────────────────────────────────
@@ -27399,6 +27558,245 @@ async function leConfirmPrint() {
   // Clear selection only when we printed the whole batch — single
   // prints leave the user's checkboxes intact for further actions.
   if (_le_pending_print === null) { /* no-op marker for clarity */ }
+}
+
+// ── Delivery Challan ──────────────────────────────────────────────
+//
+// The gate pass for goods leaving the yard, printed over the lots ticked in
+// the recent-entries panel. It is NOT a receipt and NOT an invoice: nothing
+// is saved against the lots, no tax is computed, and no ledger reads it. What
+// it needs that the lots cannot supply is the despatch itself — the lorry,
+// the rate agreed, the bags actually loaded, the address the goods leave from
+// — so those four are typed, pre-filled from their settings.
+//
+// Printed the same way the lot receipt is (an HTML document in a new window,
+// the browser's own print dialog as the preview) rather than through a server
+// PDF route, so the operator can send it to whichever printer the gate uses.
+let _le_chalan = null;      // { lots, cfg, auction, previewNo } while the modal is open
+
+async function leOpenChalan() {
+  const ids = _le.selectedForPrint || new Set();
+  if (!ids.size) { toast('Tick at least one lot for the chalan'); return; }
+  const lots = (_le.recentLots || []).filter(l => ids.has(l.id));
+  if (!lots.length) { toast('Selected lots no longer in view — reload and retry'); return; }
+
+  let cfg = {};
+  try { cfg = await j('/api/company-settings/flat'); refreshMaskCfg(cfg); } catch (_) {}
+  // The trade is only for the header line; a failed lookup must not stop a
+  // challan, so it falls back to no trade rather than refusing to print.
+  let auction = null;
+  try {
+    const aid = document.getElementById('le-auction').value;
+    const all = await j('/api/auctions');
+    auction = (all || []).find(a => String(a.id) === String(aid)) || null;
+  } catch (_) {}
+
+  // The serial is a PREVIEW — read, not claimed. Cancelling must not burn a
+  // number out of a paper book.
+  let previewNo = '';
+  try { const r = await j('/api/delivery-chalan/next-no'); previewNo = (r && r.no) || ''; } catch (_) {}
+
+  const bags = lots.reduce((n, l) => n + (Number(l.bags) || 0), 0);
+  const sellers = [...new Set(lots.map(l => l.name || '').filter(Boolean))];
+
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const noEl = document.getElementById('le-chalan-no');
+  if (noEl) { noEl.value = previewNo; noEl.dataset.preview = previewNo; }
+  set('le-chalan-date', new Date().toISOString().slice(0, 10));
+  set('le-chalan-veh',  cfg.chalan_veh_no || '');
+  set('le-chalan-rate', cfg.chalan_rate   || '');
+  set('le-chalan-bags', bags || '');
+  // One seller named outright; several left blank rather than guessed, so the
+  // operator says who the goods are for instead of the form inventing it.
+  set('le-chalan-to', sellers.length === 1 ? sellers[0] : '');
+  set('le-chalan-address', cfg.chalan_address || '');
+
+  const err = document.getElementById('le-chalan-err');
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  const sum = document.getElementById('le-chalan-summary');
+  if (sum) {
+    const qty = lots.reduce((n, l) => n + (Number(l.qty) || 0), 0);
+    sum.textContent = `${lots.length} lot${lots.length === 1 ? '' : 's'} · `
+      + `${sellers.length === 1 ? sellers[0] : sellers.length + ' sellers'} · `
+      + `${bags} bag${bags === 1 ? '' : 's'} · ${qty.toFixed(3)} kg`;
+  }
+  _le_chalan = { lots, cfg, auction, previewNo };
+  showModal('le-chalan-modal');
+}
+
+async function leConfirmChalan() {
+  if (!_le_chalan) return;
+  const errEl = document.getElementById('le-chalan-err');
+  const showErr = (m) => { if (errEl) { errEl.textContent = m; errEl.style.display = 'block'; } };
+  const val = (id) => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+
+  const veh = val('le-chalan-veh');
+  if (!veh) { showErr('Vehicle number is needed — a challan travels with the lorry.'); return; }
+
+  // Claim the serial ONLY when the operator left the preview alone. A number
+  // they typed over is a deliberate one-off (re-printing a lost challan, or
+  // continuing a book by hand) and must not move the counter past it.
+  const noEl = document.getElementById('le-chalan-no');
+  let chalanNo = val('le-chalan-no');
+  const untouched = noEl && chalanNo === String(noEl.dataset.preview || '');
+  if (untouched) {
+    try {
+      const r = await j('/api/delivery-chalan/claim-no', { method: 'POST', body: JSON.stringify({}) });
+      if (r && r.no) chalanNo = r.no;
+    } catch (e) {
+      // The number is not worth losing the print over — the operator can see
+      // what it says and the counter can be corrected in Settings.
+      showErr('Could not advance the chalan book (printing with ' + chalanNo + ').');
+    }
+  }
+
+  const html = leBuildChalanHtml({
+    lots: _le_chalan.lots,
+    cfg: _le_chalan.cfg || {},
+    auction: _le_chalan.auction || {},
+    chalanNo,
+    date: val('le-chalan-date'),
+    veh,
+    rate: parseFloat(val('le-chalan-rate')) || 0,
+    bags: val('le-chalan-bags') === '' ? null : (parseInt(val('le-chalan-bags'), 10) || 0),
+    consignee: val('le-chalan-to'),
+    address: val('le-chalan-address'),
+  });
+  const win = window.open('', '_blank', 'width=820,height=900');
+  if (!win) { showErr('Popup blocked. Allow popups for this site and retry.'); return; }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.onload = () => { try { win.focus(); win.print(); } catch (e) {} };
+
+  hideModal('le-chalan-modal');
+  _le_chalan = null;
+}
+
+// Pure builder: lots + the typed despatch details in, a complete HTML
+// document out. Kept separate from the print so it can be exercised directly.
+//
+// LAYOUT: A4 portrait, the company header then one table of the lots going.
+// The typed BAGS is what the total row prints — part of a lot's stock can be
+// loaded, and the gate counts bags, not lots — while each row keeps the bags
+// the lot was booked with so the two can be read against each other.
+function leBuildChalanHtml(o) {
+  const cfg = o.cfg || {}, auction = o.auction || {}, lots = o.lots || [];
+  const E = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const n3 = (v) => (Number(v) || 0).toFixed(3);
+  const n2 = (v) => (Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Same state-aware company block the lot receipt uses — an install trading
+  // from two states must not print the wrong office on a gate pass.
+  const sample = lots[0] || {};
+  const isKerala = String(sample.state || cfg.business_state || '').toUpperCase().includes('KERALA');
+  const pick = (k) => isKerala ? (cfg['kl_' + k] || cfg['tn_' + k] || '') : (cfg['tn_' + k] || '');
+  const tradeName = cfg.trade_name || cfg.short_name || '';
+  // The typed address REPLACES the registered block when given: a godown or
+  // gate is often not the registered office, which is the whole reason this
+  // line is configurable.
+  const addrLines = o.address
+    ? [o.address]
+    : [pick('address1'), pick('address2'), [pick('place'), pick('pin')].filter(Boolean).join(' - ')].filter(Boolean);
+  const idLine = [
+    pick('gstin') ? 'GSTIN: ' + pick('gstin') : '',
+    pick('phone') ? 'Ph: ' + pick('phone') : '',
+  ].filter(Boolean).join('   ');
+
+  const rate = Number(o.rate) || 0;
+  const rows = lots.slice().sort((a, b) => {
+    const an = parseInt(String(a.lot_no).match(/\d+/)?.[0] || '0', 10);
+    const bn = parseInt(String(b.lot_no).match(/\d+/)?.[0] || '0', 10);
+    return an - bn;
+  });
+  const totQty  = rows.reduce((t, l) => t + (Number(l.qty) || 0), 0);
+  const lotBags = rows.reduce((t, l) => t + (Number(l.bags) || 0), 0);
+  const bags    = (o.bags == null) ? lotBags : o.bags;
+  const totVal  = totQty * rate;
+
+  const body = rows.map((l, i) => `<tr>
+      <td class="c">${i + 1}</td>
+      <td>${E(l.lot_no || '')}</td>
+      <td>${E(l.name || '')}</td>
+      <td class="r">${Number(l.bags) || 0}</td>
+      <td class="r">${n3(l.qty)}</td>
+      <td class="r">${rate ? n2(rate) : '&mdash;'}</td>
+      <td class="r">${rate ? n2((Number(l.qty) || 0) * rate) : '&mdash;'}</td>
+    </tr>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Delivery Chalan ${E(o.chalanNo)}</title>
+<style>
+  @page { size: A4 portrait; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 12px; color: #111; margin: 0; }
+  .hd { text-align: center; border-bottom: 2px solid #111; padding-bottom: 8px; }
+  .co { font-size: 20px; font-weight: 800; letter-spacing: .5px; }
+  .ad { font-size: 11px; color: #333; margin-top: 2px; line-height: 1.45; }
+  .ids { font-size: 10.5px; color: #333; margin-top: 3px; }
+  .ttl { text-align: center; font-size: 13px; font-weight: 800; letter-spacing: 2px;
+         margin: 10px 0 2px; text-transform: uppercase; }
+  .sub { text-align: center; font-size: 10px; color: #555; margin-bottom: 10px; }
+  .meta { display: flex; justify-content: space-between; gap: 16px; font-size: 11.5px;
+          border: 1px solid #111; padding: 7px 10px; }
+  .meta div { line-height: 1.7; }
+  .meta b { display: inline-block; min-width: 74px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { border: 1px solid #111; padding: 5px 6px; font-size: 11.5px; }
+  th { background: #f1f1f1; font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; }
+  td.r, th.r { text-align: right; }
+  td.c, th.c { text-align: center; }
+  tr.tot td { font-weight: 800; background: #fafafa; }
+  .note { margin-top: 10px; font-size: 10.5px; color: #444; line-height: 1.5; }
+  .sign { display: flex; justify-content: space-between; margin-top: 34px; font-size: 11px; }
+  .sign div { text-align: center; min-width: 170px; border-top: 1px solid #111; padding-top: 4px; }
+</style></head><body>
+  <div class="hd">
+    <div class="co">${E(tradeName)}</div>
+    ${addrLines.length ? `<div class="ad">${addrLines.map(E).join('<br>')}</div>` : ''}
+    ${idLine ? `<div class="ids">${E(idLine)}</div>` : ''}
+  </div>
+  <div class="ttl">Delivery Chalan</div>
+  <div class="sub">Not a tax invoice &middot; issued for movement of goods</div>
+  <div class="meta">
+    <div>
+      <b>Chalan No</b> ${E(o.chalanNo || '')}<br>
+      <b>Date</b> ${E(o.date ? fmtD(o.date) : '')}<br>
+      <b>Veh No</b> ${E(o.veh || '')}
+    </div>
+    <div>
+      <b>Consignee</b> ${E(o.consignee || '')}<br>
+      <b>Auction No</b> ${E(auction.ano || '')}<br>
+      <b>Branch</b> ${E(sample.branch || '')}
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th class="c" style="width:28px">Sl</th>
+      <th style="width:60px">Lot No</th>
+      <th>Seller</th>
+      <th class="r" style="width:48px">Bags</th>
+      <th class="r" style="width:84px">Net Wt (kg)</th>
+      <th class="r" style="width:64px">Rate</th>
+      <th class="r" style="width:92px">Value</th>
+    </tr></thead>
+    <tbody>${body}</tbody>
+    <tfoot><tr class="tot">
+      <td class="c" colspan="3">Total &mdash; ${rows.length} lot${rows.length === 1 ? '' : 's'}</td>
+      <td class="r">${bags}</td>
+      <td class="r">${n3(totQty)}</td>
+      <td class="r"></td>
+      <td class="r">${rate ? n2(totVal) : '&mdash;'}</td>
+    </tr></tfoot>
+  </table>
+  ${(o.bags != null && o.bags !== lotBags)
+    ? `<div class="note"><b>Bags loaded:</b> ${bags} of ${lotBags} booked on these lots.</div>` : ''}
+  <div class="note">Received the above goods in good condition.</div>
+  <div class="sign">
+    <div>Receiver's Signature</div>
+    <div>For ${E(tradeName)}</div>
+  </div>
+</body></html>`;
 }
 
 // ── Receipt HTML builder ────────────────────────────────────────
@@ -28362,7 +28760,7 @@ const SET_FIELD_GROUPS = {
       keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_godown','flag_lot_validation',
             'flag_bulk_set_buyer_code','flag_lot_dummy_details','flag_generate_all_docs','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
             'flag_auction_desk','flag_auction_manager','flag_insights','flag_pertrade_breakdown',
-            'flag_dash_snapshot','flag_dash_current_auction','flag_dash_quick_actions'] },
+            'flag_dash_snapshot','flag_dash_current_auction','flag_dash_quick_actions','flag_delivery_chalan'] },
     { title:'Auction Sheets', icon:'📋', hint:'Optional columns and grouping on the post-auction verification sheets — which columns the Checklist prints, and which code the Tharai List totals its buyers by.',
       keys:['checklist_show_dummy','checklist_show_buyer','tharai_dummy_code'] },
     { title:'Tally & Accounts Export', icon:'📤', hint:'How purchase vouchers and journals are written into the Tally XML.',
@@ -28378,6 +28776,8 @@ const SET_FIELD_GROUPS = {
             'mobile_show_sample_field','mobile_show_gross_field','default_auction_id'] },
     { title:'Lot Receipt Print', icon:'🧾', hint:'Columns, paper width and totals layout for the printed lot receipt.',
       match:/^lot_receipt_/ },
+    { title:'Delivery Challan', icon:'🚚', hint:'The gate pass printed from Recent Entries. The serial number runs install-wide and continuously — set it once to continue your existing book, and printing a challan advances it. The rest are defaults that pre-fill the print form; leave one blank to be asked every time.',
+      match:/^chalan_/ },
     { title:'Edit & Delete Permissions', icon:'🔐', hint:'What a non-admin may change after a lot is saved, and for how long.',
       keys:['edit_enabled','delete_enabled','edit_timeout_sec'] },
   ],
@@ -34833,7 +35233,7 @@ async function loadLots(opts){
         : '') },
     // Crop Receipt No (lots.crpt) — the receipt-book number captured at lot
     // entry. Sits right after Lot so the two identifiers read together.
-    { key:'crpt', label:'Crop Receipt', sort:'text',
+    { key:'crpt', label:'CropRept', sort:'text',
       render:(l)=> l.crpt ? esc(l.crpt) : '<span style="color:var(--text3)">—</span>' },
     // A 🎭 badge marks a lot carrying dummy seller details — without it
     // there is no way to tell from the table that the e-Auction CSV and
@@ -34930,12 +35330,15 @@ async function loadLots(opts){
   // stay at the right edge.
   const filteredTradeCols = tradeCols;
   const filteredTaxCols   = taxCols;
-  const columns = [
+  // Actions is defined at the end of taxCols (beside Payable, where it
+  // reads) but RENDERS right after CropRept, so it is on screen without
+  // scrolling a 20-column grid sideways. See reorderColumn.
+  const columns = reorderColumn([
     BulkActions.column('lot'),
     ...baseCols,
     ...(isAuction ? auctionCols : filteredTradeCols),
     ...filteredTaxCols,
-  ];
+  ], '_actions', 'crpt');
   // Sort ticked lots to the top so they're always visible regardless
   // of page. Stable sort: among ticked rows we preserve the server's
   // ORDER BY lot_no order; same for non-ticked. This makes the typing-
@@ -38154,7 +38557,10 @@ async function loadInvoices(opts){
     // Kept live by syncInvoiceMaster(), which every tick already goes through.
     selectionTotals: { cbClass: 'inv-select-cb', labelCol: 'invo', label: 'SELECTED' },
     emptyState: { icon: 'invoices', title: "No invoices yet", body: "Once you have calculated lots for a buyer, use Generate Invoice to create one." }, 
-    columns: [
+    // Actions is defined last (its markup is long and belongs beside the
+    // other row controls) but RENDERS right after Dist (km), so an operator
+    // can reach the row's buttons without scrolling 20 columns sideways.
+    columns: reorderColumn([
       { key:'_select', label:'', labelHTML:'<input type="checkbox" id="inv-select-all" onclick="event.stopPropagation();toggleAllInvoices(this.checked)" title="Select / clear all visible" style="cursor:pointer;width:16px;height:16px;vertical-align:middle;accent-color:var(--green)">', sortable:false, searchable:false,
         render:(i)=>`<input type="checkbox" class="inv-select-cb" value="${i.id}" data-name="${esc(i.buyer1||i.buyer||'')}" data-code="${esc(i.buyer||'')}" data-invo="${esc(i.invo||'')}" data-sale="${esc(i.sale||'')}" data-total="${Number(i.tot)||0}" data-ano="${esc(i.ano||'')}" onclick="event.stopPropagation()" style="cursor:pointer">` },
       { key:'sale', label:'Sale', sort:'text', totalKind:'count',
@@ -38343,7 +38749,7 @@ async function loadInvoices(opts){
             + iconBtn('whatsapp','Send via WhatsApp',`whatsappInvoice(${i.id},'${encodeURIComponent(i.buyer1||i.buyer||'')}','${encodeURIComponent(i.invo||'')}','${encodeURIComponent(i.sale||'')}',${Number(i.tot)||0},'${esc(i.ano||'')}','${encodeURIComponent(i.buyer||'')}')`)
             + iconBtn('del','Delete invoice',`delInvoice(${i.id})`);
         } }
-    ]
+    ], '_actions', 'resolved_distance_km')
   });
   if (typeof syncInvoiceMaster === 'function') syncInvoiceMaster();
   _waPaintMarks('inv');
@@ -47651,6 +48057,13 @@ function regColumns(type){
     { key:'invo', label:'Proforma', sort:'text' },
     { key:'tradername', label:'Trader Name', sort:'text' },
     { key:'bidder', label:'Bidder', sort:'text' },
+    // ALT CODE — the per-lot tag from Price Entry, same column and same look
+    // as the Sales Invoices list. It sits beside the bidder because that is
+    // what it identifies in the office's own shorthand.
+    { key:'alt_code', label:'Alt Code', sort:'text',
+      render:(r)=> r.alt_code
+        ? `<span style="font-family:monospace;font-weight:600;color:var(--spice-text-mute);font-size:12px;letter-spacing:.4px">${esc(r.alt_code)}</span>`
+        : '<span style="color:var(--text3)">—</span>' },
     { key:'bag', label:'Bag', sort:'number', numeric:true, fmt:regFmtNum(0) },
     { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
     { key:'amount', label:'Amount', sort:'number', numeric:true, fmt:regFmtNum(2) },

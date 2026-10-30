@@ -63,7 +63,7 @@ const api = async (m, u, b) => {
   const seller = (await api('POST', '/api/traders', { name: 'PENDING SELLER', tel: '9790744421', ppla: 'BODIMETTU' })).d.trader;
 
   // Two trades, each with a draft raised over its own lots.
-  const mkTrade = async (ano, date, lots, startNo, bCode, bName) => {
+  const mkTrade = async (ano, date, lots, startNo, bCode, bName, beforeRaise) => {
     const a = (await api('POST', '/api/auctions', { ano, date, crop_type: 'ISP' })).d;
     await api('POST', `/api/auctions/${a.id}/allocations`,
       { allocations: [{ branch: 'BODI', start_lot: lots[0], end_lot: lots[lots.length - 1] }] });
@@ -77,6 +77,7 @@ const api = async (m, u, b) => {
       code: bCode, buyer: bCode, buyer1: bName, sale: 'L' });
     await api('POST', '/api/lots/bulk-price', { items: ls.map(l => ({ id: l.id, price: 3000 })) });
     await api('POST', `/api/lots/calculate/${a.id}`, {});
+    if (beforeRaise) await beforeRaise(a, ls);
     // dateSource:'auction' dates each draft from its trade rather than
     // today, so the two carry genuinely different ages. Without it both are
     // raised now and every age is 0 — true, but it tests nothing.
@@ -84,7 +85,13 @@ const api = async (m, u, b) => {
       { startInvoiceNo: startNo, docType: 'proforma', dateSource: 'auction' });
     return { a, gen: r };
   };
-  const t1 = await mkTrade('60', '2026-09-01', ['001', '002'], 100, 'B1', 'BUYER ONE');
+  // ALT CODE on the FIRST trade only, so the register has to resolve one row
+  // and leave the other blank — a hydrator that leaked a code across rows, or
+  // keyed on the wrong invoice column, would show both or neither.
+  const t1 = await mkTrade('60', '2026-09-01', ['001', '002'], 100, 'B1', 'BUYER ONE',
+    async (a, ls) => {
+      await api('POST', '/api/lots/dummy-code/bulk', { ids: ls.map(l => l.id), value: 'ERP' });
+    });
   const t2 = await mkTrade('61', '2026-10-01', ['010', '011'], 200, 'B2', 'BUYER TWO');
   check('two trades each raised a draft', t1.gen.s === 200 && t2.gen.s === 200,
         { t1: t1.gen.d, t2: t2.gen.d });
@@ -154,8 +161,66 @@ const api = async (m, u, b) => {
     check('no STATE column', !/STATE/.test(flat), flat.slice(0, 400));
   }
 
+  console.log('\n[alt code] the per-lot tag reaches the chase list');
+  // The office recognises a draft by the alternate code typed in Price Entry
+  // (lots.dummy_code), so the chase list carries the same column the Sales
+  // Invoices list shows. Resolved through the invoice's LOTS — and a DRAFT
+  // stamps lots.proforma_invo, leaving lots.invo empty, so a hydrator keyed on
+  // `invo` finds nothing and the column is blank. That is the bug this pins.
+  //
+  // By now trade 60's draft has been raised into an original (above), so 61 is
+  // the one still on the sheet; it starts UNTAGGED, which is the other half of
+  // the test — a hydrator that leaked a code across rows would fill it in.
+  const ls61 = (await api('GET', `/api/lots/${t2.a.id}`)).d || [];
+  const row61 = async () =>
+    (await reg('from=2000-01-01&to=2099-12-31')).filter(r2 => String(r2.tno) === '61')[0] || {};
+  let a61 = await row61();
+  check('an untagged draft carries the field, empty', 'alt_code' in a61 && a61.alt_code === '',
+        { present: 'alt_code' in a61, value: a61.alt_code });
+  await api('POST', '/api/lots/dummy-code/bulk', { ids: ls61.map(l => l.id), value: 'ERJ' });
+  a61 = await row61();
+  check('tagging its lots shows the code against the DRAFT', a61.alt_code === 'ERJ',
+        { got: a61.alt_code, want: 'ERJ' });
+  // Cleared means blank, not a stale code: the column is derived on every
+  // read, never stored on the invoice.
+  await api('POST', '/api/lots/dummy-code/bulk', { ids: ls61.map(l => l.id), value: '' });
+  check('clearing the tag clears the column', (await row61()).alt_code === '');
+  // Two codes under one draft are JOINED rather than one picked arbitrarily,
+  // so a trade that does mix them shows that instead of hiding it.
+  await api('POST', '/api/lots/' + ls61[0].id + '/dummy-code', { value: 'ERJ' });
+  await api('POST', '/api/lots/' + ls61[1].id + '/dummy-code', { value: 'ERP' });
+  const mixed = String((await row61()).alt_code || '').split(',').map(x => x.trim()).sort();
+  check('a draft whose lots disagree shows both codes', mixed.join(',') === 'ERJ,ERP', mixed);
+
+  // The spreadsheet carries it too — the register and its export read the
+  // same builder, so the column cannot be on screen only.
+  {
+    const r2 = await fetch(B + '/api/exports/pending-sales-register?from=2000-01-01&to=2099-12-31&format=xlsx',
+      { headers: { Authorization: 'Bearer ' + T } });
+    if (r2.status === 200) {
+      const wb2 = new ExcelJS.Workbook();
+      await wb2.xlsx.load(Buffer.from(await r2.arrayBuffer()));
+      const flat2 = JSON.stringify(wb2.worksheets[0].getSheetValues());
+      check('the xlsx heads the column ALT CODE', /ALT CODE/.test(flat2), flat2.slice(0, 500));
+      check('…and prints the codes it resolved', /ERJ/.test(flat2) && /ERP/.test(flat2), flat2.slice(0, 900));
+    } else {
+      check('the xlsx builds for the alt-code check', false, r2.status);
+    }
+  }
+
+  // And the PDF, which is the one that can run out of width — this register
+  // is landscape and the new column is one more to fit.
+  {
+    const r2 = await fetch(B + '/api/exports/pending-sales-register?from=2000-01-01&to=2099-12-31&format=pdf',
+      { headers: { Authorization: 'Bearer ' + T } });
+    const buf = Buffer.from(await r2.arrayBuffer());
+    check('the register PDF still renders with the extra column',
+          r2.status === 200 && buf.slice(0, 4).toString() === '%PDF' && buf.length > 2000,
+          `${r2.status} ${buf.length}b`);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log('--- server log tail ---\n' + srvLog.split('\n').slice(-15).join('\n'));
   cleanup();
   process.exit(fail ? 1 : 0);
-})().catch(e => { console.error('ERR', e); console.log(srvLog.slice(-1200)); cleanup(); process.exit(1); });
+})().catch(e => { console.error('ERR', e); console.log(srvLog.slice(-4000)); cleanup(); process.exit(1); });

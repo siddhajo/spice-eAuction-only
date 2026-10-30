@@ -84,7 +84,9 @@ const cleanup = () => {
       z: Number(cs.zIndex), warnZ: Number(getComputedStyle(warn).zIndex),
       warnShown: getComputedStyle(warn).display !== 'none',
       app: (document.getElementById('ss-app') || {}).textContent,
-      company: (document.getElementById('ss-company') || {}).textContent,
+      logo: (() => { const n = document.getElementById('ss-logo');
+                     return n && n.offsetParent !== null ? n.getAttribute('src') : null; })(),
+      hasCompanyLine: !!document.getElementById('ss-company'),
       clock: (document.getElementById('ss-clock') || {}).textContent,
       minutes: (typeof _ss !== 'undefined') ? _ss.minutes : null,
       ariaHidden: el.getAttribute('aria-hidden'),
@@ -110,7 +112,13 @@ const cleanup = () => {
   s = await state();
   check('the screensaver is up', s.shown, s);
   check('it carries the application name', /GreenGavel/.test(s.app || ''), s.app);
-  check('…and the company underneath', /RNS SPICES/i.test(s.company || ''), s.company);
+  // The APP's mark, never the customer's upload. The two were conflated:
+  // this panel used to copy the topbar image, so an operator saw their own
+  // company logo on the one screen that is about the software.
+  check('it shows the application logo', /logo-app\.svg/.test(s.logo || ''), s.logo);
+  check('…not the customer company logo', !/logo-ispl/.test(s.logo || ''), s.logo);
+  // The trade name belongs on every working screen, not here.
+  check('the trade name is not on the panel', s.hasCompanyLine === false, s);
   check('…and an IST clock', /\d{2}:\d{2}\s*IST/.test(s.clock || ''), s.clock);
   check('it is scenery, not content (aria-hidden)', s.ariaHidden === 'true', s.ariaHidden);
 
@@ -155,6 +163,138 @@ const cleanup = () => {
   });
   check('showing the screensaver leaves the sign-out timer alone',
         noTouch.kept, noTouch);
+
+  console.log('\n[lockup] name, credit and numbers share one centre axis');
+  // The complaint this covers: a long product name overflowed a 640px box
+  // and wrapped mid-name, so the block read as crooked. Assert the real
+  // geometry — every line centred on the same axis, and the name INSIDE its
+  // container — rather than that the CSS string says "center".
+  await put({ screensaver_minutes: '1', app_name: 'SpiceFlow eAuction Suite',
+              app_credit: 'Powered by KJ & Co', app_contact: '9790745462 / 8248922434' });
+  await open();
+  const lock = await page.evaluate(() => {
+    idleHideWarning(); _ss.minutes = 1; ssShow();
+    const box = (id) => {
+      const n = document.getElementById(id);
+      if (!n || n.offsetParent === null) return null;
+      const r = n.getBoundingClientRect();
+      return { mid: Math.round(r.left + r.width / 2), w: Math.round(r.width),
+               h: Math.round(r.height), text: n.textContent.trim() };
+    };
+    const col = document.getElementById('ss-app').parentElement.getBoundingClientRect();
+    return {
+      app: box('ss-app'),
+      credit: box('ss-credit'), contact: box('ss-contact'), clock: box('ss-clock'),
+      colMid: Math.round(col.left + col.width / 2), colW: Math.round(col.width),
+      lineH: parseFloat(getComputedStyle(document.getElementById('ss-app')).fontSize),
+    };
+  });
+  check('the credit line is there', /Powered by KJ & Co/.test((lock.credit || {}).text || ''),
+        lock.credit);
+  check('…and the support numbers', /9790745462 \/ 8248922434/.test((lock.contact || {}).text || ''),
+        lock.contact);
+  check('the full name renders unabbreviated',
+        /SpiceFlow eAuction Suite/.test((lock.app || {}).text || ''), lock.app);
+  // One axis: every line's midpoint within a pixel of the column's.
+  const axes = ['app', 'credit', 'contact', 'clock']
+    .map(k => ({ k, mid: (lock[k] || {}).mid })).filter(x => x.mid != null);
+  const offAxis = axes.filter(x => Math.abs(x.mid - lock.colMid) > 1);
+  check('every line sits on the same centre axis', offAxis.length === 0,
+        { colMid: lock.colMid, axes, offAxis });
+  check('the name fits its column — no overflow', (lock.app || {}).w <= lock.colW,
+        { name: (lock.app || {}).w, col: lock.colW });
+  // Two lines at this size would be ~2.3x the font size tall. One line is the
+  // point: a mid-name wrap is what made it look broken.
+  check('…and does not wrap mid-name', (lock.app || {}).h < lock.lineH * 1.8,
+        { h: (lock.app || {}).h, fontSize: lock.lineH });
+
+  console.log('\n[unbadged] a blank credit leaves no empty rule');
+  await put({ app_credit: '', app_contact: '' });
+  await open();
+  const bare = await page.evaluate(() => {
+    idleHideWarning(); _ss.minutes = 1; ssShow();
+    const by = document.getElementById('ss-by');
+    return { byShown: !!by && by.offsetParent !== null,
+             app: (document.getElementById('ss-app') || {}).textContent };
+  });
+  check('the whole byline block is gone, hairline and all', bare.byShown === false, bare);
+  check('…and the name still shows', /SpiceFlow/.test(bare.app || ''), bare.app);
+
+  console.log('\n[fireworks] it animates, stays bounded, and stops dead');
+  await put({ screensaver_minutes: '1', screensaver_fireworks: 'true',
+              app_credit: 'Powered by KJ & Co', app_contact: '9790745462 / 8248922434' });
+  await open();
+  const fx = await page.evaluate(async () => {
+    idleHideWarning(); _ss.minutes = 1; ssShow();
+    const cv = document.getElementById('ss-fx');
+    const ctx = cv.getContext('2d');
+    // Sample the canvas rather than trust the state object: this asserts
+    // pixels were actually painted, not merely that a loop is running.
+    const lit = () => {
+      const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+      let n = 0, total = 0;
+      for (let i = 3; i < d.length; i += 4 * 13) { total++; if (d[i] > 24) n++; }
+      return total ? n / total : 0;      // fraction of the panel carrying light
+    };
+    // Sample repeatedly and keep the best frame: bursts come and go, so one
+    // snapshot can legitimately land in a lull. The figure that matters is
+    // the PEAK — whether a burst, when it happens, is actually visible.
+    let painted = 0;
+    for (let i = 0; i < 24; i++) {
+      await new Promise(r => setTimeout(r, 140));
+      painted = Math.max(painted, lit());
+    }
+    const peak = { rockets: _ssFx.rockets.length, sparks: _ssFx.sparks.length };
+    // Let it run on and confirm the particle count does not grow with uptime.
+    await new Promise(r => setTimeout(r, 2600));
+    const later = { rockets: _ssFx.rockets.length, sparks: _ssFx.sparks.length, raf: _ssFx.raf };
+    return { painted, peak, later,
+             behind: getComputedStyle(cv).pointerEvents,
+             canvasW: cv.width };
+  });
+  // A bar high enough that the near-invisible first cut would have failed
+  // it: that version lit a few dozen sampled pixels at peak.
+  // Measured: a real burst lights 1.2–1.6% of the panel at peak; the
+  // near-invisible first cut managed about a tenth of that. 0.4% sits clear
+  // of both, and being a fraction it holds at any viewport or DPR.
+  check('a burst is actually visible, not a few specks', fx.painted > 0.004,
+        (fx.painted * 100).toFixed(2) + '% of panel lit at peak');
+  check('rockets stay under the cap', fx.peak.rockets <= 3 && fx.later.rockets <= 3, fx);
+  check('…and sparks do not grow without bound', fx.later.sparks < 900, fx.later);
+  check('it cannot swallow the dismissing click', fx.behind === 'none', fx.behind);
+  check('the canvas is backed by real pixels', fx.canvasW > 0, fx.canvasW);
+
+  // The point of the whole exercise: an unattended machine must not keep a
+  // render loop alive behind a dismissed screensaver.
+  const stopped = await page.evaluate(async () => {
+    ssHide();
+    await new Promise(r => setTimeout(r, 300));
+    const cv = document.getElementById('ss-fx');
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let n = 0; for (let i = 3; i < d.length; i += 4 * 13) if (d[i] > 12) n++;
+    return { raf: _ssFx.raf, sparks: _ssFx.sparks.length, rockets: _ssFx.rockets.length,
+             flashes: _ssFx.flashes.length, lit: n };
+  });
+  check('hiding cancels the animation frame', stopped.raf === 0, stopped);
+  check('…drops every particle', stopped.sparks === 0 && stopped.rockets === 0
+        && stopped.flashes === 0, stopped);
+  check('…and wipes the canvas', stopped.lit === 0, stopped);
+
+  console.log('\n[fireworks-off] the setting turns it off completely');
+  await put({ screensaver_fireworks: 'false' });
+  await open();
+  const off = await page.evaluate(async () => {
+    idleHideWarning(); _ss.minutes = 1; ssShow();
+    await new Promise(r => setTimeout(r, 1500));
+    const cv = document.getElementById('ss-fx');
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let n = 0; for (let i = 3; i < d.length; i += 4 * 13) if (d[i] > 12) n++;
+    return { raf: _ssFx.raf, lit: n, shown: _ss.on,
+             app: (document.getElementById('ss-app') || {}).textContent };
+  });
+  check('no animation frame is scheduled', off.raf === 0, off);
+  check('…nothing is painted', off.lit === 0, off);
+  check('…but the screensaver itself still works', off.shown === true && /SpiceFlow/.test(off.app || ''), off);
 
   if (process.env.SHOT_DIR) {
     await page.evaluate(() => { idleHideWarning(); _ss.minutes = 1; ssShow(); });

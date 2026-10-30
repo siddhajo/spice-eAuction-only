@@ -583,6 +583,15 @@ const DEFAULTS = [
   // off. Default OFF so existing installs are unaffected on upgrade.
   { key: 'flag_godown',          value: 'false', category: 'flags', label: 'Godown Utility (Lot Entry)',      type: 'boolean' },
 
+  // DELIVERY CHALLAN — the gate-pass printed when goods physically leave, from
+  // Lot Entry's recent-entries panel over the lots the operator has ticked.
+  // It is not an invoice and carries no tax: a vehicle, a rate, a bag count
+  // and a serial number. Default ON because it is a print button on a panel
+  // the operator is already using — nothing is created or numbered until it
+  // is clicked, so an install that does not issue challans simply never
+  // presses it (and can switch it off here).
+  { key: 'flag_delivery_chalan', value: 'true',  category: 'flags', label: 'Delivery Challan (Lot Entry)',    type: 'boolean' },
+
   // TAN (Tax Deduction & Collection Account No) on sellers + buyers. When ON,
   // a TAN input shows in the Seller and Buyer add/edit forms and the value is
   // saved to traders.tan / buyers.tan. When OFF the input is hidden; the DB
@@ -750,6 +759,29 @@ const DEFAULTS = [
   { key: 'delete_enabled',     value: 'false', category: 'lot_entry', label: 'Allow Lot Deletes (non-admin)',      type: 'boolean' },
   { key: 'edit_timeout_sec',   value: '0',     category: 'lot_entry', label: 'Edit Timeout (sec; 0 = no limit)',    type: 'number'  },
   { key: 'lot_receipt_format', value: '',      category: 'lot_entry', label: 'Lot Receipt Format (compact|detailed)', type: 'text' },
+
+  // ── DELIVERY CHALLAN (flag_delivery_chalan) ────────────────────────
+  //
+  // The challan's SERIAL NUMBER is kept here, install-wide and NOT per
+  // trade, because a challan is a gate pass: the book runs continuously
+  // through the year whichever trade the goods came off, and a per-trade
+  // counter would re-issue number 1 every auction. `chalan_next_no` is the
+  // number the NEXT challan will carry; printing one advances it
+  // (POST /api/delivery-chalan/claim-no), so two operators printing at the
+  // same moment cannot be handed the same serial. Set it once at go-live to
+  // continue the paper book they already have.
+  //
+  // The other four are the fields the operator is asked for at print time —
+  // held here as the DEFAULTS that pre-fill that form, because in practice
+  // the same lorry and the same rate repeat all day. Blank means "ask me".
+  { key: 'chalan_next_no',   value: '1',  category: 'lot_entry', label: 'Delivery Challan: Next Serial No', type: 'number' },
+  { key: 'chalan_prefix',    value: '',   category: 'lot_entry', label: 'Delivery Challan: Serial Prefix (e.g. DC/)', type: 'text' },
+  // Printed UNDER the company name, in place of the registered address, for a
+  // godown or gate whose address is not the registered office. Blank keeps
+  // the company's own address block.
+  { key: 'chalan_address',   value: '',   category: 'lot_entry', label: 'Delivery Challan: Address below company name', type: 'text' },
+  { key: 'chalan_veh_no',    value: '',   category: 'lot_entry', label: 'Delivery Challan: Default Vehicle No', type: 'text' },
+  { key: 'chalan_rate',      value: '',   category: 'lot_entry', label: 'Delivery Challan: Default Rate (per kg)', type: 'number' },
   // Physical paper width of the lot-receipt slip, in millimetres. Thermal
   // receipt printers come in fixed roll widths (e.g. the HOP-HL58 is a 58mm
   // roll, common alternatives are 80mm and 76mm). When blank / 0 the slip

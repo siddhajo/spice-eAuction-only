@@ -2603,6 +2603,85 @@ function getSalesRegister(db, opts = {}) {
 }
 
 /**
+ * ALT CODE for a list of invoice-shaped rows, in place.
+ *
+ * `lots.dummy_code` is the free-text tag an operator puts on a lot in Price
+ * Entry, and the same value the Checklist and Tharai List print under "ALT
+ * CODE". It is NOT `buyers.code` (the buyer master's short alias) — the two
+ * genuinely differ, because this one is set per trade: the buyer ERPL carries
+ * ER, ERP and ERJ on three different invoices.
+ *
+ * It lives on the LOT, so it is resolved through the invoice's lots. The
+ * linkage matches invoiceLotNos(): an ORIGINAL stamps `lots.invo`, while a
+ * PROFORMA stamps `lots.proforma_invo` and deliberately leaves `lots.invo`
+ * empty — so a draft keyed on `invo` finds nothing and shows blank. `pick`
+ * tells this function which of the two a given row is.
+ *
+ * Batched per trade rather than per row (one query per auction, buyers
+ * chunked), and NULL is excluded on BOTH sides: SQL never matches NULL with
+ * `=`, but a JS Map keyed on String(invo) would collapse NULL to '' and let
+ * an invoice inherit a code from an unrelated lot. See the asp_invo block in
+ * server.js, which is where that rule was first paid for.
+ *
+ * An invoice's lots carry at most ONE distinct code in practice (checked: 130
+ * invoices with exactly one, 54 with none, never more). Distinct values are
+ * still joined rather than one picked arbitrarily, so if a trade ever does mix
+ * them the row shows that instead of hiding it.
+ *
+ * @param pick (row) => { auctionId, buyer, invo, proforma } — proforma truthy
+ *        selects lots.proforma_invo as the linking column.
+ */
+function hydrateAltCodes(db, rows, pick) {
+  const key = (...parts) => parts.map((v) => String(v)).join('\u0000');
+  const byKey = new Map();            // key(auction, buyer, col, invo) -> Set(code)
+  const buyersByAuction = new Map();  // auction -> Set(buyer)
+  const ref = new Map();              // row -> picked identity
+  for (const r of rows) {
+    const id = pick(r) || {};
+    ref.set(r, id);
+    // A row that could never match under SQL's NULL rules.
+    if (id.auctionId == null || id.buyer == null || id.invo == null) continue;
+    if (!buyersByAuction.has(id.auctionId)) buyersByAuction.set(id.auctionId, new Set());
+    buyersByAuction.get(id.auctionId).add(id.buyer);
+  }
+  try {
+    for (const [aid, buyerSet] of buyersByAuction) {
+      const all = [...buyerSet];
+      for (let i = 0; i < all.length; i += 400) {
+        const buyers = all.slice(i, i + 400);
+        const found = db.all(
+          `SELECT buyer, invo, proforma_invo, TRIM(dummy_code) AS dummy_code FROM lots
+            WHERE auction_id = ? AND buyer IN (${buyers.map(() => '?').join(',')})
+              AND dummy_code IS NOT NULL AND TRIM(dummy_code) != ''`,
+          [aid, ...buyers]
+        );
+        for (const f of found) {
+          if (f.buyer == null) continue;   // cannot be matched by `buyer = ?`
+          // One lot can back an original AND a draft, so index both columns.
+          for (const [col, val] of [['invo', f.invo], ['proforma_invo', f.proforma_invo]]) {
+            if (val == null) continue;     // NULL never matched under `= ?`
+            const k = key(aid, f.buyer, col, val);
+            if (!byKey.has(k)) byKey.set(k, new Set());
+            byKey.get(k).add(f.dummy_code);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // dummy_code is added by migration; an older DB must not break the list.
+    console.warn('[alt-code] hydration failed:', e.message);
+  }
+  for (const r of rows) {
+    const id = ref.get(r) || {};
+    if (id.auctionId == null || id.buyer == null || id.invo == null) { r.alt_code = ''; continue; }
+    const col = id.proforma ? 'proforma_invo' : 'invo';
+    const hit = byKey.get(key(id.auctionId, id.buyer, col, id.invo));
+    r.alt_code = hit ? [...hit].filter(Boolean).join(', ') : '';
+  }
+  return rows;
+}
+
+/**
  * Pending Sales Invoice Register — proforma drafts still awaiting their
  * original, ACROSS ALL TRADES.
  *
@@ -2624,6 +2703,7 @@ function getSalesRegister(db, opts = {}) {
 function getPendingSalesRegister(db, opts = {}) {
   let q = `SELECT i.state AS state, i.ano AS tno, i.date AS date, i.sale AS sale,
       i.invo AS invo, i.buyer1 AS tradername, i.buyer AS bidder,
+      i.auction_id AS auction_id,
       i.bag AS bag, i.qty AS qty, i.amount AS amount,
       i.pava_hc AS lorry, i.gunny AS gunny, i.igst AS igst, i.cgst AS cgst,
       i.sgst AS sgst, i.ins AS ins, i.tot AS invamt,
@@ -2657,6 +2737,13 @@ function getPendingSalesRegister(db, opts = {}) {
   // that matters. Trade and number break ties so the order is stable.
   q += ' ORDER BY i.date ASC, i.ano, CAST(i.invo AS INTEGER), i.invo';
   const rows = db.all(q, params);
+  // ALT CODE — the per-lot tag, the same column the Sales Invoices list shows.
+  // It is how the office recognises a draft at a glance, so the chase list
+  // needs it too. Every row here is a proforma by construction (is_proforma=1
+  // is in the WHERE), hence the constant `proforma: true` linkage.
+  hydrateAltCodes(db, rows, (r) => ({
+    auctionId: r.auction_id, buyer: r.bidder, invo: r.invo, proforma: true,
+  }));
   return rows.map(r => ({
     ...r,
     age_days: Math.max(0, Number(r.age_days) || 0),
@@ -2892,6 +2979,7 @@ function listRegisterParties(db, opts = {}) {
 }
 
 module.exports = {
+  hydrateAltCodes,
   auctionRateCfg, pinAuctionRates, PINNED_RATE_KEYS, getPendingSalesRegister,
 
   calculateLot,
