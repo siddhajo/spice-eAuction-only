@@ -316,37 +316,41 @@ const cleanup = () => {
   await new Promise(r => setTimeout(r, 1200));
   const login = await page.evaluate(() => {
     const app = document.getElementById('login-hero-app');
-    const cs = app ? getComputedStyle(app) : null;
+    const chip = app && app.closest('.login-eyebrow');
     return {
       loginShown: getComputedStyle(document.getElementById('login')).display !== 'none',
       text: app ? app.textContent.trim() : '(absent)',
-      visible: !!(app && !app.hidden && cs.display !== 'none'),
-      weight: cs ? cs.fontWeight : '',
+      // It is the PRODUCT CHIP at the top of the panel, not a line of small
+      // print in the footer — that was the first attempt and it was missed.
+      inChip: !!chip,
+      visible: !!(chip && getComputedStyle(chip).display !== 'none'),
       footText: (document.querySelector('#login .login-hero-foot') || {}).textContent || '',
       cardName: (document.getElementById('login-hero-name') || {}).textContent || '',
     };
   });
   check('the login page is what is on screen', login.loginShown === true, JSON.stringify(login));
-  check('the app name prints in the hero footer', login.text === 'GreenGavel', login.text);
-  check('…and is visible', login.visible === true, JSON.stringify(login));
-  check('…set apart from the small print beside it', Number(login.weight) >= 700, login.weight);
+  check('the app name prints on the login page', login.text === 'GreenGavel', login.text);
+  check('…in the product chip at the top, where it cannot be missed',
+        login.inChip === true && login.visible === true, JSON.stringify(login));
+  check('…and not buried in the footer small print',
+        !/GreenGavel/.test(login.footText), login.footText);
   check('the copyright line is still there', /Powered by/.test(login.footText), login.footText);
   check('the customer company still names the sign-in side',
         /RNS SPICES/.test(login.cardName), login.cardName);
 
-  // Blank app_name must leave no gap in the footer row — a flex item with no
-  // text would still take its gap.
+  // An install that has not named itself keeps the built-in strapline — an
+  // empty chip would be worse than the generic one.
   await put({ app_name: '' });
   await page.goto(B + '/', { waitUntil: 'networkidle2' });
   await new Promise(r => setTimeout(r, 1200));
   const blank = await page.evaluate(() => {
     const app = document.getElementById('login-hero-app');
-    return { hidden: app.hidden, display: getComputedStyle(app).display,
-             foot: (document.querySelector('#login .login-hero-foot') || {}).textContent.trim() };
+    return { text: app.textContent.trim(),
+             chipShown: getComputedStyle(app.closest('.login-eyebrow')).display !== 'none' };
   });
-  check('an unnamed install hides the slot entirely',
-        blank.hidden === true && blank.display === 'none', JSON.stringify(blank));
-  check('…and the rest of the footer is unharmed', /Powered by/.test(blank.foot), blank.foot);
+  check('an unnamed install falls back to the built-in strapline',
+        blank.text === 'Spice e-Auction Platform', blank.text);
+  check('…rather than showing an empty chip', blank.chipShown === true, JSON.stringify(blank));
   await put({ app_name: 'SpiceFlow eAuction Suite' });
 
   if (process.env.SHOT_DIR) {

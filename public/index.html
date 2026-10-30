@@ -706,11 +706,6 @@ body[data-login="midnight"] #login .login-card .fg input:focus{background:rgba(2
 .login-feats .ck svg{width:15px;height:15px;fill:none;stroke:#fff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
 @keyframes featIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .login-hero-foot{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:30px;font-size:12px;font-weight:500;color:#64748B}
-/* The product's own name, leading the footer. Heavier than the copyright
-   beside it so it reads as a name rather than more small print, and it
-   inherits the footer's colour so it stays legible on every login layout
-   (the coloured panels repaint that colour). */
-.login-hero-app{font-weight:800;letter-spacing:.3px;color:inherit;opacity:.95}
 
 /* status pill — shared by hero footer */
 .login-card-status{display:inline-flex;align-items:center;gap:6px;color:var(--spice-saffron-dk);font-weight:700}
@@ -5033,7 +5028,11 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
   <div class="login-stage">
     <!-- LEFT: value-prop hero — what the app does -->
     <section class="login-hero">
-      <div class="login-eyebrow"><span class="dot"></span> Spice e-Auction Platform</div>
+      <!-- The name of THIS SOFTWARE (app_name) — the product label, which is
+           what this chip has always been. Falls back to the built-in strapline
+           when an install has not named itself. The sign-in card beside it and
+           the top bar after sign-in stay the CUSTOMER's own name. -->
+      <div class="login-eyebrow"><span class="dot"></span> <span id="login-hero-app">Spice e-Auction Platform</span></div>
       <h2 class="login-hero-title">Run every <em>e-Auction</em> day with confidence.</h2>
       <p class="login-hero-sub">From lot entry to ledger — branch allocation, GST invoices, RTGS payments, trade reports and Tally export, all on one floor.</p>
       <ul class="login-feats">
@@ -5043,11 +5042,6 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <li><span class="ck"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>Trade reports, journals &amp; Tally XML export — no re-keying</li>
       </ul>
       <div class="login-hero-foot">
-        <!-- The name of THIS SOFTWARE (app_name), not the customer's company.
-             The sign-in card and the top bar deliberately keep the customer's
-             own name — this footer is where the product says what it is.
-             Hidden when app_name is blank rather than printing an empty gap. -->
-        <span id="login-hero-app" class="login-hero-app" hidden></span>
         <span class="login-hero-copy">&copy; <span id="login-hero-year"></span> &middot; <span id="login-hero-credit">Powered by KJ &amp; Co</span></span>
         <span class="login-card-status">Server live</span>
       </div>
@@ -13350,8 +13344,9 @@ async function applyBranding(){
   const appEl = document.getElementById('login-hero-app');
   if (appEl) {
     const appName = String(b.appName || '').trim();
-    appEl.textContent = appName;
-    appEl.hidden = !appName;     // no empty gap in the footer row
+    // Blank leaves the markup's own strapline in place — an install that has
+    // not named itself must not show an empty chip.
+    if (appName) appEl.textContent = appName;
   }
 
   // Copyright year — current FY so the footer stays accurate without a
