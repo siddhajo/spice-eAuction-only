@@ -1480,6 +1480,10 @@ app.get('/api/branding', (req, res) => {
     res.json({
       tradeName: cfg.trade_name || cfg.short_name || '',
       shortName: cfg.short_name || cfg.trade_name || '',
+      // The name of the SOFTWARE (app_name), distinct from the customer's
+      // company above. The login page prints it in its footer, so it has to
+      // be readable before anyone has signed in.
+      appName: cfg.app_name || '',
       branch,
       gstin,
       logoUrl: fs.existsSync(logoFile) ? '/logo-ispl.png' : null,
@@ -1495,7 +1499,7 @@ app.get('/api/branding', (req, res) => {
       presetConfig,
     });
   } catch (e) {
-    res.json({ tradeName: '', shortName: '', branch: '', gstin: '', logoUrl: null, theme: '', themeCustomColor: '', preset: '', presetConfig: null });
+    res.json({ tradeName: '', shortName: '', appName: '', branch: '', gstin: '', logoUrl: null, theme: '', themeCustomColor: '', preset: '', presetConfig: null });
   }
 });
 
@@ -9838,14 +9842,30 @@ app.post('/api/lots/dummy-code/bulk', requireLotWrite, (req, res) => {
 // pass and its book runs continuously through the year, whichever trade the
 // goods came off. A per-trade counter would re-issue number 1 every auction.
 // See `chalan_next_no` in company-config.js.
+// Prefix and suffix WRAP the counter without being part of it — "RNS-" +
+// 195 + "/26-27" — so the financial-year tail can change in April without
+// anybody having to reset the number.
 const _chalanSerial = (db, n) => {
   const prefix = String(getSetting(db, 'chalan_prefix') || '');
-  return prefix + String(n);
+  const suffix = String(getSetting(db, 'chalan_suffix') || '');
+  return prefix + String(n) + suffix;
 };
 const _chalanNext = (db) => {
   const raw = parseInt(String(getSetting(db, 'chalan_next_no') || '').trim(), 10);
   return (Number.isFinite(raw) && raw > 0) ? raw : 1;
 };
+// Amount in words, for a document the BROWSER renders (the delivery challan
+// builds its HTML client-side so the operator can send it to the gate's own
+// printer). It goes through the server rather than a second copy of the
+// Indian-numbering rules in index.html: every other document on this install
+// quotes amountToWords(), and two implementations WILL drift on the first
+// edge case — a paise tail, a round crore — leaving two papers for the same
+// consignment that disagree in words.
+app.get('/api/amount-words', requireView, (req, res) => {
+  const n = Number(req.query.n);
+  if (!Number.isFinite(n)) return res.status(400).json({ error: 'n must be a number' });
+  res.json({ words: amountToWords(n) });
+});
 app.get('/api/delivery-chalan/next-no', requireView, (req, res) => {
   const db = getDb();
   const n = _chalanNext(db);

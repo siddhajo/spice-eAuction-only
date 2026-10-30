@@ -1682,27 +1682,37 @@ html.sidebar-collapsed .sidebar .nav-group:hover::after{
      past show through the gutters either side of the strip. */
   padding:4px 36px 0;margin-left:-36px;margin-right:-36px
 }
-/* ── A screen's own filter row, pinned under the tabs ──────────────
-   Some screens are a filter bar plus one very long result (Pre-Invoice is a
-   whole trade's invoices). Scrolling to the bottom of that and wanting a
-   different buyer meant scrolling all the way back up, so the bar that
-   CHOOSES what you are looking at now stays on screen with it.
+/* ── A card's whole HEADER, pinned under the tabs ──────────────────
+   Some screens are a heading plus a filter bar plus one very long result
+   (Pre-Invoice is a whole trade's invoices). Scrolling to the bottom of that
+   and wanting a different buyer meant scrolling all the way back up, so the
+   block that SAYS WHAT THIS IS and CHOOSES what you are looking at stays on
+   screen with it — title and controls together, not the controls alone,
+   which reads as a detached strip.
 
    `top` is the measured top bar PLUS the measured tab strip (--stick-top,
    set by _syncTopbarHeight). Both are measured for the same reason the tab
    strip measures the bar: they re-flow with window width and the text-size
    control, so any constant is wrong at every size but one.
 
-   z-index sits under the tab strip's 20, so the strip covers this bar rather
+   The negative margins are the CARD's own padding (22px), not the .content
+   gutter — this block lives inside a card, and a wider inset would hang out
+   past its rounded edge. Matching padding puts the content back where it
+   was, and the top corners keep the card's 16px radius so the pinned block
+   still reads as the top of the card.
+
+   z-index sits under the tab strip's 20, so the strip covers this rather
    than the other way round; the opaque background stops rows showing through
-   as they scroll beneath. The negative side margins + matching padding let
-   the background span the .content gutters. */
-.filterbar-sticky{
+   as they scroll beneath. Sticky inside the card means it also stops at the
+   card's bottom, which is exactly the range it is useful over. */
+.cardhead-sticky{
   position:sticky;top:var(--stick-top,112px);z-index:15;
   background:var(--card);
-  padding:10px 36px;margin-left:-36px;margin-right:-36px;
+  margin:-22px -22px 14px;padding:22px 22px 12px;
+  border-radius:16px 16px 0 0;
   border-bottom:1px solid var(--spice-line)
 }
+.cardhead-sticky > h2{margin-top:0}
 /* Collapsed: the rows fold away and only the re-open handle is left, for an
    operator who wants the full height for a long grid. The strip itself stays
    in flow so the handle keeps its place. */
@@ -7764,30 +7774,50 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
            book. The number shown here is a PREVIEW: it is claimed (and
            the counter advanced) only on Print, so opening this and
            cancelling never burns a number. -->
-      <div class="modal-bg" id="le-chalan-modal"><div class="modal" style="max-width:560px">
+      <div class="modal-bg" id="le-chalan-modal"><div class="modal" style="max-width:620px">
         <h2 style="margin-bottom:6px">Delivery Chalan</h2>
         <p id="le-chalan-summary" style="font-size:12px;color:var(--text3);margin:0 0 12px"></p>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div class="fg" style="margin:0"><label>Chalan No</label>
+          <div class="fg" style="margin:0"><label>Serial No. of Challan</label>
             <input type="text" id="le-chalan-no" autocomplete="off"
-                   title="Next number in the challan book. Printing advances the book; edit it here to print a one-off number without moving the counter."></div>
-          <div class="fg" style="margin:0"><label>Date</label>
-            <input type="date" id="le-chalan-date"></div>
+                   title="Next number in the challan book, wrapped in the configured prefix and suffix. Printing advances the book; edit it here to print a one-off number without moving the counter."></div>
           <div class="fg" style="margin:0"><label>Veh No</label>
-            <input type="text" id="le-chalan-veh" placeholder="TN 00 AA 0000" autocomplete="off"></div>
+            <input type="text" id="le-chalan-veh" placeholder="KL69B4797" autocomplete="off"></div>
+          <div class="fg" style="margin:0"><label>Date of Supply</label>
+            <input type="date" id="le-chalan-date"></div>
+          <div class="fg" style="margin:0"><label>Time of Supply</label>
+            <input type="time" id="le-chalan-time"></div>
           <div class="fg" style="margin:0"><label>Rate (per kg)</label>
             <input type="number" id="le-chalan-rate" step="0.01" min="0" placeholder="0.00"></div>
+          <!-- Bags is TEXT, not a count: the form prints it as written, and
+               the office writes "112+4" to show the sample bags separately. -->
           <div class="fg" style="margin:0"><label>Bags</label>
-            <input type="number" id="le-chalan-bags" step="1" min="0"
-                   title="Bags actually loaded. Defaults to the total on the ticked lots — change it if part of the stock is going."></div>
-          <div class="fg" style="margin:0"><label>Consignee / To</label>
-            <input type="text" id="le-chalan-to" autocomplete="off"
-                   title="Who the goods are going to. Defaults to the seller on the ticked lots."></div>
+            <input type="text" id="le-chalan-bags" placeholder="112+4" autocomplete="off"
+                   title="Printed verbatim in the Bags line. Defaults to the ticked lots total; write it as the gate counts it, e.g. 112+4."></div>
+          <div class="fg" style="margin:0"><label>Mode of Transport</label>
+            <input type="text" id="le-chalan-mode" placeholder="By Road" autocomplete="off"></div>
+          <div class="fg" style="margin:0"><label>Place of Supply</label>
+            <input type="text" id="le-chalan-pos" autocomplete="off"></div>
         </div>
-        <div class="fg" style="margin:10px 0 0"><label>Address (below company name)</label>
-          <input type="text" id="le-chalan-address" autocomplete="off"
-                 placeholder="Leave blank to print the company's registered address"></div>
+
+        <div class="fg" style="margin:10px 0 0"><label>Address below the company name</label>
+          <textarea id="le-chalan-address" rows="3" placeholder="Leave blank to print the company's registered address"
+                    style="width:100%;resize:vertical"></textarea></div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 6px">Details of Receiver</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="fg" style="margin:0;grid-column:1 / -1"><label>Name</label>
+            <input type="text" id="le-chalan-to" autocomplete="off"></div>
+          <div class="fg" style="margin:0;grid-column:1 / -1"><label>Address</label>
+            <textarea id="le-chalan-raddr" rows="3" style="width:100%;resize:vertical"></textarea></div>
+          <div class="fg" style="margin:0"><label>State</label>
+            <input type="text" id="le-chalan-rstate" autocomplete="off"></div>
+          <div class="fg" style="margin:0"><label>Code</label>
+            <input type="text" id="le-chalan-rcode" autocomplete="off"></div>
+          <div class="fg" style="margin:0;grid-column:1 / -1"><label>GSTIN</label>
+            <input type="text" id="le-chalan-rgstin" autocomplete="off"></div>
+        </div>
 
         <div id="le-chalan-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin:12px 0 0"></div>
 
@@ -7913,10 +7943,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          one-click exact-PDF preview. Nothing is generated or numbered here. -->
     <div class="tc" id="tc-preinvoice">
       <div class="card">
+        <!-- Pinned as ONE block: the heading says what this screen is and the
+             bar below chooses WHICH invoice the long preview is showing, so
+             both have to stay reachable from the bottom of it. -->
+        <div class="cardhead-sticky">
         <h2>Pre-Invoice <span style="font-weight:400;font-size:12px;color:var(--text3)">Preview how each sales invoice will look — before you generate. Nothing is saved.</span></h2>
-        <!-- Pinned: this bar chooses WHICH invoice the long preview below is
-             showing, so it has to stay reachable from the bottom of it. -->
-        <div class="filterbar-sticky" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
           <div class="fg" style="margin:0;min-width:180px"><label>Auction</label>
             <select id="pi-auction" onchange="loadPreInvoiceBuyers()" style="width:100%;height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px"></select>
           </div>
@@ -7940,6 +7972,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <button class="btn btn-g" onclick="loadPreInvoiceBuyers()" style="height:38px;padding:0 16px;font-weight:600">Reload</button>
           <span id="pi-count" style="font-size:12px;color:var(--text3);margin-left:auto"></span>
         </div>
+        </div><!-- /.cardhead-sticky -->
         <!-- Withdrawn / not-auctioned lots for the whole trade. These never
              reach an invoice, so the buyer previews below can't show them —
              this panel accounts for the rest of the trade before anything is
@@ -27582,7 +27615,7 @@ async function leOpenChalan() {
 
   let cfg = {};
   try { cfg = await j('/api/company-settings/flat'); refreshMaskCfg(cfg); } catch (_) {}
-  // The trade is only for the header line; a failed lookup must not stop a
+  // The trade is only for the summary line; a failed lookup must not stop a
   // challan, so it falls back to no trade rather than refusing to print.
   let auction = null;
   try {
@@ -27602,14 +27635,22 @@ async function leOpenChalan() {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   const noEl = document.getElementById('le-chalan-no');
   if (noEl) { noEl.value = previewNo; noEl.dataset.preview = previewNo; }
-  set('le-chalan-date', new Date().toISOString().slice(0, 10));
+  const now = new Date();
+  set('le-chalan-date', now.toISOString().slice(0, 10));
+  set('le-chalan-time', String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0'));
   set('le-chalan-veh',  cfg.chalan_veh_no || '');
   set('le-chalan-rate', cfg.chalan_rate   || '');
-  set('le-chalan-bags', bags || '');
-  // One seller named outright; several left blank rather than guessed, so the
-  // operator says who the goods are for instead of the form inventing it.
-  set('le-chalan-to', sellers.length === 1 ? sellers[0] : '');
+  set('le-chalan-mode', cfg.chalan_transport_mode || 'By Road');
+  set('le-chalan-pos',  cfg.chalan_place_of_supply || '');
+  set('le-chalan-bags', bags ? String(bags) : '');
   set('le-chalan-address', cfg.chalan_address || '');
+  // Receiver — usually the same destination every time (a branch transfer),
+  // so it comes from settings and is edited here only for a one-off.
+  set('le-chalan-to',     cfg.chalan_receiver_name    || '');
+  set('le-chalan-raddr',  cfg.chalan_receiver_address || '');
+  set('le-chalan-rstate', cfg.chalan_receiver_state   || '');
+  set('le-chalan-rcode',  cfg.chalan_receiver_code    || '');
+  set('le-chalan-rgstin', cfg.chalan_receiver_gstin   || '');
 
   const err = document.getElementById('le-chalan-err');
   if (err) { err.style.display = 'none'; err.textContent = ''; }
@@ -27650,22 +27691,37 @@ async function leConfirmChalan() {
     }
   }
 
-  const html = leBuildChalanHtml({
+  const o = {
     lots: _le_chalan.lots,
     cfg: _le_chalan.cfg || {},
-    auction: _le_chalan.auction || {},
     chalanNo,
     date: val('le-chalan-date'),
+    time: val('le-chalan-time'),
     veh,
+    mode: val('le-chalan-mode'),
+    placeOfSupply: val('le-chalan-pos'),
     rate: parseFloat(val('le-chalan-rate')) || 0,
-    bags: val('le-chalan-bags') === '' ? null : (parseInt(val('le-chalan-bags'), 10) || 0),
-    consignee: val('le-chalan-to'),
+    bags: val('le-chalan-bags'),
     address: val('le-chalan-address'),
-  });
-  const win = window.open('', '_blank', 'width=820,height=900');
+    receiver: {
+      name: val('le-chalan-to'), address: val('le-chalan-raddr'),
+      state: val('le-chalan-rstate'), code: val('le-chalan-rcode'),
+      gstin: val('le-chalan-rgstin'),
+    },
+  };
+  // Amount in words from the SERVER's amountToWords — the same wording every
+  // invoice on this install carries. See GET /api/amount-words.
+  o.words = '';
+  try {
+    const total = leChalanLines(o).reduce((t, r) => t + r.value, 0);
+    const w = await j('/api/amount-words?n=' + encodeURIComponent(total.toFixed(2)));
+    o.words = (w && w.words) ? w.words + ' Only' : '';
+  } catch (_) {}
+
+  const win = window.open('', '_blank', 'width=900,height=1000');
   if (!win) { showErr('Popup blocked. Allow popups for this site and retry.'); return; }
   win.document.open();
-  win.document.write(html);
+  win.document.write(leBuildChalanHtml(o));
   win.document.close();
   win.onload = () => { try { win.focus(); win.print(); } catch (e) {} };
 
@@ -27673,18 +27729,36 @@ async function leConfirmChalan() {
   _le_chalan = null;
 }
 
-// Pure builder: lots + the typed despatch details in, a complete HTML
-// document out. Kept separate from the print so it can be exercised directly.
+// The goods lines, derived from the ticked lots.
 //
-// LAYOUT: A4 portrait, the company header then one table of the lots going.
-// The typed BAGS is what the total row prints — part of a lot's stock can be
-// loaded, and the gate counts bags, not lots — while each row keeps the bags
-// the lot was booked with so the two can be read against each other.
+// TWO lines, not one per lot: the form is a consignment note, so it states
+// WHAT is moving, not which lot numbers it came off. The second line is the
+// SAMPLE weight, which travels with the goods but is not for sale — that is
+// what the Remarks box is about ("Auction Sample Not for Sales"). Both are
+// valued at the same typed rate. Suppressed when the lots carry no sample
+// weight, so a godown movement does not print an empty row.
+function leChalanLines(o) {
+  const lots = o.lots || [];
+  const rate = Number(o.rate) || 0;
+  const desc = (o.cfg && o.cfg.chalan_goods_desc) || 'CARDAMOM';
+  const hsn  = (o.cfg && o.cfg.hsn_cardamom) || '';
+  const qty    = lots.reduce((t, l) => t + (Number(l.qty) || 0), 0);
+  const sample = lots.reduce((t, l) => t + (Number(l.sample_wt) || 0), 0);
+  const out = [{ desc, hsn, qty, rate, value: qty * rate }];
+  if (sample > 0) out.push({ desc: 'SAMPLES', hsn, qty: sample, rate, value: sample * rate });
+  return out;
+}
+
+// Pure builder: the ticked lots plus the typed despatch details in, a
+// complete "Form GST Delivery Challan" out — the customer's own stationery,
+// reproduced: one outer rule with every block a bordered cell inside it.
+// Kept separate from the print so it can be exercised directly.
 function leBuildChalanHtml(o) {
-  const cfg = o.cfg || {}, auction = o.auction || {}, lots = o.lots || [];
+  const cfg = o.cfg || {}, lots = o.lots || [];
   const E = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  const n3 = (v) => (Number(v) || 0).toFixed(3);
+  const n3 = (v) => (Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
   const n2 = (v) => (Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const lines = (txt) => String(txt == null ? '' : txt).split(/\r?\n/).map(x => x.trim()).filter(Boolean);
 
   // Same state-aware company block the lot receipt uses — an install trading
   // from two states must not print the wrong office on a gate pass.
@@ -27692,110 +27766,179 @@ function leBuildChalanHtml(o) {
   const isKerala = String(sample.state || cfg.business_state || '').toUpperCase().includes('KERALA');
   const pick = (k) => isKerala ? (cfg['kl_' + k] || cfg['tn_' + k] || '') : (cfg['tn_' + k] || '');
   const tradeName = cfg.trade_name || cfg.short_name || '';
-  // The typed address REPLACES the registered block when given: a godown or
-  // gate is often not the registered office, which is the whole reason this
-  // line is configurable.
-  const addrLines = o.address
-    ? [o.address]
+  // The typed block REPLACES the registered address: the collection centre
+  // the goods leave from is usually not the registered office, which is the
+  // whole reason that block is configurable.
+  const addr = o.address ? lines(o.address)
     : [pick('address1'), pick('address2'), [pick('place'), pick('pin')].filter(Boolean).join(' - ')].filter(Boolean);
-  const idLine = [
-    pick('gstin') ? 'GSTIN: ' + pick('gstin') : '',
-    pick('phone') ? 'Ph: ' + pick('phone') : '',
-  ].filter(Boolean).join('   ');
 
-  const rate = Number(o.rate) || 0;
-  const rows = lots.slice().sort((a, b) => {
-    const an = parseInt(String(a.lot_no).match(/\d+/)?.[0] || '0', 10);
-    const bn = parseInt(String(b.lot_no).match(/\d+/)?.[0] || '0', 10);
-    return an - bn;
-  });
-  const totQty  = rows.reduce((t, l) => t + (Number(l.qty) || 0), 0);
-  const lotBags = rows.reduce((t, l) => t + (Number(l.bags) || 0), 0);
-  const bags    = (o.bags == null) ? lotBags : o.bags;
-  const totVal  = totQty * rate;
+  // "26-10-2026; 08.20 PM" — the form's own date and time shape, not the
+  // install's date_format: this is stationery, printed the way it is printed.
+  const dmy = (iso) => {
+    const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : String(iso || '');
+  };
+  const ampm = (hhmm) => {
+    const m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return '';
+    let h = parseInt(m[1], 10);
+    const ap = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${String(h).padStart(2, '0')}.${m[2]} ${ap}`;
+  };
+  const supply = [dmy(o.date), ampm(o.time)].filter(Boolean).join('; ');
 
-  const body = rows.map((l, i) => `<tr>
+  const rows = leChalanLines(o);
+  const totQty = rows.reduce((t, r) => t + r.qty, 0);
+  const totVal = rows.reduce((t, r) => t + r.value, 0);
+  const blankRow = '<tr class="sp"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+  const body = rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td>
-      <td>${E(l.lot_no || '')}</td>
-      <td>${E(l.name || '')}</td>
-      <td class="r">${Number(l.bags) || 0}</td>
-      <td class="r">${n3(l.qty)}</td>
-      <td class="r">${rate ? n2(rate) : '&mdash;'}</td>
-      <td class="r">${rate ? n2((Number(l.qty) || 0) * rate) : '&mdash;'}</td>
+      <td>${E(r.desc)}</td>
+      <td class="c">${E(r.hsn)}</td>
+      <td class="r">${n3(r.qty)}</td>
+      <td class="r">${n2(r.rate)}</td>
+      <td class="r">${n2(r.value)}</td>
+      <td class="r">${n2(r.value)}</td>
     </tr>`).join('');
+
+  const kv = (k, v, w) => `<div class="kv"><span style="min-width:${w}">${k}</span><span>: ${E(v)}</span></div>`;
+  const rcv = o.receiver || {};
+  const rAddr = lines(rcv.address);
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Delivery Chalan ${E(o.chalanNo)}</title>
 <style>
-  @page { size: A4 portrait; margin: 14mm; }
+  @page { size: A4 portrait; margin: 10mm; }
   * { box-sizing: border-box; }
-  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 12px; color: #111; margin: 0; }
-  .hd { text-align: center; border-bottom: 2px solid #111; padding-bottom: 8px; }
-  .co { font-size: 20px; font-weight: 800; letter-spacing: .5px; }
-  .ad { font-size: 11px; color: #333; margin-top: 2px; line-height: 1.45; }
-  .ids { font-size: 10.5px; color: #333; margin-top: 3px; }
-  .ttl { text-align: center; font-size: 13px; font-weight: 800; letter-spacing: 2px;
-         margin: 10px 0 2px; text-transform: uppercase; }
-  .sub { text-align: center; font-size: 10px; color: #555; margin-bottom: 10px; }
-  .meta { display: flex; justify-content: space-between; gap: 16px; font-size: 11.5px;
-          border: 1px solid #111; padding: 7px 10px; }
-  .meta div { line-height: 1.7; }
-  .meta b { display: inline-block; min-width: 74px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-  th, td { border: 1px solid #111; padding: 5px 6px; font-size: 11.5px; }
-  th { background: #f1f1f1; font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; }
-  td.r, th.r { text-align: right; }
-  td.c, th.c { text-align: center; }
-  tr.tot td { font-weight: 800; background: #fafafa; }
-  .note { margin-top: 10px; font-size: 10.5px; color: #444; line-height: 1.5; }
-  .sign { display: flex; justify-content: space-between; margin-top: 34px; font-size: 11px; }
-  .sign div { text-align: center; min-width: 170px; border-top: 1px solid #111; padding-top: 4px; }
+  body { font-family: Arial, "Helvetica Neue", sans-serif; font-size: 12px; color: #000; margin: 0; }
+  .doc { border: 1px solid #000; }
+  .row { display: flex; }
+  .row > div { border-bottom: 1px solid #000; }
+  .doc > .row:last-child > div { border-bottom: none; }
+  .b { font-weight: 700; }
+  .c { text-align: center; }
+  .r { text-align: right; }
+  .pad { padding: 5px 8px; }
+  /* Masthead — logo boxed on the left, the form's name and the company
+     stacked beside it. */
+  .logo { width: 186px; min-height: 140px; border-right: 1px solid #000;
+          display: flex; align-items: center; justify-content: center; padding: 6px; }
+  .logo img { max-width: 100%; max-height: 128px; }
+  .mast { flex: 1; display: flex; flex-direction: column; }
+  .mast > div { border-bottom: 1px solid #000; }
+  .mast > div:last-child { border-bottom: none; }
+  .formname { text-align: center; font-weight: 700; padding: 4px 8px; }
+  /* The company's name is the one display line on the form. */
+  .coname { text-align: center; font-family: Georgia, "Times New Roman", serif;
+            font-size: 26px; font-weight: 700; letter-spacing: .5px; padding: 2px 8px 4px; }
+  .coaddr { text-align: center; font-weight: 700; line-height: 1.5; padding: 4px 8px 6px; flex: 1; }
+  /* The two consignment columns under the masthead. */
+  .kv { display: flex; gap: 4px; line-height: 2.0; }
+  .kv > span:first-child { white-space: nowrap; }
+  .half-l { flex: 1; border-right: 1px solid #000; }
+  .half-r { width: 48%; }
+  .u { text-decoration: underline; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #000; padding: 3px 6px; }
+  thead th { text-align: center; font-weight: 700; }
+  tr.sp td { height: 15px; }
+  .goods { border-bottom: 1px solid #000; padding: 10px 8px 0; }
+  .goods table { border: none; }
+  .words { display: flex; gap: 24px; padding: 10px 8px; line-height: 1.5; }
+  .remarks { background: #f2f2f2; }
+  .sign { display: flex; }
+  .sign > div:first-child { flex: 1; border-right: 1px solid #000; }
+  .sign > div { padding: 6px 8px; min-height: 92px; }
+  .signc { width: 46%; text-align: center; display: flex; flex-direction: column; justify-content: space-between; }
 </style></head><body>
-  <div class="hd">
-    <div class="co">${E(tradeName)}</div>
-    ${addrLines.length ? `<div class="ad">${addrLines.map(E).join('<br>')}</div>` : ''}
-    ${idLine ? `<div class="ids">${E(idLine)}</div>` : ''}
-  </div>
-  <div class="ttl">Delivery Chalan</div>
-  <div class="sub">Not a tax invoice &middot; issued for movement of goods</div>
-  <div class="meta">
-    <div>
-      <b>Chalan No</b> ${E(o.chalanNo || '')}<br>
-      <b>Date</b> ${E(o.date ? fmtD(o.date) : '')}<br>
-      <b>Veh No</b> ${E(o.veh || '')}
-    </div>
-    <div>
-      <b>Consignee</b> ${E(o.consignee || '')}<br>
-      <b>Auction No</b> ${E(auction.ano || '')}<br>
-      <b>Branch</b> ${E(sample.branch || '')}
+<div class="doc">
+
+  <div class="row">
+    <!-- The company's own uploaded mark. An install that has not uploaded
+         one must print an empty box, not a broken-image glyph, so the tag
+         removes itself rather than being guarded by a config key (the logo
+         is a FILE on disk; settings do not know whether it is there). -->
+    <div class="logo"><img src="/logo-ispl.png" alt="" onerror="this.style.display='none'"></div>
+    <div class="mast">
+      <div class="formname">Form GST Delivery Challan</div>
+      <div class="coname">${E(tradeName)}</div>
+      <div class="coaddr">${addr.map(E).join('<br>')}</div>
     </div>
   </div>
-  <table>
-    <thead><tr>
-      <th class="c" style="width:28px">Sl</th>
-      <th style="width:60px">Lot No</th>
-      <th>Seller</th>
-      <th class="r" style="width:48px">Bags</th>
-      <th class="r" style="width:84px">Net Wt (kg)</th>
-      <th class="r" style="width:64px">Rate</th>
-      <th class="r" style="width:92px">Value</th>
-    </tr></thead>
-    <tbody>${body}</tbody>
-    <tfoot><tr class="tot">
-      <td class="c" colspan="3">Total &mdash; ${rows.length} lot${rows.length === 1 ? '' : 's'}</td>
-      <td class="r">${bags}</td>
-      <td class="r">${n3(totQty)}</td>
-      <td class="r"></td>
-      <td class="r">${rate ? n2(totVal) : '&mdash;'}</td>
-    </tr></tfoot>
-  </table>
-  ${(o.bags != null && o.bags !== lotBags)
-    ? `<div class="note"><b>Bags loaded:</b> ${bags} of ${lotBags} booked on these lots.</div>` : ''}
-  <div class="note">Received the above goods in good condition.</div>
-  <div class="sign">
-    <div>Receiver's Signature</div>
-    <div>For ${E(tradeName)}</div>
+
+  <div class="row">
+    <div class="half-l pad">
+      ${kv('GSTIN', pick('gstin'), '64px')}
+      <div style="height:14px"></div>
+      ${kv('Serial No. of Challan', o.chalanNo, '0')}
+    </div>
+    <div class="half-r pad">
+      ${kv('Mode of Transport', o.mode, '0')}
+      ${kv('Veh No', o.veh, '0')}
+      ${kv('Date,Time of Supply', supply, '0')}
+      ${kv('Place of Supply', o.placeOfSupply, '0')}
+    </div>
   </div>
+
+  <div class="row"><div class="pad" style="flex:1">
+    <div class="u" style="margin-bottom:4px">Details of Receiver</div>
+    ${kv('Name', rcv.name, '64px')}
+    <div class="kv"><span style="min-width:64px">Address</span><span>: ${
+      rAddr.length ? rAddr.map(E).join('<br><span style="display:inline-block;width:10px"></span>') : ''
+    }</span></div>
+    ${kv('State', rcv.state, '64px')}
+    ${kv('Code', rcv.code, '64px')}
+    ${kv('GSTIN', rcv.gstin, '64px')}
+  </div></div>
+
+  <div class="goods">
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="2" style="width:42px">S.No.</th>
+          <th rowspan="2" style="width:130px">Description of<br>Goods</th>
+          <th style="width:86px">HSN</th>
+          <th rowspan="2" style="width:84px">Qty</th>
+          <th rowspan="2" style="width:84px">Rate</th>
+          <th rowspan="2" style="width:118px">Value</th>
+          <th rowspan="2" style="width:132px">Taxable Value</th>
+        </tr>
+        <tr><th>Code</th></tr>
+      </thead>
+      <tbody>
+        ${blankRow}
+        ${body}
+        ${blankRow}
+        <tr class="b">
+          <td class="c" colspan="3">Total</td>
+          <td class="r">${n3(totQty)}</td>
+          <td></td>
+          <td class="r">${n2(totVal)}</td>
+          <td class="r">${n2(totVal)}</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="height:8px"></div>
+  </div>
+
+  <div class="row"><div class="words" style="flex:1">
+    <span>Challan Total Value (In Words):</span>
+    <span class="b" style="flex:1">${E(o.words || '')}</span>
+  </div></div>
+
+  <div class="row"><div class="pad remarks" style="flex:1"><span class="u">Remarks:</span> <span class="b">${E(cfg.chalan_remarks || '')}</span></div></div>
+  <div class="row"><div class="pad" style="flex:1">Bags : ${E(o.bags || '')}</div></div>
+
+  <div class="row sign">
+    <div>Terms &amp; Condition :${lines(cfg.chalan_terms).map(x => '<br>' + E(x)).join('')}</div>
+    <div class="signc">
+      <div class="b">For ${E(tradeName)}</div>
+      <div class="b">Authorised Signatory</div>
+    </div>
+  </div>
+
+</div>
 </body></html>`;
 }
 
@@ -38633,12 +38776,14 @@ async function loadInvoices(opts){
       // do differ, because this tag is set per trade — the buyer ERPL
       // carries ER, ERP and ERJ across three invoices.
       //
-      // Muted rather than green: it is a secondary identifier sitting beside
-      // the primary one, and two bold monospace codes side by side would
-      // compete.
+      // Plain text, in the grid's own face — it reads as one more column of
+      // the row, not as a tag. It was set in muted monospace at first, which
+      // next to the green monospace buyer code made the pair look like two
+      // competing badges rather than two columns. The em-dash placeholder is
+      // the one bit of styling it keeps, as every other optional column does.
       { key:'alt_code', label:'Alt Code', sort:'text',
         render:(i)=> i.alt_code
-          ? `<span style="font-family:monospace;font-weight:600;color:var(--spice-text-mute);font-size:12px;letter-spacing:.4px">${esc(i.alt_code)}</span>`
+          ? esc(i.alt_code)
           : '<span style="color:var(--text3)">—</span>' },
       // Trade Name — the full registered company name. Stored on
       // `invoices.buyer1`, and kept a separate column from the buyer
@@ -48058,11 +48203,11 @@ function regColumns(type){
     { key:'tradername', label:'Trader Name', sort:'text' },
     { key:'bidder', label:'Bidder', sort:'text' },
     // ALT CODE — the per-lot tag from Price Entry, same column and same look
-    // as the Sales Invoices list. It sits beside the bidder because that is
-    // what it identifies in the office's own shorthand.
+    // as the Sales Invoices list: plain text in the grid's own face, so it
+    // reads as one more column of the row rather than as a tag.
     { key:'alt_code', label:'Alt Code', sort:'text',
       render:(r)=> r.alt_code
-        ? `<span style="font-family:monospace;font-weight:600;color:var(--spice-text-mute);font-size:12px;letter-spacing:.4px">${esc(r.alt_code)}</span>`
+        ? esc(r.alt_code)
         : '<span style="color:var(--text3)">—</span>' },
     { key:'bag', label:'Bag', sort:'number', numeric:true, fmt:regFmtNum(0) },
     { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },

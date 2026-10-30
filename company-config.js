@@ -762,26 +762,54 @@ const DEFAULTS = [
 
   // ── DELIVERY CHALLAN (flag_delivery_chalan) ────────────────────────
   //
-  // The challan's SERIAL NUMBER is kept here, install-wide and NOT per
-  // trade, because a challan is a gate pass: the book runs continuously
-  // through the year whichever trade the goods came off, and a per-trade
-  // counter would re-issue number 1 every auction. `chalan_next_no` is the
-  // number the NEXT challan will carry; printing one advances it
-  // (POST /api/delivery-chalan/claim-no), so two operators printing at the
-  // same moment cannot be handed the same serial. Set it once at go-live to
-  // continue the paper book they already have.
+  // The printed document is "Form GST Delivery Challan", reproduced from the
+  // customer's own stationery. Almost every line on it is the same on every
+  // challan the office issues, so it lives here rather than being re-typed:
+  // only the lorry, the rate, the bag count and the receiver change on the
+  // day, and those are asked for at print time (pre-filled from these).
   //
-  // The other four are the fields the operator is asked for at print time —
-  // held here as the DEFAULTS that pre-fill that form, because in practice
-  // the same lorry and the same rate repeat all day. Blank means "ask me".
+  // The SERIAL is kept here, install-wide and NOT per trade, because a
+  // challan is a gate pass: the book runs continuously through the year
+  // whichever trade the goods came off, and a per-trade counter would
+  // re-issue number 1 every auction. `chalan_next_no` is the number the NEXT
+  // challan will carry; printing one advances it
+  // (POST /api/delivery-chalan/claim-no), so two operators printing at the
+  // same moment cannot be handed the same serial. Prefix and suffix wrap it
+  // without being part of the counter — "RNS-" + 195 + "/26-27". Set the
+  // number once at go-live to continue the paper book they already have.
   { key: 'chalan_next_no',   value: '1',  category: 'lot_entry', label: 'Delivery Challan: Next Serial No', type: 'number' },
-  { key: 'chalan_prefix',    value: '',   category: 'lot_entry', label: 'Delivery Challan: Serial Prefix (e.g. DC/)', type: 'text' },
-  // Printed UNDER the company name, in place of the registered address, for a
-  // godown or gate whose address is not the registered office. Blank keeps
-  // the company's own address block.
-  { key: 'chalan_address',   value: '',   category: 'lot_entry', label: 'Delivery Challan: Address below company name', type: 'text' },
+  { key: 'chalan_prefix',    value: '',   category: 'lot_entry', label: 'Delivery Challan: Serial Prefix (e.g. RNS-)', type: 'text' },
+  { key: 'chalan_suffix',    value: '',   category: 'lot_entry', label: 'Delivery Challan: Serial Suffix (e.g. /26-27)', type: 'text' },
+  // Printed UNDER the company name, in place of the registered address — the
+  // collection centre or gate the goods leave from, which is usually not the
+  // registered office. One line per line of the printed block. Blank keeps
+  // the company's own address.
+  { key: 'chalan_address',   value: '',   category: 'lot_entry',
+    label: 'Delivery Challan: Address block below the company name (one line each)', type: 'textarea' },
+  // The consignment box, top right of the form.
+  { key: 'chalan_transport_mode', value: 'By Road', category: 'lot_entry', label: 'Delivery Challan: Mode of Transport', type: 'text' },
+  { key: 'chalan_place_of_supply', value: '', category: 'lot_entry', label: 'Delivery Challan: Place of Supply', type: 'text' },
   { key: 'chalan_veh_no',    value: '',   category: 'lot_entry', label: 'Delivery Challan: Default Vehicle No', type: 'text' },
   { key: 'chalan_rate',      value: '',   category: 'lot_entry', label: 'Delivery Challan: Default Rate (per kg)', type: 'number' },
+  // "Details of Receiver" — who the goods are going TO. Usually the same
+  // destination every time (the firm's own building, on a branch transfer),
+  // so it is held here and pre-filled into the print form where it can be
+  // changed for a one-off.
+  { key: 'chalan_receiver_name',    value: '', category: 'lot_entry', label: 'Delivery Challan: Receiver Name', type: 'text' },
+  { key: 'chalan_receiver_address', value: '', category: 'lot_entry',
+    label: 'Delivery Challan: Receiver Address (one line each)', type: 'textarea' },
+  { key: 'chalan_receiver_state',   value: '', category: 'lot_entry', label: 'Delivery Challan: Receiver State', type: 'text' },
+  { key: 'chalan_receiver_code',    value: '', category: 'lot_entry', label: 'Delivery Challan: Receiver State Code', type: 'text' },
+  { key: 'chalan_receiver_gstin',   value: '', category: 'lot_entry', label: 'Delivery Challan: Receiver GSTIN', type: 'text' },
+  // The goods line's description. The HSN beside it is NOT a challan setting:
+  // it reads `hsn_cardamom` (Settings - HSN), the canonical box every other
+  // document already quotes — see the "one config, one box" rule.
+  { key: 'chalan_goods_desc', value: 'CARDAMOM', category: 'lot_entry', label: 'Delivery Challan: Description of Goods', type: 'text' },
+  // Printed verbatim in the Remarks and Terms boxes at the foot.
+  { key: 'chalan_remarks',   value: 'Auction Sample Not for Sales, Only for Auction Purpose',
+    category: 'lot_entry', label: 'Delivery Challan: Remarks', type: 'text' },
+  { key: 'chalan_terms',     value: '',   category: 'lot_entry',
+    label: 'Delivery Challan: Terms & Condition', type: 'textarea' },
   // Physical paper width of the lot-receipt slip, in millimetres. Thermal
   // receipt printers come in fixed roll widths (e.g. the HOP-HL58 is a 58mm
   // roll, common alternatives are 80mm and 76mm). When blank / 0 the slip

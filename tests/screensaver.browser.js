@@ -296,7 +296,63 @@ const cleanup = () => {
   check('…nothing is painted', off.lit === 0, off);
   check('…but the screensaver itself still works', off.shown === true && /SpiceFlow/.test(off.app || ''), off);
 
+  console.log('\n[login] the product names itself on the sign-in page too');
+  // app_name now also prints in the login hero's footer — asked for outright
+  // ("add the app name here in the login page as well"). Two properties:
+  //   • it is PRE-AUTH, so it rides /api/branding beside the trade name and
+  //     the logo rather than company-settings, which needs a token;
+  //   • it does NOT displace the customer's own name. The sign-in card and
+  //     the top bar stay the CUSTOMER's — this footer is the one place the
+  //     software says what IT is.
+  await put({ app_name: 'GreenGavel', trade_name: 'RNS SPICES' });
+  const pub = await (await fetch(B + '/api/branding')).json();   // no Authorization header
+  check('the public branding payload carries the app name', pub.appName === 'GreenGavel',
+        JSON.stringify({ appName: pub.appName, tradeName: pub.tradeName }));
+  check('…alongside the customer company, not instead of it', pub.tradeName === 'RNS SPICES',
+        pub.tradeName);
+
+  await page.evaluate(() => { try { localStorage.removeItem('t'); } catch (_) {} });
+  await page.goto(B + '/', { waitUntil: 'networkidle2' });
+  await new Promise(r => setTimeout(r, 1200));
+  const login = await page.evaluate(() => {
+    const app = document.getElementById('login-hero-app');
+    const cs = app ? getComputedStyle(app) : null;
+    return {
+      loginShown: getComputedStyle(document.getElementById('login')).display !== 'none',
+      text: app ? app.textContent.trim() : '(absent)',
+      visible: !!(app && !app.hidden && cs.display !== 'none'),
+      weight: cs ? cs.fontWeight : '',
+      footText: (document.querySelector('#login .login-hero-foot') || {}).textContent || '',
+      cardName: (document.getElementById('login-hero-name') || {}).textContent || '',
+    };
+  });
+  check('the login page is what is on screen', login.loginShown === true, JSON.stringify(login));
+  check('the app name prints in the hero footer', login.text === 'GreenGavel', login.text);
+  check('…and is visible', login.visible === true, JSON.stringify(login));
+  check('…set apart from the small print beside it', Number(login.weight) >= 700, login.weight);
+  check('the copyright line is still there', /Powered by/.test(login.footText), login.footText);
+  check('the customer company still names the sign-in side',
+        /RNS SPICES/.test(login.cardName), login.cardName);
+
+  // Blank app_name must leave no gap in the footer row — a flex item with no
+  // text would still take its gap.
+  await put({ app_name: '' });
+  await page.goto(B + '/', { waitUntil: 'networkidle2' });
+  await new Promise(r => setTimeout(r, 1200));
+  const blank = await page.evaluate(() => {
+    const app = document.getElementById('login-hero-app');
+    return { hidden: app.hidden, display: getComputedStyle(app).display,
+             foot: (document.querySelector('#login .login-hero-foot') || {}).textContent.trim() };
+  });
+  check('an unnamed install hides the slot entirely',
+        blank.hidden === true && blank.display === 'none', JSON.stringify(blank));
+  check('…and the rest of the footer is unharmed', /Powered by/.test(blank.foot), blank.foot);
+  await put({ app_name: 'SpiceFlow eAuction Suite' });
+
   if (process.env.SHOT_DIR) {
+    await page.evaluate(t => localStorage.setItem('t', t), T);
+    await page.goto(B + '/', { waitUntil: 'networkidle2' });
+    await new Promise(r => setTimeout(r, 1500));
     await page.evaluate(() => { idleHideWarning(); _ss.minutes = 1; ssShow(); });
     await new Promise(r => setTimeout(r, 700));
     await page.screenshot({ path: process.env.SHOT_DIR + '/screensaver.png' });

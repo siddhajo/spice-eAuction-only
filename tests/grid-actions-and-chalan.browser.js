@@ -1,12 +1,13 @@
 // Four things an operator asked for, all about reaching what is on screen —
 // plus the delivery challan, which is a new document.
 //
-//  1. PRE-INVOICE's filter bar is PINNED. The screen is a bar that chooses an
-//     invoice and a preview of that invoice that can run several pages; the
-//     bar scrolled away, so changing buyer meant scrolling back to the top of
-//     a long document. It now sticks under the top bar AND the tab strip,
-//     both MEASURED (--stick-top) because both re-flow with window width and
-//     the text-size control.
+//  1. PRE-INVOICE's card HEADER is PINNED — heading and filter bar together,
+//     not the controls alone, which reads as a detached strip. The screen is
+//     a bar that chooses an invoice and a preview of that invoice that can
+//     run several pages; the bar scrolled away, so changing buyer meant
+//     scrolling back to the top of a long document. It now sticks under the
+//     top bar AND the tab strip, both MEASURED (--stick-top) because both
+//     re-flow with window width and the text-size control.
 //
 //  2. SALES INVOICES — Actions renders right after Dist (km). It was the last
 //     of 20 columns: the operator came to the row to USE it and had to scroll
@@ -19,10 +20,13 @@
 //     of an assembled array and drops it after a named one, so the column
 //     DEFINITIONS stay next to the data they describe.
 //
-//  4. DELIVERY CHALLAN — a gate pass printed over the lots ticked in Lot
-//     Entry's recent-entries panel. The serial comes out of an install-wide
+//  4. DELIVERY CHALLAN — "Form GST Delivery Challan", printed over the lots
+//     ticked in Lot Entry's recent-entries panel and reproduced from the
+//     customer's own stationery. The serial comes out of an install-wide
 //     book: previewed when the form opens, CLAIMED only on print, so
-//     cancelling never burns a number.
+//     cancelling never burns a number. The goods are TWO lines — the net
+//     weight and the sample weight that travels with it — not one per lot,
+//     because the form states what is MOVING, not which lots it came off.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -80,7 +84,15 @@ function cleanup() {
     br1: 'BODI', trade_name: 'RNS SPICES', business_state: 'TAMIL NADU',
     tn_address1: 'REGISTERED STREET', tn_place: 'BODI', tn_pin: '625513',
     gst_goods: '5', commission: '1',
-    chalan_veh_no: 'TN 55 AB 1234', chalan_rate: '310', chalan_address: 'GODOWN 2, GATE ROAD',
+    hsn_cardamom: '09083120',
+    chalan_veh_no: 'TN 55 AB 1234', chalan_rate: '310',
+    chalan_prefix: 'DC-', chalan_suffix: '/26-27',
+    chalan_address: 'CARDAMOM COLLECTION CENTRE\nGATE ROAD\nBODI-625513',
+    chalan_transport_mode: 'By Road', chalan_place_of_supply: 'NIRAPPELKADA',
+    chalan_receiver_name: 'RNS SPICES', chalan_receiver_state: 'KERALA',
+    chalan_receiver_code: '32', chalan_receiver_gstin: '32ABFFR1926E1ZK',
+    chalan_receiver_address: '14/623, RNS BUILDING\nPULIYANMALA ROAD,\nNIRAPPELKADA-685552',
+    chalan_remarks: 'Auction Sample Not for Sales, Only for Auction Purpose',
   } });
   await api('POST', '/api/auctions', { ano: '20', date: '2026-10-17', crop_type: 'ISP' });
   await api('POST', '/api/auctions/1/allocations',
@@ -132,13 +144,14 @@ function cleanup() {
   await page.goto(B + '/', { waitUntil: 'networkidle2' });
   await page.waitForFunction(() => typeof reorderColumn === 'function', { timeout: 15000 });
 
-  console.log('[1] The Pre-Invoice filter bar is pinned, under BOTH bars');
+  console.log('[1] The Pre-Invoice card header is pinned, under BOTH bars');
   await page.evaluate(() => go('preinvoice'));
   await new Promise(r => setTimeout(r, 600));
   const sticky = await page.evaluate(() => {
-    const bar = document.querySelector('#tc-preinvoice .filterbar-sticky');
+    const bar = document.querySelector('#tc-preinvoice .cardhead-sticky');
     if (!bar) return { found: false };
     const cs = getComputedStyle(bar);
+    const card = bar.closest('.card');
     const root = getComputedStyle(document.documentElement);
     const px = (v) => parseFloat(String(v || '').replace('px', '')) || 0;
     const topbar = document.querySelector('.topbar');
@@ -152,9 +165,22 @@ function cleanup() {
       stripH: strip ? Math.round(strip.getBoundingClientRect().height) : 0,
       bg: cs.backgroundColor,
       zIndex: cs.zIndex,
+      // What is INSIDE the pinned block — the title has to travel with the
+      // controls, or a bare strip floats with nothing naming it.
+      hasTitle: /Pre-Invoice/.test(bar.querySelector('h2') ? bar.querySelector('h2').textContent : ''),
+      hasControls: !!bar.querySelector('#pi-auction') && !!bar.querySelector('#pi-buyer'),
+      // It must span the card's inner width exactly — the negative margins
+      // are the CARD's padding, so a wider inset would hang past its edge.
+      overhangL: Math.round(bar.getBoundingClientRect().left - card.getBoundingClientRect().left),
+      overhangR: Math.round(card.getBoundingClientRect().right - bar.getBoundingClientRect().right),
     };
   });
-  check('the bar is there and sticky', sticky.found && sticky.position === 'sticky', JSON.stringify(sticky));
+  check('the block is there and sticky', sticky.found && sticky.position === 'sticky', JSON.stringify(sticky));
+  check('the heading is pinned WITH the controls, not left behind',
+        sticky.hasTitle === true && sticky.hasControls === true, JSON.stringify(sticky));
+  check('it spans the card exactly, hanging past neither edge',
+        Math.abs(sticky.overhangL) <= 1 && Math.abs(sticky.overhangR) <= 1,
+        JSON.stringify({ L: sticky.overhangL, R: sticky.overhangR }));
   check('it is MEASURED, not a constant — top equals --stick-top',
         sticky.top > 0 && Math.abs(sticky.top - sticky.stickTop) < 1, JSON.stringify(sticky));
   check('…and that measurement is the top bar plus the tab strip',
@@ -166,7 +192,7 @@ function cleanup() {
 
   // It has to STAY on screen once the page is scrolled — the whole point.
   const afterScroll = await page.evaluate(async () => {
-    const bar = document.querySelector('#tc-preinvoice .filterbar-sticky');
+    const bar = document.querySelector('#tc-preinvoice .cardhead-sticky');
     const before = bar.getBoundingClientRect().top;
     window.scrollTo(0, 400);
     await new Promise(r => setTimeout(r, 120));
@@ -175,7 +201,7 @@ function cleanup() {
     return { before: Math.round(before), after: Math.round(after),
              scrolled: document.documentElement.scrollHeight > window.innerHeight };
   });
-  check('scrolling the page does not take the bar with it',
+  check('scrolling the page does not take the header with it',
         !afterScroll.scrolled || afterScroll.after >= 0, JSON.stringify(afterScroll));
 
   console.log('\n[2] The reorder helper — one implementation, two grids');
@@ -287,8 +313,11 @@ function cleanup() {
       open: document.getElementById('le-chalan-modal').classList.contains('show')
             || getComputedStyle(document.getElementById('le-chalan-modal')).display !== 'none',
       no: v('le-chalan-no'), veh: v('le-chalan-veh'), rate: v('le-chalan-rate'),
-      bags: v('le-chalan-bags'), addr: v('le-chalan-address'), to: v('le-chalan-to'),
-      date: v('le-chalan-date'),
+      bags: v('le-chalan-bags'), addr: v('le-chalan-address'),
+      mode: v('le-chalan-mode'), pos: v('le-chalan-pos'),
+      to: v('le-chalan-to'), raddr: v('le-chalan-raddr'),
+      rstate: v('le-chalan-rstate'), rcode: v('le-chalan-rcode'), rgstin: v('le-chalan-rgstin'),
+      date: v('le-chalan-date'), time: v('le-chalan-time'),
       summary: document.getElementById('le-chalan-summary').textContent,
     };
   });
@@ -297,13 +326,24 @@ function cleanup() {
   check('a selection shows the button', form.btnShown !== 'none', form.btnShown);
   check('…badged with the count', form.badge === '2', form.badge);
   check('the modal opens', form.open === true, JSON.stringify(form.open));
-  check('the serial pre-fills from the book', form.no === '1', form.no);
+  // Prefix and suffix WRAP the counter without being part of it, so the
+  // financial-year tail can change in April without resetting the number.
+  check('the serial pre-fills wrapped in its prefix and suffix', form.no === 'DC-1/26-27', form.no);
   check('the vehicle pre-fills from its setting', form.veh === 'TN 55 AB 1234', form.veh);
   check('the rate pre-fills from its setting', String(form.rate) === '310', form.rate);
-  check('the address pre-fills from its setting', form.addr === 'GODOWN 2, GATE ROAD', form.addr);
+  check('the transport mode and place of supply pre-fill',
+        form.mode === 'By Road' && form.pos === 'NIRAPPELKADA', JSON.stringify(form));
+  check('the address block pre-fills, all three lines',
+        form.addr.split('\n').length === 3 && /CARDAMOM COLLECTION CENTRE/.test(form.addr), form.addr);
   check('bags default to the total on the ticked lots', String(form.bags) === '20', form.bags);
-  check('one seller is named outright', form.to === 'RAVI PLANTER', form.to);
+  // The receiver is the DESTINATION, which repeats — it comes from settings,
+  // not from the seller on the lots.
+  check('the receiver block pre-fills from settings',
+        form.to === 'RNS SPICES' && form.rstate === 'KERALA' && form.rcode === '32'
+        && form.rgstin === '32ABFFR1926E1ZK' && /RNS BUILDING/.test(form.raddr),
+        JSON.stringify({ to: form.to, rstate: form.rstate, rcode: form.rcode }));
   check('the date defaults to today', form.date === new Date().toISOString().slice(0, 10), form.date);
+  check('…and the time of supply is filled too', /^\d{2}:\d{2}$/.test(form.time), form.time);
   check('the summary counts what is going', /2 lots/.test(form.summary) && /20 bags/.test(form.summary), form.summary);
 
   // Cancelling must not burn a number out of a paper book.
@@ -316,33 +356,75 @@ function cleanup() {
   check('cancelling the form leaves the counter where it was', String(afterCancel.serial) === '1',
         JSON.stringify(afterCancel));
 
-  console.log('\n[7] What the challan prints');
+  console.log('\n[7] What the challan prints — the reference form, line for line');
   const doc = await page.evaluate(async () => {
-    const lots = _le.recentLots;
-    const html = leBuildChalanHtml({
-      lots, cfg: await j('/api/company-settings/flat'),
-      auction: { ano: '20', date: '2026-10-17' },
-      chalanNo: 'DC/7', date: '2026-10-17', veh: 'TN 55 AB 1234',
-      rate: 310, bags: 18, consignee: 'RAVI PLANTER', address: 'GODOWN 2, GATE ROAD',
-    });
-    return html;
+    const cfg = await j('/api/company-settings/flat');
+    const o = {
+      lots: _le.recentLots, cfg,
+      chalanNo: 'DC-7/26-27', date: '2026-10-26', time: '20:20', veh: 'KL69B4797',
+      mode: 'By Road', placeOfSupply: 'NIRAPPELKADA', rate: 3000, bags: '112+4',
+      address: cfg.chalan_address,
+      receiver: { name: cfg.chalan_receiver_name, address: cfg.chalan_receiver_address,
+                  state: cfg.chalan_receiver_state, code: cfg.chalan_receiver_code,
+                  gstin: cfg.chalan_receiver_gstin },
+    };
+    const lines = leChalanLines(o);
+    const total = lines.reduce((t, r) => t + r.value, 0);
+    const w = await j('/api/amount-words?n=' + total.toFixed(2));
+    o.words = w.words + ' Only';
+    return { html: leBuildChalanHtml(o), lines, total, words: o.words };
   });
-  check('it is titled a delivery chalan', /DELIVERY CHALAN|Delivery Chalan/i.test(doc), doc.slice(0, 200));
-  check('it says outright it is not a tax invoice', /Not a tax invoice/i.test(doc));
-  check('the company name heads it', /RNS SPICES/.test(doc));
-  check('the typed address replaces the registered one',
-        /GODOWN 2, GATE ROAD/.test(doc) && !/REGISTERED STREET/.test(doc));
-  check('the serial, date and vehicle are on it',
-        /DC\/7/.test(doc) && /TN 55 AB 1234/.test(doc));
-  check('every ticked lot is listed', /001/.test(doc) && /002/.test(doc));
-  // Indian grouping, like every other money figure the app prints.
-  check('the rate and the value are computed per lot',
-        /310\.00/.test(doc) && /1,24,000\.00/.test(doc), 'qty 400 x 310 = 1,24,000.00');
-  check('…and the total adds the lots up', /2,48,000\.00/.test(doc), 'two lots = 2,48,000.00');
-  // The typed bag count is the one the gate counts; the booked total is still
-  // shown so a part load is visible rather than silently different.
-  check('the typed bag count is what totals', />18</.test(doc), 'expected the typed 18');
-  check('…and a part load says so', /18 of 20 booked/.test(doc), doc.slice(-900));
+  const h = doc.html;
+  check('it is headed "Form GST Delivery Challan"', /Form GST Delivery Challan/.test(h));
+  check('the company name is the masthead', /RNS SPICES/.test(h));
+  check('the typed address block prints under it, line by line',
+        /CARDAMOM COLLECTION CENTRE<br>GATE ROAD<br>BODI-625513/.test(h), h.slice(0, 1400));
+  check('the consignment box carries all four of its lines',
+        /Mode of Transport/.test(h) && /By Road/.test(h) && /KL69B4797/.test(h)
+        && /Date,Time of Supply/.test(h) && /Place of Supply/.test(h), 'consignment box');
+  // The form's own date/time shape — stationery, not the install's date_format.
+  check('date and time print as the form does', /26-10-2026; 08\.20 PM/.test(h), 'expected 26-10-2026; 08.20 PM');
+  check('the serial is labelled as the challan book\'s', /Serial No\. of Challan/.test(h) && /DC-7\/26-27/.test(h));
+  check('the Details of Receiver block is complete',
+        /Details of Receiver/.test(h) && /RNS BUILDING/.test(h) && /KERALA/.test(h)
+        && /32ABFFR1926E1ZK/.test(h), 'receiver block');
+
+  // TWO goods lines, not one per lot: the form states what is MOVING.
+  check('the goods are two lines, not one per lot', doc.lines.length === 2,
+        JSON.stringify(doc.lines.map(l => l.desc)));
+  check('…the net weight first', doc.lines[0].desc === 'CARDAMOM' && doc.lines[0].qty === 800,
+        JSON.stringify(doc.lines[0]));
+  check('…then the SAMPLES that travel with it', doc.lines[1].desc === 'SAMPLES' && doc.lines[1].qty === 5.9,
+        JSON.stringify(doc.lines[1]));
+  check('both carry the canonical HSN, not a challan-only copy of it',
+        doc.lines.every(l => l.hsn === '09083120'), JSON.stringify(doc.lines.map(l => l.hsn)));
+  check('the header is S.No / Description / HSN+Code / Qty / Rate / Value / Taxable Value',
+        /S\.No\./.test(h) && /Description of<br>Goods/.test(h) && />HSN</.test(h)
+        && />Code</.test(h) && />Qty</.test(h) && />Rate</.test(h) && />Taxable Value</.test(h), 'header');
+  // Indian grouping and three decimals on weight, like the reference.
+  check('weights print to three decimals', /800\.000/.test(h) && /5\.900/.test(h), 'qty format');
+  check('values print in Indian grouping', /24,00,000\.00/.test(h), '800 x 3000 = 24,00,000.00');
+  check('the total line adds both goods lines',
+        doc.total === 2417700 && /8,17,700\.00/.test(h) === false && /24,17,700\.00/.test(h),
+        String(doc.total));
+  check('…and the qty total too', /805\.900/.test(h), '800 + 5.9');
+
+  // The words come from the server's amountToWords — the same wording every
+  // invoice on this install carries, not a second copy of the rules.
+  check('the amount in words is the shared one',
+        doc.words === 'Rupees Twenty Four Lakh Seventeen Thousand Seven Hundred Only', doc.words);
+  check('…and is printed under the table', /Challan Total Value \(In Words\)/.test(h) && h.includes(doc.words));
+
+  check('the Remarks box prints its configured line',
+        /Auction Sample Not for Sales, Only for Auction Purpose/.test(h));
+  // Bags is TEXT, printed verbatim: the office writes "112+4" to show the
+  // sample bags separately, which a number input could not hold.
+  check('Bags prints verbatim, not as a number', /Bags : 112\+4/.test(h), 'expected 112+4');
+  check('it closes with the terms and the signatory',
+        /Terms &amp; Condition/.test(h) && /For RNS SPICES/.test(h) && /Authorised Signatory/.test(h));
+  // An install with no uploaded logo must print an empty box, not a broken
+  // image glyph.
+  check('a missing logo removes itself rather than breaking', /onerror="this\.style\.display='none'"/.test(h));
 
   console.log('\n[8] Printing claims the serial — once');
   const claimed = await page.evaluate(async () => {
@@ -356,6 +438,7 @@ function cleanup() {
     return { a, b, peek };
   });
   check('a claim hands out the current serial', String(claimed.a.serial) === '1', JSON.stringify(claimed.a));
+  check('…wrapped in prefix and suffix', claimed.a.no === 'DC-1/26-27', claimed.a.no);
   check('the next claim is a DIFFERENT number', String(claimed.b.serial) === '2', JSON.stringify(claimed.b));
   check('…and the book has moved on', String(claimed.peek.serial) === '3', JSON.stringify(claimed.peek));
   // The prefix is part of the printed number, not of the counter.
@@ -367,7 +450,7 @@ function cleanup() {
     return await (await fetch('/api/delivery-chalan/next-no',
       { headers: { Authorization: 'Bearer ' + tok } })).json();
   });
-  check('the prefix is applied to the printed number', prefixed.no === 'DC/3', JSON.stringify(prefixed));
+  check('the prefix is applied to the printed number', prefixed.no === 'DC/3/26-27', JSON.stringify(prefixed));
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log('--- server log tail ---\n' + srvLog.split('\n').slice(-15).join('\n'));
