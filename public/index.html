@@ -5287,6 +5287,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <svg viewBox="0 0 24 24"><path d="M3 10l9-6 9 6v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M7 21v-7h10v7"/></svg>
           Godown
         </button>
+        <!-- Delivery Chalan — the gate pass, in full. Same flag as the Lot
+             Entry button it expands on; min-stage 1 because goods move as
+             soon as there are lots to move. -->
+        <button class="side-item feat-delivery-chalan" data-tab="delivery-chalan" data-min-stage="1" onclick="go('delivery-chalan')">
+          <svg viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+          Delivery Chalan
+        </button>
         <button class="side-item" data-tab="preinvoice" data-min-stage="3" onclick="go('preinvoice')">
           <svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
           Pre-Invoice
@@ -7806,7 +7813,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                It defaults to the ticked lots' net weight. GUNNY is counted in
                bags, not kilos, so this whole field goes for gunny and the Bags
                count below becomes the quantity. -->
-          <div class="fg le-ch-cardamom" style="margin:0"><label>Qty (kg)</label>
+          <div class="fg le-ch-cardamom le-ch-netonly" style="margin:0"><label>Qty (kg)</label>
             <input type="number" id="le-chalan-qty" step="0.001" min="0" oninput="leChalanSyncTotals()"
                    title="Weight of goods going. Defaults to the net weight of the ticked lots."></div>
           <div class="fg le-ch-cardamom" style="margin:0"><label>Sample Qty (kg)</label>
@@ -7835,42 +7842,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
              that matters is the one at the bottom of the form. -->
         <div id="le-chalan-totals" style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;margin:12px 0 0;padding:9px 12px;background:var(--spice-line);border-radius:8px;font-size:12.5px"></div>
 
-        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 6px">
-          Below the company name <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">— from the branch these lots came from (Settings → Branches)</span>
-        </div>
-        <div class="fg" style="margin:0"><label>Heading</label>
-          <input type="text" id="le-chalan-head" placeholder="CARDAMOM COLLECTION CENTRE" autocomplete="off"></div>
-        <div class="fg" style="margin:10px 0 0"><label>Address</label>
-          <textarea id="le-chalan-address" rows="3" placeholder="Leave blank to print the company's registered address"
-                    style="width:100%;resize:vertical"></textarea></div>
-
-        <!-- Swap — the same two places, the other way round. A consignment
-             runs from the collection centre to the building one day and back
-             the next, and both blocks are already typed; this exchanges them
-             instead of making the operator retype both. The receiver's State,
-             Code and GSTIN stay put: they identify the RECEIVER box, not
-             whichever address is sitting in it. -->
-        <div style="display:flex;justify-content:center;margin:12px 0 2px">
-          <button type="button" class="btn btn-o" id="le-chalan-swap" onclick="leChalanSwapAddresses()"
-                  style="font-size:12px;padding:5px 14px"
-                  title="Exchange this block with the Details of Receiver below — for a consignment running the other way">
-            ⇅ Swap with receiver
-          </button>
-        </div>
-
-        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 6px">Details of Receiver</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div class="fg" style="margin:0;grid-column:1 / -1"><label>Name</label>
-            <input type="text" id="le-chalan-to" autocomplete="off"></div>
-          <div class="fg" style="margin:0;grid-column:1 / -1"><label>Address</label>
-            <textarea id="le-chalan-raddr" rows="3" style="width:100%;resize:vertical"></textarea></div>
-          <div class="fg" style="margin:0"><label>State</label>
-            <input type="text" id="le-chalan-rstate" autocomplete="off"></div>
-          <div class="fg" style="margin:0"><label>Code</label>
-            <input type="text" id="le-chalan-rcode" autocomplete="off"></div>
-          <div class="fg" style="margin:0;grid-column:1 / -1"><label>GSTIN</label>
-            <input type="text" id="le-chalan-rgstin" autocomplete="off"></div>
-        </div>
+        <!-- The two address blocks are NOT typed here. Both follow from the
+             Branch above — its own address under the company name, and the
+             configured receiver (or the Spices Board, when one is picked) in
+             Details of Receiver. The Delivery Chalan SCREEN is where they can
+             be edited and previewed; this dialog is the quick print. -->
+        <p id="le-chalan-parties" style="font-size:12px;color:var(--text3);margin:10px 0 0;line-height:1.6"></p>
 
         <div id="le-chalan-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin:12px 0 0"></div>
 
@@ -9082,6 +9059,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <button class="btn btn-orange" onclick="tallyPrintAll('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="Print the sales invoice PDFs for every voucher in this export — one merged PDF">🖨 Print</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px">XML</button>
               <button class="btn btn-g" onclick="tallyDownload('sales_isp','irp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="GST e-Invoice (IRP / NIC) JSON — ready for the trade portal">JSON</button>
+              <button class="btn btn-g" onclick="tallyEwbDownload('sales_isp')" style="flex:1;min-width:64px;padding:7px;font-size:12px" title="e-Way bill bulk-upload JSON — upload at ewaybillgst.gov.in under e-Waybill → Generate Bulk. Checks every invoice first and tells you what is missing.">e-Way Bill</button>
             </div>
           </div>
 
@@ -9310,6 +9288,113 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          and booking part of it into Friday's auction. Every row is a godown
          entry; the figures are the BALANCE (received less what has already
          been released), which is what "in the godown" means. -->
+    <!-- DELIVERY CHALAN — the full version of the Lot Entry dialog: every
+         field on the form, both address blocks (which the dialog derives and
+         cannot edit), and the actual document rendered beside them as you
+         type. The quick dialog stays for the common case; this is where a
+         one-off is built and checked before any paper is used. -->
+    <div class="tc" id="tc-delivery-chalan">
+      <div class="card">
+        <div class="cardhead-sticky">
+          <h2 style="display:flex;align-items:center;gap:10px">
+            <span style="width:32px;height:32px;border-radius:10px;background:#fef3c7;display:inline-flex;align-items:center;justify-content:center">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#92400e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+            </span>
+            Delivery Chalan
+            <span style="font-weight:400;font-size:12px;color:var(--text3)">Form GST Delivery Challan — fill it in on the left, see the paper on the right. Nothing is numbered until you print.</span>
+          </h2>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+            <div class="fg" style="margin:0;min-width:190px"><label>Trade</label>
+              <select id="dc-auction" onchange="dcLoadLots()" style="height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px"></select>
+            </div>
+            <div class="fg" style="margin:0;min-width:180px"><label>Branch</label>
+              <select id="dc-branch" onchange="dcBranchChanged()" style="height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px"></select>
+            </div>
+            <div class="fg" style="margin:0;min-width:140px"><label>Goods</label>
+              <select id="dc-goods" onchange="dcGoodsChanged()" style="height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px">
+                <option value="cardamom">Cardamom</option>
+                <option value="gunny">Gunny</option>
+              </select>
+            </div>
+            <button class="btn btn-g" onclick="dcPrint()" style="height:38px;padding:0 16px;font-weight:600">🖨 Print Chalan</button>
+            <span id="dc-summary" style="font-size:12px;color:var(--text3);margin-left:auto;max-width:46%;text-align:right"></span>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:minmax(340px,1fr) minmax(420px,1.15fr);gap:18px;align-items:start">
+          <!-- LEFT: the form -->
+          <div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="fg" style="margin:0"><label>Serial No. of Challan</label>
+                <input type="text" id="dc-no" autocomplete="off" oninput="dcPreview()"
+                       title="Next number in the challan book. Printing advances the book; edit it to print a one-off without moving the counter."></div>
+              <div class="fg" style="margin:0"><label>Veh No</label>
+                <input type="text" id="dc-veh" autocomplete="off" oninput="dcPreview()"></div>
+              <div class="fg" style="margin:0"><label>Date of Supply</label>
+                <input type="date" id="dc-date" oninput="dcPreview()"></div>
+              <div class="fg" style="margin:0"><label>Time of Supply</label>
+                <input type="time" id="dc-time" oninput="dcPreview()"></div>
+              <div class="fg" style="margin:0"><label id="dc-rate-lbl">Rate (per kg)</label>
+                <input type="number" id="dc-rate" step="0.01" min="0" oninput="dcPreview()"></div>
+              <div class="fg dc-netonly dc-cardamom" style="margin:0"><label>Qty (kg)</label>
+                <input type="number" id="dc-qty" step="0.001" min="0" oninput="dcPreview()"></div>
+              <div class="fg dc-cardamom" style="margin:0"><label>Sample Qty (kg)</label>
+                <input type="number" id="dc-sample-qty" step="0.001" min="0" oninput="dcPreview()"></div>
+              <div class="fg" style="margin:0"><label id="dc-bags-lbl">Bags</label>
+                <input type="text" id="dc-bags" autocomplete="off" oninput="dcPreview()"></div>
+              <div class="fg dc-cardamom" style="margin:0"><label>Sample Bags</label>
+                <input type="text" id="dc-sample-bags" autocomplete="off" oninput="dcPreview()"></div>
+              <div class="fg" style="margin:0"><label>Mode of Transport</label>
+                <input type="text" id="dc-mode" autocomplete="off" oninput="dcPreview()"></div>
+              <div class="fg" style="margin:0;grid-column:1 / -1"><label>Place of Supply</label>
+                <input type="text" id="dc-pos" autocomplete="off" oninput="dcPreview()"></div>
+            </div>
+
+            <div id="dc-totals" style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;margin:12px 0 0;padding:9px 12px;background:var(--spice-line);border-radius:8px;font-size:12.5px"></div>
+
+            <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:16px 0 6px">Below the company name</div>
+            <div class="fg" style="margin:0"><label>Heading</label>
+              <input type="text" id="dc-head" autocomplete="off" oninput="dcPreview()"></div>
+            <div class="fg" style="margin:10px 0 0"><label>Address</label>
+              <textarea id="dc-address" rows="3" oninput="dcPreview()" style="width:100%;resize:vertical"></textarea></div>
+
+            <div style="display:flex;justify-content:center;margin:12px 0 2px">
+              <button type="button" class="btn btn-o" id="dc-swap" onclick="leChalanSwapAddresses('dc-')"
+                      style="font-size:12px;padding:5px 14px"
+                      title="Exchange this block with the Details of Receiver below — for a consignment running the other way">
+                ⇅ Swap with receiver
+              </button>
+            </div>
+
+            <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 6px">Details of Receiver</div>
+            <div class="fg" style="margin:0"><label>Name</label>
+              <input type="text" id="dc-to" autocomplete="off" oninput="dcPreview()"></div>
+            <div class="fg" style="margin:10px 0 0"><label>Address</label>
+              <textarea id="dc-raddr" rows="3" oninput="dcPreview()" style="width:100%;resize:vertical"></textarea></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+              <div class="fg" style="margin:0"><label>State</label>
+                <input type="text" id="dc-rstate" autocomplete="off" oninput="dcPreview()"></div>
+              <div class="fg" style="margin:0"><label>Code</label>
+                <input type="text" id="dc-rcode" autocomplete="off" oninput="dcPreview()"></div>
+              <div class="fg" style="margin:0;grid-column:1 / -1"><label>GSTIN</label>
+                <input type="text" id="dc-rgstin" autocomplete="off" oninput="dcPreview()"></div>
+            </div>
+          </div>
+
+          <!-- RIGHT: the document itself, rendered from the same builder the
+               printer gets. An iframe because the challan is a complete HTML
+               document with its own @page rules and table CSS — dropping that
+               into this page would let the app's stylesheet repaint it, and
+               then the preview would not be the paper. -->
+          <div style="position:sticky;top:var(--stick-top,112px)">
+            <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:0 0 6px">Preview</div>
+            <iframe id="dc-preview" title="Delivery chalan preview"
+                    style="width:100%;height:calc(100vh - var(--stick-top,112px) - 120px);min-height:460px;border:1px solid var(--border);border-radius:10px;background:#fff"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="tc" id="tc-godown">
       <div class="card">
         <h2 style="display:flex;align-items:center;gap:10px">
@@ -14037,6 +14122,18 @@ const SCREEN_GUIDE = {
     ],
     warn: 'This is the expensive one. Reminders are marketing messages: several times the price of an invoice send, and they go to people who did not ask to hear from you. Raise “Only sellers who booked at least this many auctions” before widening the day window.',
   },
+  'delivery-chalan': {
+    icon: '🚚',
+    title: 'Delivery Chalan — the gate pass that travels with the goods',
+    steps: [
+      'Pick the TRADE and the BRANCH. The challan covers that branch\u2019s whole trade — every lot of it — not a selection, because a lorry leaves with the branch\u2019s goods on it.',
+      'Choose “Spices Board (TN)” or “(KL)” as the branch for the AUCTION SAMPLES: the draw from every lot in the trade, going to the Board. There is no net-weight line on that one.',
+      'Goods is Cardamom or Gunny. Gunny is counted in bags at the per-bag rate (Settings → Rates) under its own HSN, and carries no sample row.',
+      'Both address blocks start from the branch and are editable here; ⇅ Swap exchanges them for a consignment running the other way.',
+      'The paper on the right is the paper that prints — same builder, redrawn as you type.',
+    ],
+    warn: 'Printing CLAIMS the next serial out of the challan book and advances it. Nothing is numbered until you press Print, and a number you type over is treated as a deliberate one-off that does not move the counter.',
+  },
   godown: {
     icon: '🏚',
     title: 'Godown — stock in store, advances and releases',
@@ -14502,6 +14599,8 @@ const NAV_GROUPS = [
       // Flag-gated; #nav-src hides it when the godown utility is off, and
       // navVisible() then keeps it out of the strip entirely.
       { tab:'godown',     label:'Godown' },
+      // Flag-gated with the Lot Entry button it expands on.
+      { tab:'delivery-chalan', label:'Delivery Chalan' },
       { tab:'preinvoice', label:'Pre-Invoice' },
       // Both flag-gated; they belong to this stage of the trade.
       { tab:'pricecheck', label:'Price Check' },
@@ -14791,6 +14890,9 @@ function go(tab){
   // Same catch for the Godown screen — with the utility off there is no stock
   // concept at all, so a restored tab would open a screen the nav has hidden.
   if (tab === 'godown' && document.body.getAttribute('data-feat-godown') !== '1') tab = 'dash';
+  // …and for the Delivery Chalan screen, which rides the same flag as the Lot
+  // Entry button it expands on.
+  if (tab === 'delivery-chalan' && document.body.getAttribute('data-feat-delivery-chalan') !== '1') tab = 'dash';
   window._currentTab = tab;
   document.querySelectorAll('.side-item').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   document.querySelectorAll('.tc').forEach(t=>t.classList.remove('active'));
@@ -14821,7 +14923,7 @@ function go(tab){
   if (typeof applyLogoBadge === 'function') {
     try { applyLogoBadge(); } catch(_) {}
   }
-  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>{_clearMasterSearch('traders-search');return searchTraders('')},buyers:()=>{_clearMasterSearch('buyers-search');return searchBuyers('')},birthdays:loadBirthdays,reminders:loadReminders,godown:loadGodown,
+  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>{_clearMasterSearch('traders-search');return searchTraders('')},buyers:()=>{_clearMasterSearch('buyers-search');return searchBuyers('')},birthdays:loadBirthdays,reminders:loadReminders,godown:loadGodown,'delivery-chalan':loadDeliveryChalan,
     auctions:loadAuctions,reassignreqs:loadReassignRequests,lotalloc:loadLotAllocation,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
@@ -15701,10 +15803,10 @@ function renderHubKpi(kpi){
 // The colour was saying a second time what the words already said.
 
 const HUB_FMT_SHORT = { xlsx: 'XLS', pdf: 'PDF', csv: 'CSV', xml: 'XML',
-                        dbf: 'DBF', json: 'JSON', irp: 'GST' };
+                        dbf: 'DBF', json: 'JSON', irp: 'GST', ewb: 'EWB' };
 const HUB_FMT_LABEL = {
   xlsx: 'XLSX', pdf: 'PDF', csv: 'CSV', xml: 'XML', dbf: 'DBF',
-  json: 'JSON', irp: 'e-Invoice JSON',
+  json: 'JSON', irp: 'e-Invoice JSON', ewb: 'e-Way Bill JSON',
 };
 
 // ── Per-format glyphs ────────────────────────────────────────────
@@ -15747,6 +15849,8 @@ const HUB_FMT_ICON = {
                  + 'v-1.5c-.5 0-.8-.3-.8-.8V14c0-1.2-.7-1.9-1.95-1.9z"/>',
   // e-Invoice JSON is JSON — the portal's name for it is not a file format.
   irp:  null,
+  // Same for the e-way bill bulk file.
+  ewb:  null,
   // A database table, for the legacy DBF exports.
   dbf:  '<ellipse cx="12" cy="6.4" rx="6.4" ry="2.8"/>'
       + '<path d="M5.6 9.4v3.3c0 1.5 2.9 2.8 6.4 2.8s6.4-1.3 6.4-2.8V9.4'
@@ -15755,6 +15859,7 @@ const HUB_FMT_ICON = {
       + 'c-1.4 1.1-3.8 1.7-6.4 1.7s-5-.6-6.4-1.7z" opacity=".55"/>',
 };
 HUB_FMT_ICON.irp = HUB_FMT_ICON.json;
+HUB_FMT_ICON.ewb = HUB_FMT_ICON.json;
 
 // Which format a tile is badged as. A GENERATED DOCUMENT reads as PDF
 // whatever formats it declares — it is a numbered, printed paper, and that is
@@ -15992,6 +16097,7 @@ Object.assign(HUB_ICONS, {
   'fmt-xml':  '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
   'fmt-json': '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
   'fmt-irp':  HUB_ICONS.statutory,
+  'fmt-ewb':  HUB_ICONS.statutory,
   'fmt-dbf':  HUB_ICONS.dbf,
   'fmt-generated': HUB_ICONS.documents,
 });
@@ -16019,7 +16125,7 @@ function hubSetGrouping(mode){
 
 // Order file-type groups by how the office actually files things, not
 // alphabetically. Anything unlisted falls to the end in encounter order.
-const HUB_FMT_ORDER = ['pdf', 'xlsx', 'csv', 'xml', 'json', 'irp', 'dbf'];
+const HUB_FMT_ORDER = ['pdf', 'xlsx', 'csv', 'xml', 'json', 'irp', 'ewb', 'dbf'];
 const HUB_FMT_GROUP = {
   pdf:  { label: 'PDF',            hint: 'Print-ready documents' },
   xlsx: { label: 'Excel (XLSX)',   hint: 'Spreadsheets' },
@@ -16027,6 +16133,7 @@ const HUB_FMT_GROUP = {
   xml:  { label: 'XML',            hint: 'Tally import' },
   json: { label: 'JSON',           hint: 'Machine-readable rows' },
   irp:  { label: 'e-Invoice JSON', hint: 'GST portal (IRP / NIC)' },
+  ewb:  { label: 'e-Way Bill JSON', hint: 'e-way bill portal, bulk upload' },
   dbf:  { label: 'DBF',            hint: 'Legacy database files' },
 };
 
@@ -27701,7 +27808,8 @@ async function leOpenChalan() {
   const sel = document.getElementById('le-chalan-branch');
   if (sel) {
     sel.innerHTML = branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')
-      || '<option value="">(no branch on these lots)</option>';
+      + `<option value="${LE_SB_TN}">Spices Board (TN)</option>`
+      + `<option value="${LE_SB_KL}">Spices Board (KL)</option>`;
     // Open on the branch the operator is already working in: the one they
     // have ticked, else the recent-entries branch filter, else the first.
     const ids = _le.selectedForPrint || new Set();
@@ -27732,14 +27840,6 @@ async function leOpenChalan() {
   // "+5" in "194+5".
   set('le-chalan-sample-bags', '');
 
-  // Receiver — usually the same destination every time (a branch transfer),
-  // so it comes from settings and is edited here only for a one-off.
-  set('le-chalan-to',     cfg.chalan_receiver_name    || '');
-  set('le-chalan-raddr',  cfg.chalan_receiver_address || '');
-  set('le-chalan-rstate', cfg.chalan_receiver_state   || '');
-  set('le-chalan-rcode',  cfg.chalan_receiver_code    || '');
-  set('le-chalan-rgstin', cfg.chalan_receiver_gstin   || '');
-
   const err = document.getElementById('le-chalan-err');
   if (err) { err.style.display = 'none'; err.textContent = ''; }
 
@@ -27762,30 +27862,55 @@ function leChalanBranchChanged() {
   const cfg = _le_chalan.cfg || {};
   const sel = document.getElementById('le-chalan-branch');
   const branch = sel ? String(sel.value || '').trim() : '';
+  const sb = leChalanIsSB(branch);
   const norm = (v) => String(v == null ? '' : v).trim().toUpperCase();
-  const lots = (_le_chalan.all || []).filter(l => norm(l.branch) === norm(branch));
+  // Spices Board: the samples come from EVERY lot in the trade, so the lot
+  // set is the whole trade rather than one branch's.
+  const lots = sb ? (_le_chalan.all || [])
+                  : (_le_chalan.all || []).filter(l => norm(l.branch) === norm(branch));
   _le_chalan.lots = lots;
+  _le_chalan.sampleOnly = sb;
 
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   const bags   = lots.reduce((n, l) => n + (Number(l.bags) || 0), 0);
   const netQty = lots.reduce((n, l) => n + (Number(l.qty) || 0), 0);
   const smpQty = leChalanSampleQty(lots, cfg);
-  set('le-chalan-qty', netQty ? netQty.toFixed(3) : '');
+  // On a sample consignment there is no net weight and no bag count to read
+  // off the lots — what goes is however many sample bags the operator made
+  // up, which only they know.
+  set('le-chalan-qty', sb ? '' : (netQty ? netQty.toFixed(3) : ''));
   set('le-chalan-sample-qty', smpQty ? smpQty.toFixed(3) : '');
-  set('le-chalan-bags', bags ? String(bags) : '');
+  set('le-chalan-bags', sb ? '' : (bags ? String(bags) : ''));
 
-  const blk = leChalanBranchBlock(cfg, branch);
-  set('le-chalan-head',    blk.heading || cfg.chalan_heading || '');
-  set('le-chalan-address', blk.address || cfg.chalan_address || '');
+  // Goods is a cardamom/gunny question about a branch load; samples are
+  // neither, so the chooser is locked to cardamom for a Board consignment.
+  const goodsEl = document.getElementById('le-chalan-goods');
+  if (goodsEl) {
+    if (sb) goodsEl.value = 'cardamom';
+    goodsEl.disabled = sb;
+  }
+  document.querySelectorAll('#le-chalan-modal .le-ch-netonly')
+    .forEach(el => { el.style.display = sb ? 'none' : ''; });
+
+  const parties = leChalanPartyBlocks(cfg, branch);
+  const pEl = document.getElementById('le-chalan-parties');
+  if (pEl) {
+    const firstLine = (t) => String(t || '').split(/\r?\n/)[0].trim();
+    pEl.innerHTML = `<strong>From</strong> ${esc(parties.heading || firstLine(parties.address) || 'company address')}`
+      + ` &nbsp;·&nbsp; <strong>To</strong> ${esc(parties.receiver.name || firstLine(parties.receiver.address) || '—')}`
+      + ` <span style="opacity:.75">— edit these on the Delivery Chalan screen</span>`;
+  }
 
   const sum = document.getElementById('le-chalan-summary');
   if (sum) {
     const sellers = new Set(lots.map(l => l.name || '').filter(Boolean));
-    sum.textContent = lots.length
-      ? `Every lot in ${branch} — ${lots.length} lot${lots.length === 1 ? '' : 's'} · `
-        + `${sellers.size} seller${sellers.size === 1 ? '' : 's'} · `
-        + `${bags} bag${bags === 1 ? '' : 's'} · ${netQty.toFixed(3)} kg`
-      : `No lots in ${branch || 'this branch'}`;
+    sum.textContent = sb
+      ? `Auction samples — every lot in the trade (${lots.length}) · ${smpQty.toFixed(3)} kg`
+      : (lots.length
+        ? `Every lot in ${branch} — ${lots.length} lot${lots.length === 1 ? '' : 's'} · `
+          + `${sellers.size} seller${sellers.size === 1 ? '' : 's'} · `
+          + `${bags} bag${bags === 1 ? '' : 's'} · ${netQty.toFixed(3)} kg`
+        : `No lots in ${branch || 'this branch'}`);
   }
   leChalanSyncTotals();
 }
@@ -27826,14 +27951,20 @@ function leChalanGoods() {
 // other. State, Code and GSTIN do NOT move: they label the receiver BOX, not
 // whichever address is currently sitting in it, and carrying them across
 // would quietly relabel the consignee's GST identity.
-function leChalanSwapAddresses() {
+//
+// Lives on the Delivery Chalan SCREEN, which is where the two blocks are
+// typed; the quick-print dialog derives both from the Branch and has nothing
+// to swap. `p` is that screen's id prefix.
+function leChalanSwapAddresses(p) {
+  p = p || 'dc-';
   const swap = (a, b) => {
-    const ea = document.getElementById(a), eb = document.getElementById(b);
+    const ea = document.getElementById(p + a), eb = document.getElementById(p + b);
     if (!ea || !eb) return;
     const t = ea.value; ea.value = eb.value; eb.value = t;
   };
-  swap('le-chalan-head', 'le-chalan-to');
-  swap('le-chalan-address', 'le-chalan-raddr');
+  swap('head', 'to');
+  swap('address', 'raddr');
+  if (typeof dcPreview === 'function') dcPreview();
 }
 
 async function leConfirmChalan() {
@@ -27877,13 +28008,9 @@ async function leConfirmChalan() {
     sampleQty: val('le-chalan-sample-qty') === '' ? null : (parseFloat(val('le-chalan-sample-qty')) || 0),
     bags: val('le-chalan-bags'),
     sampleBags: val('le-chalan-sample-bags'),
-    heading: val('le-chalan-head'),
-    address: val('le-chalan-address'),
-    receiver: {
-      name: val('le-chalan-to'), address: val('le-chalan-raddr'),
-      state: val('le-chalan-rstate'), code: val('le-chalan-rcode'),
-      gstin: val('le-chalan-rgstin'),
-    },
+    sampleOnly: !!_le_chalan.sampleOnly,
+    // Both ends follow from the Branch — they are not typed in this dialog.
+    ...leChalanPartyBlocks(_le_chalan.cfg || {}, val('le-chalan-branch')),
   };
   // Amount in words from the SERVER's amountToWords — the same wording every
   // invoice on this install carries. See GET /api/amount-words.
@@ -27937,6 +28064,51 @@ function leChalanBranchAddress(cfg, branch) {
   return leChalanBranchBlock(cfg, branch).address;
 }
 
+// The Spices Board e-auction centres are offered in the same Branch picker as
+// the firm's own branches, because the operator is answering one question —
+// where is this lorry going? — but they are a different KIND of consignment:
+// the auction SAMPLES drawn from every lot in the trade, not a branch's
+// goods. Sentinel values rather than names, so a firm that happens to call a
+// branch "Spices Board" cannot collide with them.
+const LE_SB_TN = '__SB_TN__', LE_SB_KL = '__SB_KL__';
+function leChalanIsSB(v) { return v === LE_SB_TN || v === LE_SB_KL; }
+
+// Who is at each end of the challan, derived from that one choice.
+//
+// A normal branch: its own address under the company name, and the configured
+// receiver. A Spices Board entry: the Board's address for that state becomes
+// the RECEIVER, and the sender falls back to the company's own registered
+// address, because the samples are the trade's, not one branch's.
+function leChalanPartyBlocks(cfg, branch) {
+  cfg = cfg || {};
+  if (leChalanIsSB(branch)) {
+    const kl = branch === LE_SB_KL;
+    return {
+      heading: '', address: '',
+      receiver: {
+        name: 'SPICES BOARD',
+        address: String((kl ? cfg.spices_board_addr_kl : cfg.spices_board_addr_tn) || '').trim(),
+        // GST state codes, the same pair the rest of the app uses.
+        state: kl ? 'KERALA' : 'TAMIL NADU',
+        code:  kl ? '32' : '33',
+        gstin: '',
+      },
+    };
+  }
+  const blk = leChalanBranchBlock(cfg, branch);
+  return {
+    heading: blk.heading || cfg.chalan_heading || '',
+    address: blk.address || cfg.chalan_address || '',
+    receiver: {
+      name:    cfg.chalan_receiver_name    || '',
+      address: cfg.chalan_receiver_address || '',
+      state:   cfg.chalan_receiver_state   || '',
+      code:    cfg.chalan_receiver_code    || '',
+      gstin:   cfg.chalan_receiver_gstin   || '',
+    },
+  };
+}
+
 // The SAMPLES quantity on a challan.
 //
 // It is NOT the sum of `lots.sample_wt` — that is the weight actually drawn
@@ -27987,6 +28159,14 @@ function leChalanLines(o) {
     : lots.reduce((t, l) => t + (Number(l.qty) || 0), 0);
   const sample = o.sampleQty != null ? (Number(o.sampleQty) || 0)
     : leChalanSampleQty(lots, cfg);
+  // A Spices Board consignment is the SAMPLES ALONE — the draw from every lot
+  // in the trade, which is the whole reason that despatch exists. No net line:
+  // the goods themselves are not going to the Board.
+  if (o.sampleOnly) {
+    return sample > 0
+      ? [{ desc: 'SAMPLES', hsn, qty: sample, unit: 'kg', rate, value: sample * rate }]
+      : [];
+  }
   const out = [{ desc, hsn, qty, unit: 'kg', rate, value: qty * rate }];
   if (sample > 0) out.push({ desc: 'SAMPLES', hsn, qty: sample, unit: 'kg', rate, value: sample * rate });
   return out;
@@ -28007,6 +28187,7 @@ function leChalanSyncTotals() {
   const bagsEl = document.getElementById('le-chalan-bags');
   const rows = leChalanLines({
     lots: _le_chalan.lots, cfg: _le_chalan.cfg || {}, goods,
+    sampleOnly: !!_le_chalan.sampleOnly,
     rate: num('le-chalan-rate') || 0,
     qty: num('le-chalan-qty'), sampleQty: num('le-chalan-sample-qty'),
     bags: bagsEl ? bagsEl.value : '',
@@ -28241,6 +28422,231 @@ function leBuildChalanHtml(o) {
 
 </div>
 </body></html>`;
+}
+
+// ── Delivery Chalan screen ────────────────────────────────────────
+//
+// The same document as the Lot Entry dialog, with the two things the dialog
+// cannot give: BOTH address blocks editable, and the finished paper rendered
+// beside the form as it is typed. Every figure still goes through the SAME
+// leChalanLines() / leBuildChalanHtml() the printer gets, so the preview is
+// the paper and not an impression of it.
+const _dc = { all: [], lots: [], cfg: {}, auction: null, sampleOnly: false };
+
+async function loadDeliveryChalan() {
+  try { _dc.cfg = await j('/api/company-settings/flat'); refreshMaskCfg(_dc.cfg); } catch (_) { _dc.cfg = {}; }
+
+  // Trades, newest first — the same list every other screen offers.
+  let auctions = [];
+  try { auctions = (await j('/api/auctions')) || []; } catch (_) {}
+  const sel = document.getElementById('dc-auction');
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = auctions.map(a =>
+      `<option value="${a.id}">#${esc(a.ano)} · ${esc(fmtD(a.date))}</option>`).join('')
+      || '<option value="">(no trades yet)</option>';
+    // Follow the trade the rest of the app is on, so arriving here does not
+    // silently change which auction the operator is working in.
+    const shared = (typeof getSharedAucId === 'function') ? getSharedAucId() : '';
+    const want = [cur, shared].find(v => v && auctions.some(a => String(a.id) === String(v)));
+    sel.value = want || (auctions[0] ? String(auctions[0].id) : '');
+  }
+
+  const now = new Date();
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('dc-date', now.toISOString().slice(0, 10));
+  set('dc-time', String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0'));
+  set('dc-veh',  _dc.cfg.chalan_veh_no || '');
+  set('dc-mode', _dc.cfg.chalan_transport_mode || 'By Road');
+  set('dc-pos',  _dc.cfg.chalan_place_of_supply || '');
+  set('dc-goods', 'cardamom');
+  set('dc-sample-bags', '');
+
+  // A PREVIEW of the serial, exactly as the dialog takes it: the book only
+  // moves when something is printed.
+  try { const r = await j('/api/delivery-chalan/next-no'); const el = document.getElementById('dc-no');
+        if (el) { el.value = (r && r.no) || ''; el.dataset.preview = el.value; } } catch (_) {}
+
+  await dcLoadLots();
+}
+
+// The chosen trade's lots, read whole — same rule as the dialog: a challan
+// covers a branch, never a page of a list.
+async function dcLoadLots() {
+  const aid = (document.getElementById('dc-auction') || {}).value;
+  _dc.all = [];
+  if (aid) {
+    try {
+      const data = await j(`/api/lots/${aid}?godown=0`);
+      const rows = Array.isArray(data) ? data : (data && Array.isArray(data.rows) ? data.rows : []);
+      _dc.all = rows.filter(l => !Number(l.godown));
+    } catch (_) {}
+    try {
+      const all = await j('/api/auctions');
+      _dc.auction = (all || []).find(a => String(a.id) === String(aid)) || null;
+    } catch (_) {}
+  }
+  const branches = [...new Set(_dc.all.map(l => String(l.branch || '').trim()).filter(Boolean))].sort();
+  const sel = document.getElementById('dc-branch');
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = branches.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')
+      + `<option value="${LE_SB_TN}">Spices Board (TN)</option>`
+      + `<option value="${LE_SB_KL}">Spices Board (KL)</option>`;
+    sel.value = [cur, branches[0], LE_SB_TN].find(v => v && [...sel.options].some(o => o.value === v)) || '';
+  }
+  dcBranchChanged();
+}
+
+// Branch decides the lot set, every figure taken off it, and both address
+// blocks — re-derived together so one can never be left behind from the last
+// branch. Typed-over figures go with them, for the same reason.
+function dcBranchChanged() {
+  const cfg = _dc.cfg || {};
+  const branch = String((document.getElementById('dc-branch') || {}).value || '');
+  const sb = leChalanIsSB(branch);
+  const norm = (v) => String(v == null ? '' : v).trim().toUpperCase();
+  _dc.lots = sb ? _dc.all : _dc.all.filter(l => norm(l.branch) === norm(branch));
+  _dc.sampleOnly = sb;
+
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const bags   = _dc.lots.reduce((n, l) => n + (Number(l.bags) || 0), 0);
+  const netQty = _dc.lots.reduce((n, l) => n + (Number(l.qty) || 0), 0);
+  const smpQty = leChalanSampleQty(_dc.lots, cfg);
+  set('dc-qty', sb ? '' : (netQty ? netQty.toFixed(3) : ''));
+  set('dc-sample-qty', smpQty ? smpQty.toFixed(3) : '');
+  set('dc-bags', sb ? '' : (bags ? String(bags) : ''));
+
+  const goodsEl = document.getElementById('dc-goods');
+  if (goodsEl) { if (sb) goodsEl.value = 'cardamom'; goodsEl.disabled = sb; }
+
+  // Both ends, seeded from the choice — and editable here, which is the whole
+  // point of this screen.
+  const parties = leChalanPartyBlocks(cfg, branch);
+  set('dc-head',   parties.heading);
+  set('dc-address', parties.address);
+  set('dc-to',     parties.receiver.name);
+  set('dc-raddr',  parties.receiver.address);
+  set('dc-rstate', parties.receiver.state);
+  set('dc-rcode',  parties.receiver.code);
+  set('dc-rgstin', parties.receiver.gstin);
+
+  dcGoodsChanged();
+}
+
+function dcGoodsChanged() {
+  const gunny = String((document.getElementById('dc-goods') || {}).value || '') === 'gunny';
+  const cfg = _dc.cfg || {};
+  document.querySelectorAll('#tc-delivery-chalan .dc-cardamom')
+    .forEach(el => { el.style.display = gunny ? 'none' : ''; });
+  document.querySelectorAll('#tc-delivery-chalan .dc-netonly')
+    .forEach(el => { if (!gunny) el.style.display = _dc.sampleOnly ? 'none' : ''; });
+  const rl = document.getElementById('dc-rate-lbl');
+  if (rl) rl.textContent = gunny ? 'Rate (per bag)' : 'Rate (per kg)';
+  const bl = document.getElementById('dc-bags-lbl');
+  if (bl) bl.textContent = gunny ? 'Bags being sent' : 'Bags';
+  const rateEl = document.getElementById('dc-rate');
+  if (rateEl && rateEl.dataset.seeded === rateEl.value) {
+    rateEl.value = String((gunny ? cfg.gunny_rate : cfg.chalan_rate) || '');
+    rateEl.dataset.seeded = rateEl.value;
+  } else if (rateEl && rateEl.dataset.seeded === undefined) {
+    rateEl.value = String((gunny ? cfg.gunny_rate : cfg.chalan_rate) || '');
+    rateEl.dataset.seeded = rateEl.value;
+  }
+  dcPreview();
+}
+
+// Everything the form says, in the shape leBuildChalanHtml takes. One reader,
+// so the preview, the totals strip and the printed paper cannot disagree.
+function dcCollect() {
+  const v = (id) => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+  const numOrNull = (id) => { const x = v(id); return x === '' ? null : (parseFloat(x) || 0); };
+  return {
+    lots: _dc.lots, cfg: _dc.cfg || {}, auction: _dc.auction || {},
+    goods: String((document.getElementById('dc-goods') || {}).value || 'cardamom'),
+    sampleOnly: !!_dc.sampleOnly,
+    chalanNo: v('dc-no'), date: v('dc-date'), time: v('dc-time'),
+    veh: v('dc-veh'), mode: v('dc-mode'), placeOfSupply: v('dc-pos'),
+    rate: parseFloat(v('dc-rate')) || 0,
+    qty: numOrNull('dc-qty'), sampleQty: numOrNull('dc-sample-qty'),
+    bags: v('dc-bags'), sampleBags: v('dc-sample-bags'),
+    heading: v('dc-head'), address: v('dc-address'),
+    receiver: { name: v('dc-to'), address: v('dc-raddr'), state: v('dc-rstate'),
+                code: v('dc-rcode'), gstin: v('dc-rgstin') },
+  };
+}
+
+// Re-render the paper. The words line needs the server (one implementation of
+// the Indian-numbering rules, shared with every invoice), so it is fetched
+// and the frame repainted when it lands — the frame is never left blank
+// waiting for it.
+let _dcWordsSeq = 0;
+function dcPreview() {
+  const o = dcCollect();
+  const rows = leChalanLines(o);
+  const qty = rows.reduce((t, r) => t + r.qty, 0);
+  const val = rows.reduce((t, r) => t + r.value, 0);
+  const n3 = (x) => x.toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  const n2 = (x) => x.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const host = document.getElementById('dc-totals');
+  if (host) {
+    const cell = (k, x) => `<span style="color:var(--text3)">${k}</span> <strong style="font-size:13.5px">${x}</strong>`;
+    host.innerHTML = [
+      cell('Total Qty', rows.length && rows[0].unit === 'nos' ? qty.toLocaleString('en-IN') + ' bags' : n3(qty) + ' kg'),
+      cell('Total Value', '₹' + n2(val)),
+      `<span style="color:var(--text3);margin-left:auto">${rows.length} line${rows.length === 1 ? '' : 's'} on the challan</span>`,
+    ].join('');
+  }
+  const sum = document.getElementById('dc-summary');
+  if (sum) {
+    const branch = String((document.getElementById('dc-branch') || {}).value || '');
+    sum.textContent = _dc.sampleOnly
+      ? `Auction samples — every lot in the trade (${_dc.lots.length})`
+      : (_dc.lots.length ? `Every lot in ${branch} — ${_dc.lots.length} lot${_dc.lots.length === 1 ? '' : 's'}`
+                         : 'No lots for this branch');
+  }
+  _dcPaint(o, '');
+  // Then the words, which are the server's to say.
+  const seq = ++_dcWordsSeq;
+  j('/api/amount-words?n=' + encodeURIComponent(val.toFixed(2)))
+    .then(w => { if (seq === _dcWordsSeq) _dcPaint(o, (w && w.words) ? w.words + ' Only' : ''); })
+    .catch(() => {});
+}
+function _dcPaint(o, words) {
+  const fr = document.getElementById('dc-preview');
+  if (!fr) return;
+  const doc = fr.contentDocument;
+  if (!doc) return;
+  doc.open();
+  doc.write(leBuildChalanHtml({ ...o, words }));
+  doc.close();
+}
+
+async function dcPrint() {
+  const o = dcCollect();
+  if (!o.veh) { toast('Vehicle number is needed — a challan travels with the lorry.'); return; }
+  // Claim the serial only when the preview was left alone — a typed number is
+  // a deliberate one-off and must not move the book past it. Same rule as the
+  // dialog.
+  const noEl = document.getElementById('dc-no');
+  if (noEl && o.chalanNo === String(noEl.dataset.preview || '')) {
+    try {
+      const r = await j('/api/delivery-chalan/claim-no', { method: 'POST', body: JSON.stringify({}) });
+      if (r && r.no) { o.chalanNo = r.no; noEl.value = r.no; noEl.dataset.preview = r.no; }
+    } catch (_) { toast('Could not advance the chalan book — printing with ' + o.chalanNo); }
+  }
+  try {
+    const w = await j('/api/amount-words?n=' + encodeURIComponent(
+      leChalanLines(o).reduce((t, r) => t + r.value, 0).toFixed(2)));
+    o.words = (w && w.words) ? w.words + ' Only' : '';
+  } catch (_) { o.words = ''; }
+  const win = window.open('', '_blank', 'width=900,height=1000');
+  if (!win) { toast('Popup blocked. Allow popups for this site and retry.'); return; }
+  win.document.open();
+  win.document.write(leBuildChalanHtml(o));
+  win.document.close();
+  win.onload = () => { try { win.focus(); win.print(); } catch (e) {} };
+  dcPreview();   // the serial just moved on
 }
 
 // ── Receipt HTML builder ────────────────────────────────────────
@@ -29534,6 +29940,11 @@ function renderSettingsPanel(){
       if(g.head)inner+=fld(g.head);
       if(g.addr)inner+=fld(g.addr);
     }
+    // Anything in this category that is NOT a numbered branch — the two
+    // Spices Board addresses — lands after them, in declaration order. Keyed
+    // off `num()` returning '' so a future non-branch key is carried too
+    // instead of silently disappearing from the panel.
+    for(const f of fields){ if(!num(f.key)) inner+=fld(f); }
     html+=sectionCard(ck,'Branch Offices','Each branch name sits beside the mobile number that reaches it, then what the place is called and its postal address. Those last two are what print under the company name on a Delivery Challan for goods leaving that branch.',fields.length,inner,'🏪');
   }else if(ck==='mode'){
     // Three fields, all custom-rendered (locked text, guarded dropdown,
@@ -46978,15 +47389,18 @@ async function tallyDownload(type,format){
   const aid=document.getElementById('tally-auction')?.value;
   if(!aid){alert('Select an auction first');return}
   const label=TALLY_LABELS[type]||type;
-  // Three output formats:
+  // Four output formats:
   //   'irp'  → GST e-Invoice (IRP / NIC) JSON, ready for the trade portal.
   //            Sales (ISP) only — the endpoint rejects other types.
+  //   'ewb'  → e-way bill bulk-upload JSON. Sales only, same reason. Reached
+  //            through tallyEwbDownload(), which runs the preflight check
+  //            first; calling it here directly still works.
   //   'json' → internal Tally-row JSON (still reachable, not surfaced here).
   //   xml    → Tally import XML (default).
-  const fmt=(format==='irp')?'irp':(format==='json')?'json':'xml';
+  const fmt=(format==='irp')?'irp':(format==='ewb')?'ewb':(format==='json')?'json':'xml';
   const ext=(fmt==='xml')?'xml':'json';
-  const kind=(fmt==='irp')?'e-Invoice JSON':fmt.toUpperCase();
-  const namePrefix=(fmt==='irp')?'EInvoice':'Tally';
+  const kind=(fmt==='irp')?'e-Invoice JSON':(fmt==='ewb')?'e-Way Bill JSON':fmt.toUpperCase();
+  const namePrefix=(fmt==='irp')?'EInvoice':(fmt==='ewb')?'EWayBill':'Tally';
 
   // Sale-type split — when the card's dropdown is set to L / I / E the
   // export carries only that sale type, in both XML and JSON, and the
@@ -47018,6 +47432,57 @@ async function tallyDownload(type,format){
     setTimeout(()=>URL.revokeObjectURL(a.href),5000);
     toast(`Downloaded ${label}${saleLabel} ${kind}`);
   });
+}
+
+// ── e-Way bill bulk JSON, with a preflight ───────────────
+// An e-way bill is a statutory document that travels with the lorry, and the
+// portal rejects a bulk file row by row with little explanation. So ask the
+// server what it WOULD generate first (?report=1 runs the same builder and
+// returns no file), show the operator what is missing, and only then download.
+//
+// Nothing here talks to ewaybillgst.gov.in. The file goes to the portal by
+// hand, under e-Waybill → Generate Bulk — direct API access needs a static
+// Indian IP whitelisted by NIC or a GSP contract, neither of which this app
+// can hold. See sendEwbJson() in server.js.
+async function tallyEwbDownload(type){
+  const aid=document.getElementById('tally-auction')?.value;
+  if(!aid){alert('Select an auction first');return}
+  const sale=tallySaleFilter(type);
+  const q=['format=ewb','report=1'];
+  if(sale)q.push('sale='+encodeURIComponent(sale));
+  let rep=null;
+  await withOverlay('Checking invoices for the e-way bill…', async () => {
+    const r=await fetch(B+'/api/tally/export/'+type+'/'+aid+'?'+q.join('&'),
+                        {headers:{'Authorization':'Bearer '+T}});
+    try{rep=await r.json()}catch(x){rep=null}
+    if(!r.ok){toast((rep&&rep.error)||'e-Way bill check failed');rep=null}
+  });
+  if(!rep)return;
+  if(rep.blocked){alert('e-Way bill: '+rep.blocked);return}
+  // Group the per-row notes by reason — ten invoices missing a lorry number
+  // is one thing to fix, not ten lines to read.
+  const group=(list)=>{
+    const m=new Map();
+    for(const n of (list||[])){
+      if(!m.has(n.why))m.set(n.why,[]);
+      m.get(n.why).push(n.doc||('#'+n.id));
+    }
+    return [...m.entries()].map(([why,docs])=>
+      '• '+why+'\n   ('+docs.length+': '+docs.slice(0,8).join(', ')+(docs.length>8?', …':'')+')');
+  };
+  if(!rep.included){
+    alert('No invoice in this trade can go on an e-way bill yet.\n\n'+group(rep.skipped).join('\n\n'));
+    return;
+  }
+  const parts=[];
+  if((rep.skipped||[]).length)  parts.push('LEFT OUT ('+rep.skipped.length+' invoice(s)):\n'+group(rep.skipped).join('\n\n'));
+  if((rep.warnings||[]).length) parts.push('GOING IN, BUT CHECK:\n'+group(rep.warnings).join('\n\n'));
+  if(parts.length){
+    const ok=confirm(rep.included+' of '+rep.total+' invoice(s) will be written to the e-way bill file.\n\n'
+                     +parts.join('\n\n')+'\n\nDownload the file anyway?');
+    if(!ok)return;
+  }
+  await tallyDownload(type,'ewb');
 }
 
 // ── Single-party picker ──────────────────────────────────

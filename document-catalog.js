@@ -94,11 +94,15 @@ const hrefSpiceBoard = (type) => (ctx, format) =>
 const hrefLorry = (type) => (ctx, format) =>
   `/api/lorry-reports/${type}/${ctx.auctionId}${q({ format })}`;
 
-// Tally speaks three formats off one route:
+// Tally speaks four formats off one route:
 //   xml   Tally import XML — the default, sent with no format param at all
 //   irp   GST e-Invoice (IRP / NIC) JSON for the portal. Only sales_isp and
 //         debit_note carry the buyer GSTIN/address that schema needs; the
 //         route rejects every other type, so only those two declare it.
+//   ewb   e-Way bill bulk-upload JSON for ewaybillgst.gov.in. Sales vouchers
+//         only: an e-way bill accompanies a MOVEMENT of goods, and the sales
+//         invoice is the only document here that moves any. (A debit note
+//         bills commission, so it declares irp but not ewb.)
 // The route also answers ?format=json with the raw voucher rows. It is not
 // offered here: it duplicates the XML's content in a form nobody in the
 // office imports, and it cluttered the file-type view with a JSON section
@@ -498,7 +502,7 @@ const DOCUMENTS = [
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('ledger') },
 
   { id: 'tally_sales_isp', label: 'Sales Vouchers', group: 'tally', sub: 'Vouchers', family: 'tally',
-    kind: 'export', scope: 'trade', formats: ['xml', 'irp'], minStage: 4, perm: 'export',
+    kind: 'export', scope: 'trade', formats: ['xml', 'irp', 'ewb'], minStage: 4, perm: 'export',
     filters: ['sale', 'party', 'invoice'],
     multi: ['sale', 'party', 'invoice'],
     route: '/api/tally/export/:type/:auctionId', href: hrefTally('sales_isp'),

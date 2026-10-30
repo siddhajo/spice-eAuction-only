@@ -2726,7 +2726,25 @@ function generDebitNoteXML(rows, cfg, opts = {}) {
     const taxPosted    = exempt ? 0 : (isIntra ? r2(cgsttot + sgsttot) : igsttot);
     const componentSum = r2(refundtot + taxPosted);
     const total        = r2(row.total || (refundtot + cgsttot + sgsttot + igsttot));
-    const totalRound   = tlyrnd ? r0(total) : total;
+    // ROUNDS UP, never to the nearest rupee — the rule the planter (URD) DN
+    // has always followed, now applied to the dealer (RD Service) note too.
+    // A debit note is the house's own service charge, and the fee charged must
+    // not come out below the fee earned.
+    //
+    // CEILED FROM THE COMPONENTS, NOT FROM row.total. The stored total has
+    // already been rounded to the NEAREST rupee by debitNoteTotal() when
+    // flag_round is on, so ceiling it again is a no-op — 12674.15 was stored
+    // as 12674 and the paise that decide the direction are only in the
+    // components. (The planter note needs no equivalent change: its stored
+    // total comes from planterDebitNoteTotal(), which already ceils, so
+    // ceiling its components lands on the same rupee.)
+    //
+    // GST stays inside the ceiled base even when `exempt` suppresses the GST
+    // ledgers, which is what the old `r0(total)` did; only the DIRECTION of
+    // the rounding changes here. The Round Off ledger below still reconciles
+    // the posted lines to this total, so the voucher balances either way.
+    const grandRaw     = r2(refundtot + cgsttot + sgsttot + igsttot);
+    const totalRound   = tlyrnd ? Math.ceil(grandRaw) : total;
     const rnd          = tlyrnd ? r2(totalRound - componentSum) : 0;
 
     // Voucher number convention (the default, when no prefix/suffix is set):
@@ -2958,6 +2976,12 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
            -- of the letterhead layout; Tally has no field for it, so it rides
            -- to Tally as the SpiceBuyerSBL UDF.
            (SELECT b.sbl     FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_sbl,
+           -- Bill-to state name + GST state code off the buyer master. The
+           -- e-way bill needs a state CODE even for an UNREGISTERED buyer,
+           -- where there is no GSTIN to slice the first two digits out of.
+           -- Every other generator ignores these (unknown fields are dropped).
+           (SELECT b.state    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_state,
+           (SELECT b.st_code  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS buyer_st_code,
            (SELECT b.cgstin  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cgstin,
            (SELECT b.cbuyer1 FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cbuyer1,
            (SELECT b.cadd1   FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cadd1,
@@ -2965,6 +2989,7 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
            (SELECT b.cpla    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cpla,
            (SELECT b.cpin    FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cpin,
            (SELECT b.cstate  FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cstate,
+           (SELECT b.cst_code FROM buyers b WHERE b.buyer = i.buyer LIMIT 1) AS cst_code,
            -- The proforma this invoice was raised from, if any. The Merchant
            -- (Journal) XML bills against the PROFORMA number the buyer already
            -- holds, so the reference has to travel with the row. Lowest number
@@ -3207,6 +3232,11 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
       address: [r.add1, r.add2].filter(Boolean).join(', '),
       place: r.place || r.buyer_pla || '',
       pin: r.buyer_pin || '',
+      // Bill-to state as the buyer master records it. `buyerStCode` is the
+      // GST state code; only the e-way bill builder reads these, and only
+      // when the buyer has no GSTIN to derive the code from.
+      buyerState:  String(r.buyer_state || '').trim(),
+      buyerStCode: String(r.buyer_st_code || '').trim(),
       // Buyer's Spices Board licence — consumed only by the SpiceBuyerSBL UDF
       // on the sales voucher. Every other generator ignores unknown fields.
       sbl: r.buyer_sbl || '',
@@ -3224,9 +3254,10 @@ function buildSalesIspRows(db, auctionId, cfg, opts) {
         const pl = String(r.cpla    || '').trim();
         const pn = String(r.cpin    || '').trim();
         const st = String(r.cstate  || '').trim();
+        const sc = String(r.cst_code || '').trim();
         // Consider a consignee "present" only when there's identifying data.
         if (!(g || nm || a1 || pl || pn)) return null;
-        return { gstin: g, name: nm, addr1: a1, addr2: a2, place: pl, pin: pn, state: st };
+        return { gstin: g, name: nm, addr1: a1, addr2: a2, place: pl, pin: pn, state: st, stCode: sc };
       })(),
       // E-way bill vehicle number — pulled from invoices.lorry_no, set
       // via the Invoices tab "Set Lorry No" bulk action. The generator
@@ -3701,12 +3732,18 @@ function buildDebitNoteIrpJson(rows, cfg, opts = {}) {
       TotItemVal: r2(assAmt + cgstAmt + sgstAmt + igstAmt),
     };
 
-    // ---- ValDtls — anchor TotInvVal to the DN's stored rounded total;
-    // RndOffAmt absorbs the paise delta (same approach as generDebitNoteXML).
+    // ---- ValDtls — the invoice value ROUNDS UP from this document's own
+    // components, and RndOffAmt absorbs the paise. Same rule and same base as
+    // generDebitNoteXML, so the registered e-invoice and the Tally voucher
+    // for one note cannot disagree.
+    //
+    // It no longer anchors to `row.total`: that figure is already rounded to
+    // the nearest rupee, so it could pull the e-invoice a rupee BELOW the
+    // voucher. The old out-of-range guard (|rndOff| > 99) went with it —
+    // ceiling the components puts rndOff in [0, 1) by construction.
     const baseGrand = r2(assAmt + cgstAmt + sgstAmt + igstAmt);
-    let totInvVal = r0(Number(row.total || baseGrand));
-    let rndOff    = r2(totInvVal - baseGrand);
-    if (Math.abs(rndOff) > 99) { totInvVal = r0(baseGrand); rndOff = r2(totInvVal - baseGrand); }
+    const totInvVal = Math.ceil(baseGrand);
+    const rndOff    = r2(totInvVal - baseGrand);
 
     // Party legal name — prefer the raw dealer name; fall back to the
     // ledger-suffixed name with the configured RD suffix stripped.
@@ -3780,6 +3817,377 @@ function buildDebitNoteIrpJson(rows, cfg, opts = {}) {
     out.push(dn);
   }
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 1E. GST e-WAY BILL bulk-upload JSON — schema version 1.0.1118
+//
+// The file the NIC e-way bill portal accepts under
+// Main Menu → e-Waybill → Generate Bulk. NOT an API call: the operator
+// downloads this, signs in at ewaybillgst.gov.in and uploads it, and the
+// portal returns the EWB numbers. That is deliberate — direct API access
+// needs either AATO ≥ ₹10 cr with up to four INDIAN STATIC IPs whitelisted
+// by NIC, or a GSP contract, and this app ships as a desktop build on a
+// customer's broadband and as a Railway service, neither of which can hold
+// a static Indian IP. See `buildEwbJson`'s report for what a row still needs.
+//
+// Schema authority: EWB_Attributes_new.xlsx + EWB_JSON.json from
+// https://docs.ewaybillgst.gov.in/html/formatdownloadnew.html (attributes
+// sheet version 1.0.0621, sample version 1.0.1118). Field spellings are the
+// portal's, oddities included — `actualFromStateCode` (not actFrom…),
+// `TotNonAdvolVal` and `OthValue` capitalised mid-object, `hsnCode` and
+// `mainHsnCode` as STRINGS while every other code is a number.
+//
+// Built from buildSalesIspRows() — the SAME rows the ISP Tally XML, the
+// e-invoice JSON and the printed invoice come from, so all four agree. Each
+// taxable line of the invoice (cardamom per lot, gunny, transport, insurance)
+// becomes one itemList entry, exactly as in buildIrpJson: the item list has
+// to re-sum to the invoice's assessable value or the portal rejects the row
+// (sum of assessable + tax + other charges must come within ₹2 of
+// totInvValue).
+//
+// Differences from the e-invoice export, all forced by the e-way bill rules:
+//   • An UNREGISTERED buyer is fine — toGstin becomes 'URP' — where the IRP
+//     builders skip the row outright. So this export covers more invoices.
+//   • Export (sale 'E') ships with toStateCode 99 "OTHER COUNTRIES". The
+//     e-invoice uses 96 for the same case; they are different code lists.
+//   • PART B (transMode / vehicleNo / vehicleType) is emitted only when the
+//     invoice carries a lorry number. Without it the portal issues a Part-A
+//     slip with no validity period, which the operator completes when the
+//     lorry is known — a valid and routine two-step.
+//
+// Returns { json, report }: `json` is the payload to write to the file,
+// `report` lists rows left out and rows that went in needing attention. The
+// caller decides what to do with the report (the route surfaces it under
+// ?report=1); it is never part of the uploaded file.
+const EWB_JSON_VERSION = '1.0.1118';
+// "OTHER COUNTRIES" in the e-way bill state master. The e-invoice schema
+// spells the same idea '96'; do not cross-use them.
+const EWB_STATE_OTHER_COUNTRY = 99;
+
+function buildEwbJson(rows, cfg, opts = {}) {
+  const gstRate = gstGoodsRateOf(cfg);
+
+  // HSN / SAC codes + item labels — the same config the ISP XML and the
+  // e-invoice JSON read, so one HSN change moves all three.
+  const HSN_Card   = String(HSN_CARDAMOM(cfg, '09083120'));
+  const HSN_Gunny  = String(HSN_GUNNY(cfg, '63051040'));
+  const SAC_Transp = String(SAC_TRANSPORT(cfg, '996791'));
+  const SAC_Insur  = String(SAC_INSURANCE(cfg, '997136'));
+  const Item_Card  = cfgGet(cfg, 'tally_item_cardamom', 'Cardamom');
+  const Item_Gunny = cfgGet(cfg, 'tally_item_gunny',    'Gunny');
+  const Desc_Transp = cfgGet(cfg, 'tally_einv_transport_desc', 'Transport');
+  const Desc_Insur  = cfgGet(cfg, 'tally_einv_insurance_desc', 'Insurance Received');
+
+  // Document-number composition — mirror generSalesIspXML / buildIrpJson
+  // exactly so the e-way bill quotes the number printed on the invoice.
+  const season    = opts.season || cfgGet(cfg, 'tally_season', cfgGet(cfg, 'season_code', '2026-27'));
+  const separator = opts.separator || cfgGet(cfg, 'tally_separator', '/');
+  const _tallyPrefix = String(cfgGet(cfg, 'tally_inv_prefix', '')).trim();
+  const invPrefix = _tallyPrefix ? (/[/\-]$/.test(_tallyPrefix) ? _tallyPrefix : _tallyPrefix + '/') : '';
+
+  // Seller (consignor / "Bill From") identity — same business_state selection
+  // as invoice-pdf.js effectiveCompany() and buildIrpJson. Kept in sync by
+  // hand; see buildIrpJson for the rationale behind each fallback.
+  const isStateKL = String(cfgGet(cfg, 'business_state', '')).toUpperCase() === 'KERALA';
+  const pick = (klKey, tnKey) => isStateKL
+    ? cfgGet(cfg, klKey, cfgGet(cfg, tnKey, ''))
+    : cfgGet(cfg, tnKey, '');
+  const sellerName  = cfgGet(cfg, 'trade_name', cfgGet(cfg, 'short_name', opts.companyName || 'Company'));
+  const sellerGstin = String(
+    pick('kl_gstin', 'tn_gstin') ||
+    cfgGet(cfg, 'tally_dispatch_gstin', '') ||
+    cfgGet(cfg, 's_gstin', '') || cfgGet(cfg, 'kl_gstin', '') || cfgGet(cfg, 'tn_gstin', '')
+  ).trim();
+  const sellerAddr1 = pick('kl_address1', 'tn_address1');
+  const sellerAddr2 = pick('kl_address2', 'tn_address2');
+  const sellerLoc   = pick('kl_place', 'tn_place');
+  const sellerPin   = pick('kl_pin', 'tn_pin');
+  const sellerStcd  = sellerGstin.slice(0, 2);
+
+  // Dispatch-from (the depot the cardamom actually leaves). A separate place
+  // from the registered office, which is what makes this a "Bill From –
+  // Dispatch From" transaction in e-way bill terms (transType 3).
+  const dispAddr  = String(cfgGet(cfg, 'kl_dispatch', '')).trim();
+  const dispPlace = String(cfgGet(cfg, 'kl_dispatch_place', '')).trim();
+  const dispPin   = String(cfgGet(cfg, 'kl_dispatch_pin', '')).trim();
+  const dispState = String(cfgGet(cfg, 'kl_dispatch_state', 'Kerala')).trim();
+  const dispGstin = String(
+    cfgGet(cfg, 'tally_dispatch_gstin', '') ||
+    cfgGet(cfg, 's_gstin', '') || cfgGet(cfg, 'kl_gstin', '') || cfgGet(cfg, 'tn_gstin', '')
+  ).trim();
+  const dispatchEnabled = cfgBool(cfg, 'tally_dispatch_from', true);
+
+  // State name → GST state code, for parties the master records by name only.
+  const stcdFromName = (name) => {
+    const n = String(name || '').trim().toLowerCase();
+    if (!n) return '';
+    for (const code in STATES) if (STATES[code].toLowerCase() === n) return code;
+    return '';
+  };
+  // Normalise a state code to the integer the portal wants (1–99). Accepts
+  // '09', 9, '9' alike; returns null for anything outside the master.
+  const stcdNum = (v) => {
+    const n = parseInt(String(v == null ? '' : v).replace(/\D/g, ''), 10);
+    return Number.isFinite(n) && n >= 1 && n <= 99 ? n : null;
+  };
+  const pinNum = (v) => {
+    const n = parseInt(String(v == null ? '' : v).replace(/\D/g, ''), 10);
+    return Number.isFinite(n) && n >= 100000 && n <= 999999 ? n : null;
+  };
+  // dd/mm/yyyy — the portal's only accepted date shape. toTallyDate
+  // normalises whatever the row carries to yyyymmdd first.
+  const toEwbDate = (d) => {
+    const s = toTallyDate(d);
+    return /^\d{8}$/.test(s) ? `${s.slice(6, 8)}/${s.slice(4, 6)}/${s.slice(0, 4)}` : '';
+  };
+  // Text(n) ceilings from the attributes sheet. Addresses and names are cut
+  // to length rather than rejected — a clipped address still identifies the
+  // consignment, a rejected file helps nobody.
+  const cut = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+
+  const dispStcd = stcdNum(dispGstin.slice(0, 2)) || stcdNum(stcdFromName(dispState)) || stcdNum(sellerStcd);
+
+  const billLists = [];
+  const skipped   = [];
+  const warnings  = [];
+  const note = (bucket, row, why) => bucket.push({
+    id: row && row.id != null ? row.id : null,
+    doc: row ? `${row.sale || ''}${row.sale ? '-' : ''}${row.invo || ''}` : '',
+    party: row ? (row.partyName || '') : '',
+    why,
+  });
+
+  // A missing seller GSTIN / PIN is a configuration fault, not a per-invoice
+  // one: nothing can be generated, so say so once instead of once per row.
+  const fromPincode = pinNum(sellerPin);
+  if (!sellerGstin || !stcdNum(sellerStcd) || !fromPincode) {
+    return {
+      json: { version: EWB_JSON_VERSION, billLists: [] },
+      report: {
+        total: rows.length, included: 0, skipped: [], warnings: [],
+        blocked: !sellerGstin
+          ? 'No seller GSTIN configured — set it in Settings → Company before generating e-way bills.'
+          : !fromPincode
+            ? 'No valid 6-digit seller PIN code configured — set it in Settings → Company.'
+            : 'The configured seller GSTIN does not start with a valid GST state code.',
+      },
+    };
+  }
+
+  for (const row of rows) {
+    const sale     = String(row.sale || 'L').toUpperCase();
+    const isExport = sale === 'E';
+    const buyerGstin = String(row.partyGstin || '').trim();
+    const buyerStcd  = stcdNum(buyerGstin.slice(0, 2));
+
+    // ---- itemList ---------------------------------------------------
+    // Tax regime comes from what the INVOICE actually charged, not from the
+    // rate config: an invoice is the document being accompanied, and a rate
+    // the invoice never charged would put the e-way bill out of step with it.
+    const invIgst = Number(row.igst || 0);
+    const invCgst = Number(row.cgst || 0);
+    const invSgst = Number(row.sgst || 0);
+    const isIntra = invIgst <= 0 && (invCgst > 0 || invSgst > 0);
+    const zeroRated = invIgst <= 0 && invCgst <= 0 && invSgst <= 0;
+    const cgstRate = zeroRated ? 0 : (isIntra ? r2(gstRate / 2) : 0);
+    const sgstRate = cgstRate;
+    const igstRate = zeroRated ? 0 : (isIntra ? 0 : gstRate);
+
+    const items = [];
+    const addItem = ({ desc, hsn, qty, unit, amount }) => {
+      const taxableAmount = r2(amount);
+      items.push({
+        itemNo: items.length + 1,
+        productName: cut(desc, 100),
+        productDesc: cut(desc, 100),
+        hsnCode: String(hsn),
+        quantity: r2(qty),
+        qtyUnit: unit,
+        taxableAmount,
+        cgstRate, sgstRate, igstRate,
+        cessRate: 0,
+        cessNonAdvol: 0,
+      });
+    };
+
+    for (const l of (row.lots || [])) {
+      const amount = Number(l.amount || 0);
+      if (amount <= 0) continue;
+      addItem({ desc: Item_Card, hsn: HSN_Card, qty: Number(l.qty || 0), unit: 'KGS', amount });
+    }
+    const gunnyAmt  = Number(row.gunnyAmt || 0);
+    const gunnyBags = Number(row.gunnyBags || 0);
+    if (gunnyAmt > 0) {
+      addItem({ desc: Item_Gunny, hsn: HSN_Gunny, qty: gunnyBags || 1, unit: 'NOS', amount: gunnyAmt });
+    }
+    const totalQty     = (row.lots || []).reduce((s, l) => s + Number(l.qty || 0), 0);
+    const transportAmt = Number(row.transportAmt || 0);
+    if (transportAmt > 0) {
+      addItem({
+        desc: Desc_Transp, hsn: SAC_Transp,
+        qty: totalQty > 0 ? totalQty : 1,
+        unit: totalQty > 0 ? 'KGS' : 'OTH',
+        amount: transportAmt,
+      });
+    }
+    const insuranceAmt = Number(row.insuranceAmt || 0);
+    if (insuranceAmt > 0) {
+      addItem({ desc: Desc_Insur, hsn: SAC_Insur, qty: 0, unit: 'OTH', amount: insuranceAmt });
+    }
+    if (!items.length) { note(skipped, row, 'Nothing taxable on the invoice — no cardamom, gunny, transport or insurance line to move.'); continue; }
+
+    // ---- Parties ----------------------------------------------------
+    // transType names which of the four party slots differ from the default:
+    // 1 Regular, 2 Bill To–Ship To, 3 Bill From–Dispatch From, 4 both.
+    const shipTo      = row.shipTo || null;
+    const hasDispatch = dispatchEnabled && !!dispAddr && !isExport;
+    const hasShipTo   = !!shipTo && !isExport;
+    const transType   = 1 + (hasShipTo ? 1 : 0) + (hasDispatch ? 2 : 0);
+
+    // Bill-from stays the registered office; the ADDRESS half of the block
+    // carries the dispatch depot when the two differ (portal validation 10).
+    const dispLines = hasDispatch ? dispAddr.split(/\r?\n/).map(s => s.trim()).filter(Boolean) : [];
+    const fromAddr1 = hasDispatch ? (dispLines[0] || dispAddr) : sellerAddr1;
+    const fromAddr2 = hasDispatch ? (dispLines[1] || '')       : sellerAddr2;
+    const fromPlace = hasDispatch ? dispPlace : sellerLoc;
+    const fromPin   = hasDispatch ? (pinNum(dispPin) || fromPincode) : fromPincode;
+    const actualFrom = hasDispatch ? (dispStcd || stcdNum(sellerStcd)) : stcdNum(sellerStcd);
+
+    // Bill-to state: the buyer's GSTIN first, then the master's own state
+    // code, then its state NAME. An unregistered buyer has no GSTIN to slice,
+    // which is exactly why buildSalesIspRows now carries buyerStCode.
+    const toStateCode = isExport
+      ? EWB_STATE_OTHER_COUNTRY
+      : (buyerStcd || stcdNum(row.buyerStCode) || stcdNum(stcdFromName(row.buyerState)));
+    if (!toStateCode) {
+      note(skipped, row, 'No buyer state — the buyer has no GSTIN and no state on the master, so the portal has no "to" state code.');
+      continue;
+    }
+    // Ship-to half of the to-block (portal validation 9).
+    const toPincode = hasShipTo
+      ? (pinNum(shipTo.pin) || pinNum(row.pin))
+      : pinNum(row.pin);
+    if (!toPincode) {
+      note(skipped, row, 'No valid 6-digit buyer PIN code — fill it on the Buyers master.');
+      continue;
+    }
+    const actualTo = isExport
+      ? EWB_STATE_OTHER_COUNTRY
+      : (hasShipTo
+          ? (stcdNum(String(shipTo.gstin || '').slice(0, 2)) || stcdNum(shipTo.stCode) ||
+             stcdNum(stcdFromName(shipTo.state)) || toStateCode)
+          : toStateCode);
+
+    // ---- Values -----------------------------------------------------
+    // Tax values are the invoice's own, so the e-way bill and the tax invoice
+    // quote the same figures to the paise.
+    const assVal = r2(items.reduce((s, it) => s + it.taxableAmount, 0));
+    const othVal = r2(Number(row.addlCharge || 0));
+    // Anchor the invoice value to what the customer actually pays, as the
+    // e-invoice export does. The portal allows the summed parts to differ
+    // from it by up to ₹2, which covers the invoice's own round-off; if the
+    // stored total is further out than that (edited or imported blank), fall
+    // back to a self-consistent total so the row is not rejected.
+    const partsSum = r2(assVal + invCgst + invSgst + invIgst + othVal);
+    let totInvValue = r2(r0(Number(row.totalRounded || 0)) + othVal);
+    if (!totInvValue || Math.abs(totInvValue - partsSum) > 2) totInvValue = r0(partsSum);
+
+    const docNo = `${invPrefix}${sale}${separator}${String(row.invo || '').trim()}/${season}`;
+    if (docNo.length > 16) {
+      note(warnings, row, `Document number "${docNo}" is ${docNo.length} characters; the portal's docNo field holds 16. Shorten the Tally prefix or season code in Settings → To Tally.`);
+    }
+    const docDate = toEwbDate(row.date);
+    if (!docDate) { note(skipped, row, 'Invoice has no usable date.'); continue; }
+
+    // ---- Transport --------------------------------------------------
+    // transDistance is mandatory. 0 is the documented way to say "you work it
+    // out" — the portal computes PIN-to-PIN itself — but a figure the office
+    // has already looked up and saved beats the portal's guess, so prefer it.
+    let transDistance = parseInt(String(row.distance || '').replace(/\D/g, ''), 10);
+    if (!Number.isFinite(transDistance) || transDistance <= 0) {
+      transDistance = 0;
+      note(warnings, row, 'No saved route distance — sending 0 so the portal computes it PIN-to-PIN. Save the real distance on the invoice or the route table to control it.');
+    } else if (transDistance > 4000) {
+      note(warnings, row, `Route distance ${transDistance} km exceeds the portal's 4000 km ceiling; capped at 4000.`);
+      transDistance = 4000;
+    }
+
+    const bill = {
+      userGstin: sellerGstin,
+      supplyType: 'O',
+      subSupplyType: isExport ? 3 : 1,
+      subSupplyDesc: '',
+      docType: 'INV',
+      docNo: cut(docNo, 16),
+      docDate,
+      transType,
+      fromGstin: sellerGstin,
+      fromTrdName: cut(sellerName, 100),
+      fromAddr1: cut(fromAddr1, 120),
+      fromAddr2: cut(fromAddr2, 120),
+      fromPlace: cut(fromPlace, 50),
+      fromPincode: fromPin,
+      fromStateCode: stcdNum(sellerStcd),
+      actualFromStateCode: actualFrom,
+      // 'URP' is the portal's own token for an unregistered party, and the
+      // only legal value for an export consignee.
+      toGstin: isExport ? 'URP' : (buyerGstin || 'URP'),
+      toTrdName: cut(hasShipTo ? (shipTo.name || row.partyName) : row.partyName, 100),
+      toAddr1: cut(hasShipTo ? (shipTo.addr1 || row.address) : row.address, 120),
+      toAddr2: cut(hasShipTo ? (shipTo.addr2 || '') : '', 120),
+      toPlace: cut(hasShipTo ? (shipTo.place || row.place) : row.place, 50),
+      toPincode,
+      toStateCode,
+      actualToStateCode: actualTo,
+      totalValue: assVal,
+      cgstValue: r2(invCgst),
+      sgstValue: r2(invSgst),
+      igstValue: r2(invIgst),
+      cessValue: 0,
+      TotNonAdvolVal: 0,
+      OthValue: othVal,
+      totInvValue,
+      transDistance,
+      transporterName: '',
+      transporterId: '',
+      transDocNo: '',
+      transDocDate: '',
+      mainHsnCode: HSN_Card,
+      itemList: items,
+    };
+
+    // PART B — only with a lorry number. Without one the portal issues a
+    // Part-A slip carrying no validity period, which the office completes
+    // when the lorry is assigned. Emitting transMode with an empty vehicleNo
+    // would instead trip "vehicle number is mandatory for road".
+    const vehicleNo = String(row.vehicleNo || '').trim().toUpperCase();
+    if (vehicleNo) {
+      bill.transMode = 1;          // Road. A lorry number means road, export or not.
+      bill.vehicleNo = cut(vehicleNo, 15);
+      bill.vehicleType = 'R';      // Regular; 'O' is over-dimensional cargo.
+    } else {
+      note(warnings, row, 'No lorry number — Part A only, so the slip comes back without a validity period. Set the lorry number (Invoices → Set Lorry No) and re-generate, or complete Part B on the portal.');
+    }
+    if (!buyerGstin && !isExport) {
+      note(warnings, row, 'Buyer has no GSTIN — filed as URP (unregistered).');
+    }
+    if (isExport) {
+      note(warnings, row, 'Export consignment: filed as URP / state 99 "Other Countries". Set the port state and in-country distance on the portal if the goods are handed over short of the border.');
+    }
+
+    billLists.push(bill);
+  }
+
+  return {
+    json: { version: EWB_JSON_VERSION, billLists },
+    report: {
+      total: rows.length,
+      included: billLists.length,
+      skipped,
+      warnings,
+    },
+  };
 }
 
 /**
@@ -5263,6 +5671,7 @@ module.exports = {
   buildSalesAspRows,
   buildIrpJson,
   buildDebitNoteIrpJson,
+  buildEwbJson,
   buildRDPurchaseRows,
   buildURDPurchaseRows,
   buildDebitNoteRows,

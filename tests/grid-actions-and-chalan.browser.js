@@ -21,8 +21,10 @@
 //     DEFINITIONS stay next to the data they describe.
 //
 //  4. DELIVERY CHALLAN — "Form GST Delivery Challan", printed over the lots
-//     ticked in Lot Entry's recent-entries panel and reproduced from the
-//     customer's own stationery. The serial comes out of an install-wide
+//     reproduced from the customer's own stationery. It covers a whole
+//     BRANCH's lots for the trade — a lorry leaves a branch with that
+//     branch's goods on it, so the document must not depend on which rows
+//     were ticked or which page of the panel was loaded. The serial comes out of an install-wide
 //     book: previewed when the form opens, CLAIMED only on print, so
 //     cancelling never burns a number. The goods are TWO lines — the net
 //     weight and the sample weight that travels with it — not one per lot,
@@ -85,6 +87,8 @@ function cleanup() {
     tn_address1: 'REGISTERED STREET', tn_place: 'BODI', tn_pin: '625513',
     gst_goods: '5', commission: '1',
     hsn_cardamom: '09083120', hsn_gunny: '63051040', gunny_rate: '165',
+    spices_board_addr_tn: 'SPICES BOARD E-AUCTION CENTRE\nBODINAYAKANUR\nTHENI-625513',
+    spices_board_addr_kl: 'SPICES BOARD E-AUCTION CENTRE\nPUTTADY\nIDUKKI-685551',
     // The challan's SAMPLES row is lots x (refund + trader sample), the same
     // two boxes the Commission Bill deducts — NOT the lots' own sample_wt.
     sb_refund: '0.400', sb_trader_sample: '0.100',
@@ -104,13 +108,17 @@ function cleanup() {
   } });
   await api('POST', '/api/auctions', { ano: '20', date: '2026-10-17', crop_type: 'ISP' });
   await api('POST', '/api/auctions/1/allocations',
-    { allocations: [{ branch: 'BODI', start_lot: '001', end_lot: '020' }] });
+    { allocations: [{ branch: 'BODI', start_lot: '001', end_lot: '009' },
+                    { branch: 'CUMBUM', start_lot: '010', end_lot: '020' }] });
   await api('POST', '/api/buyers', { buyer: 'B1', buyer1: 'MURUGAN TRADERS', pla: 'CUMBUM',
     gstin: '33ALCPU9807E1Z0', add1: 'MAIN ST' });
   const seller = (await api('POST', '/api/traders',
     { name: 'RAVI PLANTER', tel: '9790744441', ppla: 'BODIMETTU' })).d.trader;
-  for (const lot of ['001', '002']) {
-    await api('POST', '/api/lots', { auction_id: 1, lot_no: lot, trader_id: seller.id, branch: 'BODI',
+  // Two branches, so "the whole branch" has something to leave out — and a
+  // THIRD lot in BODI that is deliberately never ticked, which is what proves
+  // the challan is not reading the selection.
+  for (const [lot, br] of [['001', 'BODI'], ['002', 'BODI'], ['003', 'BODI'], ['010', 'CUMBUM']]) {
+    await api('POST', '/api/lots', { auction_id: 1, lot_no: lot, trader_id: seller.id, branch: br,
       grade: '1', bags: 10, litre: '300', qty: 400, sample_wt: 2.95, gross_wt: 402.95, crpt: 'CR' + lot });
   }
   const lots = (await api('GET', '/api/lots/1')).d || [];
@@ -306,36 +314,59 @@ function cleanup() {
 
   console.log('\n[6] The form pre-fills from settings, and the serial is a PREVIEW');
   const form = await page.evaluate(async () => {
-    // Stand in for a selection: the panel's own lots, ticked.
     const lots = (await (await fetch('/api/lots/1', {
       headers: { Authorization: 'Bearer ' + localStorage.getItem('t') } })).json());
     _le.recentLots = lots;
-    _le.selectedForPrint = new Set(lots.map(l => l.id));
+    // ONE lot ticked, in BODI. The challan must still cover BODI's THREE —
+    // a ticked row only says which branch to open on.
+    _le.selectedForPrint = new Set([lots.find(l => l.lot_no === '001').id]);
     leUpdatePrintToolbar();
     const btnShown = getComputedStyle(document.getElementById('le-chalan-btn')).display;
     await leOpenChalan();
     const v = (id) => document.getElementById(id).value;
     return {
       btnShown,
-      badge: document.getElementById('le-chalan-count').textContent,
+      // No count badge any more: the number depends on the branch picked
+      // inside the dialog, not on the selection.
+      badge: document.getElementById('le-chalan-count'),
       open: document.getElementById('le-chalan-modal').classList.contains('show')
             || getComputedStyle(document.getElementById('le-chalan-modal')).display !== 'none',
       no: v('le-chalan-no'), veh: v('le-chalan-veh'), rate: v('le-chalan-rate'),
       bags: v('le-chalan-bags'), sampleBags: v('le-chalan-sample-bags'),
       qty: v('le-chalan-qty'), sampleQty: v('le-chalan-sample-qty'),
       totals: document.getElementById('le-chalan-totals').textContent,
-      head: v('le-chalan-head'), addr: v('le-chalan-address'),
+      // Both address blocks were removed from the DIALOG — it derives them
+      // from the Branch, and the screen is where they are edited.
+      headGone: !document.getElementById('le-chalan-head'),
+      addrGone: !document.getElementById('le-chalan-address'),
+      receiverGone: !document.getElementById('le-chalan-raddr'),
+      parties: document.getElementById('le-chalan-parties').textContent,
       mode: v('le-chalan-mode'), pos: v('le-chalan-pos'),
-      to: v('le-chalan-to'), raddr: v('le-chalan-raddr'),
-      rstate: v('le-chalan-rstate'), rcode: v('le-chalan-rcode'), rgstin: v('le-chalan-rgstin'),
       date: v('le-chalan-date'), time: v('le-chalan-time'),
+      branch: v('le-chalan-branch'),
+      branchOpts: [...document.getElementById('le-chalan-branch').options].map(o => o.value),
+      lotCount: _le_chalan.lots.length,
       summary: document.getElementById('le-chalan-summary').textContent,
     };
   });
   // The toolbar is a flex row, so the browser blockifies the button's
   // inline-flex to 'flex' — what matters is that it is not 'none'.
-  check('a selection shows the button', form.btnShown !== 'none', form.btnShown);
-  check('…badged with the count', form.badge === '2', form.badge);
+  check('the button shows without needing a selection', form.btnShown !== 'none', form.btnShown);
+  check('…and carries no selection-count badge', form.badge === null, JSON.stringify(form.badge));
+  // The challan is a BRANCH document: one ticked lot in BODI opens it on
+  // BODI, and it then covers every BODI lot in the trade — including the one
+  // nobody ticked.
+  check('it opens on the ticked lot\'s branch', form.branch === 'BODI', form.branch);
+  // The firm's own branches are only the ones with lots in this trade; the
+  // two Spices Board entries are always offered, because the auction samples
+  // go to the Board whatever the branches are doing.
+  check('…listing only branches this trade has lots in, plus the Spices Board',
+        form.branchOpts.join(',') === 'BODI,CUMBUM,__SB_TN__,__SB_KL__',
+        JSON.stringify(form.branchOpts));
+  check('…and covers the WHOLE branch, not the selection',
+        form.lotCount === 3, String(form.lotCount));
+  check('the summary says so', /Every lot in BODI/.test(form.summary) && /3 lots/.test(form.summary),
+        form.summary);
   check('the modal opens', form.open === true, JSON.stringify(form.open));
   // Prefix and suffix WRAP the counter without being part of it, so the
   // financial-year tail can change in April without resetting the number.
@@ -344,42 +375,36 @@ function cleanup() {
   check('the rate pre-fills from its setting', String(form.rate) === '310', form.rate);
   check('the transport mode and place of supply pre-fill',
         form.mode === 'By Road' && form.pos === 'NIRAPPELKADA', JSON.stringify(form));
-  // The address is the BRANCH's own, not the install-wide fallback — a
-  // consignment leaves a particular collection centre.
-  check('the address block comes from the lots\' BRANCH',
-        form.addr.split('\n').length === 2 && /GATE ROAD/.test(form.addr), form.addr);
-  // The heading is what the place IS, and it is its own field — it has to be
-  // able to change places with the receiver's NAME.
-  check('…headed by what that branch is called',
-        form.head === 'CARDAMOM COLLECTION CENTRE', form.head);
-  check('…not the install-wide fallback', !/FALLBACK ADDRESS LINE/.test(form.addr), form.addr);
-  check('bags default to the total on the ticked lots', String(form.bags) === '20', form.bags);
+  // The dialog is the quick print: both address blocks follow from the
+  // Branch and are no longer typed here.
+  check('the dialog carries no address inputs any more',
+        form.headGone && form.addrGone && form.receiverGone, JSON.stringify(form));
+  check('…but it says which two places it will print',
+        /CARDAMOM COLLECTION CENTRE/.test(form.parties) && /RNS SPICES/.test(form.parties),
+        form.parties);
+  check('bags total the whole branch', String(form.bags) === '30', form.bags);
   // Nothing on a lot records how many SAMPLE bags go with the load — the
   // operator counts them onto the lorry — so it starts empty.
   check('sample bags start empty, for the operator to count', form.sampleBags === '', form.sampleBags);
   // Quantity is editable for the same reason Bags is — part of a load can go,
   // and the paper has to say what actually left the gate.
-  check('qty defaults to the ticked lots\' net weight', form.qty === '800.000', form.qty);
+  check('qty totals the whole branch\'s net weight', form.qty === '1200.000', form.qty);
   // 2 lots x (0.400 refund + 0.100 trader) = 1.000 — NOT the 5.900 the lots'
   // own sample_wt columns add up to. The challan moves the AUCTION sample, a
   // fixed draw per lot, which is what the bill prices.
   check('…and the sample qty to lots x (refund + trader sample)',
-        form.sampleQty === '1.000', form.sampleQty);
+        form.sampleQty === '1.500', form.sampleQty);
   // The dialog shows the form's own Total row before it prints: two typed
   // quantities at a typed rate are easy to get wrong.
   check('the dialog shows the total quantity',
-        /Total Qty/.test(form.totals) && /801\.000 kg/.test(form.totals), form.totals);
+        /Total Qty/.test(form.totals) && /1,201\.500 kg/.test(form.totals), form.totals);
   check('…and the total value beside it',
-        /Total Value/.test(form.totals) && /2,48,310\.00/.test(form.totals), form.totals);
+        /Total Value/.test(form.totals) && /3,72,465\.00/.test(form.totals), form.totals);
   // The receiver is the DESTINATION, which repeats — it comes from settings,
   // not from the seller on the lots.
-  check('the receiver block pre-fills from settings',
-        form.to === 'RNS SPICES' && form.rstate === 'KERALA' && form.rcode === '32'
-        && form.rgstin === '32ABFFR1926E1ZK' && /RNS BUILDING/.test(form.raddr),
-        JSON.stringify({ to: form.to, rstate: form.rstate, rcode: form.rcode }));
   check('the date defaults to today', form.date === new Date().toISOString().slice(0, 10), form.date);
   check('…and the time of supply is filled too', /^\d{2}:\d{2}$/.test(form.time), form.time);
-  check('the summary counts what is going', /2 lots/.test(form.summary) && /20 bags/.test(form.summary), form.summary);
+  check('the summary counts what is going', /3 lots/.test(form.summary) && /30 bags/.test(form.summary), form.summary);
 
   // Cancelling must not burn a number out of a paper book.
   const afterCancel = await page.evaluate(async () => {
@@ -391,23 +416,61 @@ function cleanup() {
   check('cancelling the form leaves the counter where it was', String(afterCancel.serial) === '1',
         JSON.stringify(afterCancel));
 
+  console.log('\n[6br] Switching branch re-derives the whole challan');
+  const other = await page.evaluate(() => {
+    const set = (v) => { const el = document.getElementById('le-chalan-branch');
+                         el.value = v; el.dispatchEvent(new Event('change')); };
+    const read = () => ({
+      lots: _le_chalan.lots.length,
+      qty: document.getElementById('le-chalan-qty').value,
+      sampleQty: document.getElementById('le-chalan-sample-qty').value,
+      bags: document.getElementById('le-chalan-bags').value,
+      summary: document.getElementById('le-chalan-summary').textContent,
+      totals: document.getElementById('le-chalan-totals').textContent,
+      parties: document.getElementById('le-chalan-parties').textContent,
+    });
+    // A figure typed under one branch must not survive onto another's paper.
+    document.getElementById('le-chalan-qty').value = '999';
+    set('CUMBUM');
+    const cumbum = read();
+    set('BODI');
+    return { cumbum, backToBodi: read() };
+  });
+  check('the other branch brings its OWN lots', other.cumbum.lots === 1, String(other.cumbum.lots));
+  check('…its own quantities', other.cumbum.qty === '400.000' && other.cumbum.bags === '10',
+        JSON.stringify(other.cumbum));
+  check('…a sample draw over ITS lot count', other.cumbum.sampleQty === '0.500', other.cumbum.sampleQty);
+  check('…and names its own places on the dialog',
+        /CUMBUM CENTRE/.test(other.cumbum.parties), other.cumbum.parties);
+  check('a figure typed under the old branch does not survive the switch',
+        other.cumbum.qty !== '999', other.cumbum.qty);
+  check('the totals strip follows too', /400\.500 kg/.test(other.cumbum.totals), other.cumbum.totals);
+  check('switching back restores the first branch',
+        other.backToBodi.lots === 3 && other.backToBodi.qty === '1200.000'
+        && /CARDAMOM COLLECTION CENTRE/.test(other.backToBodi.parties),
+        JSON.stringify(other.backToBodi));
+
   console.log('\n[6s] The SAMPLES quantity is a per-lot draw, not the lots\' own weights');
   const smp = await page.evaluate(async () => {
     const cfg = await j('/api/company-settings/flat');
-    const two = _le.recentLots;
+    // The challan's own lots — BODI's three — not the panel's window.
+    const branchLots = _le_chalan.lots;
     return {
-      two:  leChalanSampleQty(two, cfg),
-      one:  leChalanSampleQty([two[0]], cfg),
+      two:  leChalanSampleQty(branchLots, cfg),
+      one:  leChalanSampleQty([branchLots[0]], cfg),
       none: leChalanSampleQty([], cfg),
-      zeroed: leChalanSampleQty(two, { sb_refund: '0', sb_trader_sample: '0' }),
+      zeroed: leChalanSampleQty(branchLots, { sb_refund: '0', sb_trader_sample: '0' }),
       // A float product like 3 x 0.45 lands on 1.3499999999999999.
       rounded: leChalanSampleQty([1, 2, 3], { sb_refund: '0.45', sb_trader_sample: '0' }),
-      lotsOwnWeight: two.reduce((t, l) => t + (Number(l.sample_wt) || 0), 0),
+      lotsOwnWeight: branchLots.reduce((t, l) => t + (Number(l.sample_wt) || 0), 0),
     };
   });
-  check('it is lots x (refund + trader sample)', smp.two === 1, JSON.stringify(smp));
+  check('it is lots x (refund + trader sample)', smp.two === 1.5, JSON.stringify(smp));
   check('…so it scales with the number of lots', smp.one === 0.5 && smp.none === 0, JSON.stringify(smp));
-  check('…and is NOT the lots\' own sample_wt', smp.lotsOwnWeight === 5.9 && smp.two !== smp.lotsOwnWeight,
+  // 3 x 2.95 sums to 8.850000000000001 — the same float wobble the helper
+  // rounds away, which is why it rounds.
+  check('…and is NOT the lots\' own sample_wt',
+        Math.round(smp.lotsOwnWeight * 1000) / 1000 === 8.85 && smp.two !== smp.lotsOwnWeight,
         JSON.stringify(smp));
   check('both rates at 0 means no sample at all', smp.zeroed === 0, String(smp.zeroed));
   check('the product is rounded to the gram', smp.rounded === 1.35, String(smp.rounded));
@@ -424,15 +487,15 @@ function cleanup() {
     // not fall back to the lots' sample weight.
     set('le-chalan-sample-qty', '0');
     const afterZero = read();
-    set('le-chalan-qty', '800'); set('le-chalan-sample-qty', '1'); set('le-chalan-rate', '310');
+    set('le-chalan-qty', '1200'); set('le-chalan-sample-qty', '1.5'); set('le-chalan-rate', '310');
     return { afterQty, afterRate, afterZero, restored: read() };
   });
-  check('typing a quantity re-totals it', /1,001\.000 kg/.test(live.afterQty), live.afterQty);
-  check('typing a rate re-values it', /5,00,500\.00/.test(live.afterRate), live.afterRate);
+  check('typing a quantity re-totals it', /1,001\.500 kg/.test(live.afterQty), live.afterQty);
+  check('typing a rate re-values it', /5,00,750\.00/.test(live.afterRate), live.afterRate);
   check('a sample qty of 0 drops the SAMPLES line', /1 line on the challan/.test(live.afterZero)
         && /1,000\.000 kg/.test(live.afterZero), live.afterZero);
   check('…and the figures come back when it is put back',
-        /801\.000 kg/.test(live.restored) && /2 lines/.test(live.restored), live.restored);
+        /1,201\.500 kg/.test(live.restored) && /2 lines/.test(live.restored), live.restored);
 
   console.log('\n[6g] Gunny is different goods on the same form');
   // The same challan carries cardamom out and empty gunny back. Gunny is a
@@ -531,46 +594,11 @@ function cleanup() {
         branchAddr.unknown === '' && branchAddr.blank === '',
         JSON.stringify({ unknown: branchAddr.unknown, blank: branchAddr.blank }));
 
-  console.log('\n[6c] The two address blocks can change places');
-  // A consignment runs from the collection centre to the building one day and
-  // back the next. Both blocks are already typed, so the operator exchanges
-  // them rather than retyping both.
-  const swapped = await page.evaluate(() => {
-    const v = (id) => document.getElementById(id).value;
-    const before = { head: v('le-chalan-head'), addr: v('le-chalan-address'),
-                     to: v('le-chalan-to'), raddr: v('le-chalan-raddr'),
-                     rstate: v('le-chalan-rstate'), rgstin: v('le-chalan-rgstin') };
-    leChalanSwapAddresses();
-    const after = { head: v('le-chalan-head'), addr: v('le-chalan-address'),
-                    to: v('le-chalan-to'), raddr: v('le-chalan-raddr'),
-                    rstate: v('le-chalan-rstate'), rgstin: v('le-chalan-rgstin') };
-    leChalanSwapAddresses();   // and back
-    const again = { head: v('le-chalan-head'), addr: v('le-chalan-address'),
-                    to: v('le-chalan-to'), raddr: v('le-chalan-raddr') };
-    return { before, after, again };
-  });
-  check('the heading changes places with the receiver\'s NAME',
-        swapped.after.head === swapped.before.to && swapped.after.to === swapped.before.head,
-        JSON.stringify({ head: swapped.after.head, to: swapped.after.to }));
-  check('…and the two addresses with each other',
-        swapped.after.addr === swapped.before.raddr && swapped.after.raddr === swapped.before.addr,
-        JSON.stringify({ addr: swapped.after.addr, raddr: swapped.after.raddr }));
-  // State/Code/GSTIN label the receiver BOX, not whichever address is in it —
-  // moving them would quietly relabel the consignee's GST identity.
-  check('the receiver\'s GST identity stays where it is',
-        swapped.after.rstate === swapped.before.rstate && swapped.after.rgstin === swapped.before.rgstin,
-        JSON.stringify({ rstate: swapped.after.rstate, rgstin: swapped.after.rgstin }));
-  check('swapping twice puts everything back',
-        JSON.stringify(swapped.again) === JSON.stringify({
-          head: swapped.before.head, addr: swapped.before.addr,
-          to: swapped.before.to, raddr: swapped.before.raddr }),
-        JSON.stringify(swapped.again));
-
   console.log('\n[7] What the challan prints — the reference form, line for line');
   const doc = await page.evaluate(async () => {
     const cfg = await j('/api/company-settings/flat');
     const o = {
-      lots: _le.recentLots, cfg,
+      lots: _le_chalan.lots, cfg,
       chalanNo: 'DC-7/26-27', date: '2026-10-26', time: '20:20', veh: 'KL69B4797',
       mode: 'By Road', placeOfSupply: 'NIRAPPELKADA', rate: 3000,
       bags: '194', sampleBags: '5',
@@ -604,9 +632,9 @@ function cleanup() {
   // TWO goods lines, not one per lot: the form states what is MOVING.
   check('the goods are two lines, not one per lot', doc.lines.length === 2,
         JSON.stringify(doc.lines.map(l => l.desc)));
-  check('…the net weight first', doc.lines[0].desc === 'CARDAMOM' && doc.lines[0].qty === 800,
+  check('…the net weight first', doc.lines[0].desc === 'CARDAMOM' && doc.lines[0].qty === 1200,
         JSON.stringify(doc.lines[0]));
-  check('…then the SAMPLES that travel with it', doc.lines[1].desc === 'SAMPLES' && doc.lines[1].qty === 1,
+  check('…then the SAMPLES that travel with it', doc.lines[1].desc === 'SAMPLES' && doc.lines[1].qty === 1.5,
         JSON.stringify(doc.lines[1]));
   check('both carry the canonical HSN, not a challan-only copy of it',
         doc.lines.every(l => l.hsn === '09083120'), JSON.stringify(doc.lines.map(l => l.hsn)));
@@ -614,16 +642,16 @@ function cleanup() {
         /S\.No\./.test(h) && /Description of<br>Goods/.test(h) && />HSN</.test(h)
         && />Code</.test(h) && />Qty</.test(h) && />Rate</.test(h) && />Taxable Value</.test(h), 'header');
   // Indian grouping and three decimals on weight, like the reference.
-  check('weights print to three decimals', /800\.000/.test(h) && /1\.000/.test(h), 'qty format');
-  check('values print in Indian grouping', /24,00,000\.00/.test(h), '800 x 3000 = 24,00,000.00');
+  check('weights print to three decimals', /1,200\.000/.test(h) && /1\.500/.test(h), 'qty format');
+  check('values print in Indian grouping', /36,00,000\.00/.test(h), '1200 x 3000 = 36,00,000.00');
   check('the total line adds both goods lines',
-        doc.total === 2403000 && /24,03,000\.00/.test(h), String(doc.total));
-  check('…and the qty total too', /801\.000/.test(h), '800 + 1');
+        doc.total === 3604500 && /36,04,500\.00/.test(h), String(doc.total));
+  check('…and the qty total too', /1,201\.500/.test(h), '1200 + 1.5');
 
   // The words come from the server's amountToWords — the same wording every
   // invoice on this install carries, not a second copy of the rules.
   check('the amount in words is the shared one',
-        doc.words === 'Rupees Twenty Four Lakh Three Thousand Only', doc.words);
+        doc.words === 'Rupees Thirty Six Lakh Four Thousand Five Hundred Only', doc.words);
   check('…and is printed under the table', /Challan Total Value \(In Words\)/.test(h) && h.includes(doc.words));
 
   check('the Remarks box prints its configured line',
@@ -664,6 +692,121 @@ function cleanup() {
       { headers: { Authorization: 'Bearer ' + tok } })).json();
   });
   check('the prefix is applied to the printed number', prefixed.no === 'DC/3/26-27', JSON.stringify(prefixed));
+
+  console.log('\n[9] The Delivery Chalan SCREEN');
+  // The full version of the dialog: every field, BOTH address blocks (which
+  // the dialog derives and cannot edit), and the paper rendered beside the
+  // form from the same builder the printer gets.
+  await page.evaluate(() => go('delivery-chalan'));
+  await page.waitForFunction(() => {
+    const e = document.getElementById('dc-branch');
+    return e && e.options.length > 0 && document.getElementById('dc-qty').value !== '';
+  }, { timeout: 15000 });
+  const screen = await page.evaluate(() => {
+    const v = (id) => (document.getElementById(id) || {}).value;
+    const fr = document.getElementById('dc-preview');
+    return {
+      reachable: !!document.querySelector('#nav-src .side-item[data-tab="delivery-chalan"]'),
+      inNavGroups: NAV_GROUPS.some(g => (g.items || []).some(i => i.tab === 'delivery-chalan')),
+      sticky: getComputedStyle(document.querySelector('#tc-delivery-chalan .cardhead-sticky')).position,
+      branch: v('dc-branch'), qty: v('dc-qty'), bags: v('dc-bags'),
+      head: v('dc-head'), addr: v('dc-address'), to: v('dc-to'), raddr: v('dc-raddr'),
+      previewHtml: fr && fr.contentDocument ? fr.contentDocument.body.innerHTML : '',
+    };
+  });
+  check('it is reachable from the sidebar', screen.reachable === true, String(screen.reachable));
+  // A .side-item alone leaves a screen unreachable — #nav-src is hidden.
+  check('…and is in NAV_GROUPS, not just #nav-src', screen.inNavGroups === true, String(screen.inNavGroups));
+  check('its header is pinned', screen.sticky === 'sticky', screen.sticky);
+  check('it opens on a branch with lots', screen.branch === 'BODI', screen.branch);
+  check('…covering that whole branch', screen.qty === '1200.000' && screen.bags === '30',
+        JSON.stringify({ qty: screen.qty, bags: screen.bags }));
+  check('BOTH address blocks are editable here, seeded from the branch',
+        screen.head === 'CARDAMOM COLLECTION CENTRE' && /GATE ROAD/.test(screen.addr)
+        && screen.to === 'RNS SPICES' && /RNS BUILDING/.test(screen.raddr),
+        JSON.stringify({ head: screen.head, to: screen.to }));
+  // The preview IS the paper — same builder, in an iframe so the app's own
+  // stylesheet cannot repaint it.
+  check('the preview renders the document inline',
+        /Form GST Delivery Challan/.test(screen.previewHtml)
+        && /CARDAMOM COLLECTION CENTRE/.test(screen.previewHtml), screen.previewHtml.slice(0, 200));
+  check('…with the branch\'s figures on it', /1,200\.000/.test(screen.previewHtml),
+        'expected the branch qty');
+
+  const typed = await page.evaluate(async () => {
+    const set = (id, val) => { const el = document.getElementById(id); el.value = val;
+                               el.dispatchEvent(new Event('input')); };
+    set('dc-veh', 'TN 99 ZZ 0001');
+    set('dc-qty', '1000');
+    await new Promise(r => setTimeout(r, 250));
+    return document.getElementById('dc-preview').contentDocument.body.innerHTML;
+  });
+  check('typing re-renders the paper', /TN 99 ZZ 0001/.test(typed) && /1,000\.000/.test(typed),
+        'expected the typed vehicle and qty');
+
+  // Swap lives here, where both blocks exist.
+  const swapped = await page.evaluate(() => {
+    const v = (id) => document.getElementById(id).value;
+    const before = { head: v('dc-head'), to: v('dc-to'), addr: v('dc-address'), raddr: v('dc-raddr'),
+                     rgstin: v('dc-rgstin') };
+    leChalanSwapAddresses('dc-');
+    const after = { head: v('dc-head'), to: v('dc-to'), addr: v('dc-address'), raddr: v('dc-raddr'),
+                    rgstin: v('dc-rgstin') };
+    leChalanSwapAddresses('dc-');
+    return { before, after };
+  });
+  check('the heading changes places with the receiver\'s name',
+        swapped.after.head === swapped.before.to && swapped.after.to === swapped.before.head,
+        JSON.stringify(swapped.after));
+  check('…and the addresses with each other',
+        swapped.after.addr === swapped.before.raddr, JSON.stringify(swapped.after));
+  check('the receiver\'s GST identity stays put',
+        swapped.after.rgstin === swapped.before.rgstin, swapped.after.rgstin);
+
+  console.log('\n[10] Spices Board — the auction samples, not a branch load');
+  const sb = await page.evaluate(async () => {
+    const el = document.getElementById('dc-branch');
+    el.value = '__SB_TN__'; el.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 300));
+    const v = (id) => (document.getElementById(id) || {}).value;
+    return {
+      lots: _dc.lots.length, sampleOnly: _dc.sampleOnly,
+      qty: v('dc-qty'), bags: v('dc-bags'), sampleQty: v('dc-sample-qty'),
+      to: v('dc-to'), raddr: v('dc-raddr'), rstate: v('dc-rstate'), rcode: v('dc-rcode'),
+      goodsDisabled: document.getElementById('dc-goods').disabled,
+      qtyShown: getComputedStyle(document.getElementById('dc-qty').closest('.fg')).display,
+      html: document.getElementById('dc-preview').contentDocument.body.innerHTML,
+      lines: leChalanLines(dcCollect()),
+    };
+  });
+  // The samples are drawn from EVERY lot in the trade, not one branch's.
+  check('it covers every lot in the trade', sb.lots === 4, String(sb.lots));
+  check('…as a SAMPLES-only consignment', sb.sampleOnly === true && sb.lines.length === 1
+        && sb.lines[0].desc === 'SAMPLES', JSON.stringify(sb.lines));
+  check('…so there is no net-weight line and no kilo field',
+        sb.qty === '' && sb.qtyShown === 'none', JSON.stringify({ qty: sb.qty, shown: sb.qtyShown }));
+  check('the sample draw is over all four lots', sb.sampleQty === '2.000', sb.sampleQty);
+  // Bags is left for the operator: nothing records how many sample bags were
+  // made up.
+  check('bags are left for the operator to count', sb.bags === '', JSON.stringify(sb.bags));
+  check('Goods is locked — samples are neither a cardamom nor a gunny load',
+        sb.goodsDisabled === true, String(sb.goodsDisabled));
+  check('the RECEIVER becomes the Spices Board, at its configured address',
+        sb.to === 'SPICES BOARD' && /BODINAYAKANUR/.test(sb.raddr), JSON.stringify({ to: sb.to }));
+  check('…with that state and its GST code', sb.rstate === 'TAMIL NADU' && sb.rcode === '33',
+        JSON.stringify({ state: sb.rstate, code: sb.rcode }));
+  check('the paper shows one SAMPLES line', /SAMPLES/.test(sb.html) && !/>CARDAMOM</.test(sb.html));
+  check('…and the Board as consignee', /SPICES BOARD/.test(sb.html));
+  const sbKl = await page.evaluate(async () => {
+    const el = document.getElementById('dc-branch');
+    el.value = '__SB_KL__'; el.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 200));
+    const v = (id) => document.getElementById(id).value;
+    return { raddr: v('dc-raddr'), rstate: v('dc-rstate'), rcode: v('dc-rcode') };
+  });
+  check('the Kerala entry brings the Kerala address and code',
+        /PUTTADY/.test(sbKl.raddr) && sbKl.rstate === 'KERALA' && sbKl.rcode === '32',
+        JSON.stringify(sbKl));
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log('--- server log tail ---\n' + srvLog.split('\n').slice(-15).join('\n'));

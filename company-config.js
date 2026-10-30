@@ -194,6 +194,16 @@ const DEFAULTS = [
   { key: 'br8_addr', value: '', category: 'branches', label: 'Branch 8 Address', type: 'textarea' },
   { key: 'br9_addr', value: '', category: 'branches', label: 'Branch 9 Address', type: 'textarea' },
 
+  // The SPICES BOARD e-auction centres, one per state. Not branches of this
+  // firm — they are where the auction SAMPLES are sent, which is a delivery
+  // challan of its own (Branch -> "Spices Board (TN)" / "(KL)"). Kept here
+  // beside the branch addresses because they are the same kind of thing: a
+  // place this office despatches goods to, written once and printed often.
+  { key: 'spices_board_addr_tn', value: '', category: 'branches',
+    label: 'Spices Board Address (TN)', type: 'textarea' },
+  { key: 'spices_board_addr_kl', value: '', category: 'branches',
+    label: 'Spices Board Address (KL)', type: 'textarea' },
+
   // ── RATES ──────────────────────────────────────────────────
   // deduction1 / deduction2 / refund (Sample Refund Kgs) intentionally REMOVED.
   // sb_refund retained — distinct from removed `refund` field.
