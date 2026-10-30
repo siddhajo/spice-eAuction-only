@@ -7845,9 +7845,16 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <!-- The two address blocks are NOT typed here. Both follow from the
              Branch above — its own address under the company name, and the
              configured receiver (or the Spices Board, when one is picked) in
-             Details of Receiver. The Delivery Chalan SCREEN is where they can
-             be edited and previewed; this dialog is the quick print. -->
-        <p id="le-chalan-parties" style="font-size:12px;color:var(--text3);margin:10px 0 0;line-height:1.6"></p>
+             Details of Receiver. Swap turns the pair round for the lorry
+             coming back: the same two places, the other way up. -->
+        <div style="display:flex;gap:10px;align-items:baseline;margin:10px 0 0">
+          <p id="le-chalan-parties" style="font-size:12px;color:var(--text3);margin:0;line-height:1.6;flex:1"></p>
+          <button type="button" class="btn btn-o" id="le-chalan-swap" onclick="leChalanToggleSwap()"
+                  style="font-size:12px;padding:5px 12px;white-space:nowrap"
+                  title="Turn the pair round — the consignee's place under the company name and this branch as consignee">
+            ⇅ Swap with receiver
+          </button>
+        </div>
 
         <div id="le-chalan-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin:12px 0 0"></div>
 
@@ -9358,7 +9365,15 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                  this form shows exactly what they will print. They are
                  maintained in Settings: Branches & Contacts for the branches
                  and the two Spices Board addresses, Lot Entry for the
-                 receiver. -->
+                 receiver. Swap turns the pair round for the return trip. -->
+            <div style="display:flex;gap:10px;align-items:baseline;margin:12px 0 0">
+              <p id="dc-parties" style="font-size:12px;color:var(--text3);margin:0;line-height:1.6;flex:1"></p>
+              <button type="button" class="btn btn-o" id="dc-swap" onclick="dcToggleSwap()"
+                      style="font-size:12px;padding:5px 12px;white-space:nowrap"
+                      title="Turn the pair round — the consignee's place under the company name and this branch as consignee">
+                ⇅ Swap with receiver
+              </button>
+            </div>
           </div>
 
           <!-- RIGHT: the document itself, rendered from the same builder the
@@ -27818,7 +27833,9 @@ async function leOpenChalan() {
   const err = document.getElementById('le-chalan-err');
   if (err) { err.style.display = 'none'; err.textContent = ''; }
 
-  _le_chalan = { all, lots: [], cfg, auction, previewNo };
+  // Each challan starts pointing outwards; Swap is the exception the
+  // operator asks for, not a setting that persists into the next one.
+  _le_chalan = { all, lots: [], cfg, auction, previewNo, swapped: false };
   leChalanBranchChanged();       // lots of the chosen branch, and everything off them
   leChalanGoodsChanged();        // labels + visibility + the first total
   showModal('le-chalan-modal');
@@ -27867,14 +27884,8 @@ function leChalanBranchChanged() {
   document.querySelectorAll('#le-chalan-modal .le-ch-netonly')
     .forEach(el => { el.style.display = sb ? 'none' : ''; });
 
-  const parties = leChalanPartyBlocks(cfg, branch);
-  const pEl = document.getElementById('le-chalan-parties');
-  if (pEl) {
-    const firstLine = (t) => String(t || '').split(/\r?\n/)[0].trim();
-    pEl.innerHTML = `<strong>From</strong> ${esc(parties.heading || firstLine(parties.address) || 'company address')}`
-      + ` &nbsp;·&nbsp; <strong>To</strong> ${esc(parties.receiver.name || firstLine(parties.receiver.address) || '—')}`
-      + ` <span style="opacity:.75">— edit these on the Delivery Chalan screen</span>`;
-  }
+  leChalanPaintParties('le-chalan-parties', 'le-chalan-swap',
+    leChalanPartyBlocks(cfg, branch, _le_chalan.swapped), _le_chalan.swapped);
 
   const sum = document.getElementById('le-chalan-summary');
   if (sum) {
@@ -27919,10 +27930,37 @@ function leChalanGoods() {
   return (el && el.value === 'gunny') ? 'gunny' : 'cardamom';
 }
 
-// (The address blocks used to be swappable, back when a surface let them be
-// typed. Both now follow from the Branch on both surfaces, so there is
-// nothing to exchange: a consignment running the other way is a different
-// Branch, which is the control that already says so.)
+// Swap, on either surface. Neither types the address blocks any more, so this
+// flips a DIRECTION and everything downstream re-derives from it — see
+// _leChalanDirect for what moves and what deliberately does not.
+//
+// One shared painter for the "From … To …" line and the button's pressed
+// look, so the two surfaces cannot describe the same state differently.
+function leChalanPaintParties(hostId, btnId, parties, swapped) {
+  const el = document.getElementById(hostId);
+  if (el) {
+    const firstLine = (t) => String(t || '').split(/\r?\n/)[0].trim();
+    el.innerHTML = `<strong>From</strong> ${esc(parties.heading || firstLine(parties.address) || 'company address')}`
+      + ` &nbsp;·&nbsp; <strong>To</strong> ${esc(parties.receiver.name || firstLine(parties.receiver.address) || '—')}`;
+  }
+  const btn = document.getElementById(btnId);
+  if (btn) {
+    btn.classList.toggle('btn-g', !!swapped);
+    btn.classList.toggle('btn-o', !swapped);
+    btn.title = swapped
+      ? 'Turned round — press again to put it back'
+      : "Turn the pair round — the consignee's place under the company name and this branch as consignee";
+  }
+}
+function leChalanToggleSwap() {
+  if (!_le_chalan) return;
+  _le_chalan.swapped = !_le_chalan.swapped;
+  leChalanBranchChanged();        // re-derives both blocks and repaints the line
+}
+function dcToggleSwap() {
+  _dc.swapped = !_dc.swapped;
+  dcBranchChanged();
+}
 
 async function leConfirmChalan() {
   if (!_le_chalan) return;
@@ -27967,7 +28005,7 @@ async function leConfirmChalan() {
     sampleBags: val('le-chalan-sample-bags'),
     sampleOnly: !!_le_chalan.sampleOnly,
     // Both ends follow from the Branch — they are not typed in this dialog.
-    ...leChalanPartyBlocks(_le_chalan.cfg || {}, val('le-chalan-branch')),
+    ...leChalanPartyBlocks(_le_chalan.cfg || {}, val('le-chalan-branch'), _le_chalan.swapped),
   };
   // Amount in words from the SERVER's amountToWords — the same wording every
   // invoice on this install carries. See GET /api/amount-words.
@@ -28030,18 +28068,35 @@ function leChalanBranchAddress(cfg, branch) {
 const LE_SB_TN = '__SB_TN__', LE_SB_KL = '__SB_KL__';
 function leChalanIsSB(v) { return v === LE_SB_TN || v === LE_SB_KL; }
 
+// The company's own registered address, as the challan prints it — state-aware,
+// because an install trading from two states must not put the wrong office on
+// a gate pass. One definition: it is both the masthead's fallback and, on a
+// swapped challan, the consignee's address.
+function leChalanCompanyAddress(cfg) {
+  cfg = cfg || {};
+  const isKL = String(cfg.business_state || '').toUpperCase().includes('KERALA');
+  const pick = (k) => isKL ? (cfg['kl_' + k] || cfg['tn_' + k] || '') : (cfg['tn_' + k] || '');
+  return [pick('address1'), pick('address2'),
+          [pick('place'), pick('pin')].filter(Boolean).join(' - ')].filter(Boolean).join('\n');
+}
+function leChalanCompanyGstin(cfg) {
+  cfg = cfg || {};
+  const isKL = String(cfg.business_state || '').toUpperCase().includes('KERALA');
+  return String((isKL ? cfg.kl_gstin : cfg.tn_gstin) || cfg.tn_gstin || cfg.kl_gstin || '').trim();
+}
+
 // Who is at each end of the challan, derived from that one choice.
 //
 // A normal branch: its own address under the company name, and the configured
 // receiver. A Spices Board entry: the Board's address for that state becomes
 // the RECEIVER, and the sender falls back to the company's own registered
 // address, because the samples are the trade's, not one branch's.
-function leChalanPartyBlocks(cfg, branch) {
+function leChalanPartyBlocks(cfg, branch, swapped) {
   cfg = cfg || {};
   if (leChalanIsSB(branch)) {
     const kl = branch === LE_SB_KL;
     const gstin = String((kl ? cfg.spices_board_gstin_kl : cfg.spices_board_gstin_tn) || '').trim();
-    return {
+    return _leChalanDirect({
       heading: '', address: '',
       receiver: {
         name: 'SPICES BOARD',
@@ -28055,10 +28110,10 @@ function leChalanPartyBlocks(cfg, branch) {
         code:  /^\d{2}/.test(gstin) ? gstin.slice(0, 2) : (kl ? '32' : '33'),
         gstin,
       },
-    };
+    }, cfg, swapped);
   }
   const blk = leChalanBranchBlock(cfg, branch);
-  return {
+  return _leChalanDirect({
     heading: blk.heading || cfg.chalan_heading || '',
     address: blk.address || cfg.chalan_address || '',
     receiver: {
@@ -28067,6 +28122,37 @@ function leChalanPartyBlocks(cfg, branch) {
       state:   cfg.chalan_receiver_state   || '',
       code:    cfg.chalan_receiver_code    || '',
       gstin:   cfg.chalan_receiver_gstin   || '',
+    },
+  }, cfg, swapped);
+}
+
+// Turn the pair round for a consignment running the other way — the lorry
+// coming BACK, which is the same two places in the opposite roles.
+//
+// Neither block is typed any more, so this is a DIRECTION rather than a
+// shuffling of fields: the consignee's place moves under the company name and
+// the sender's becomes the consignee. The GST identity does NOT travel with
+// the name it used to sit under — the end that is now the consignee is this
+// firm's own branch, so it takes the COMPANY's GSTIN and the state code out of
+// that GSTIN. Carrying the other party's GSTIN across would put one firm's
+// registration against another firm's name, which is worse than leaving it
+// blank.
+function _leChalanDirect(base, cfg, swapped) {
+  if (!swapped) return base;
+  const coGstin = leChalanCompanyGstin(cfg);
+  const isKL = String(cfg.business_state || '').toUpperCase().includes('KERALA');
+  return {
+    heading: base.receiver.name,
+    address: base.receiver.address,
+    receiver: {
+      name:    base.heading || cfg.trade_name || cfg.short_name || '',
+      // A Spices Board challan has no sender block of its own (it prints the
+      // registered address), so swapped it is that address that becomes the
+      // consignee's.
+      address: base.address || leChalanCompanyAddress(cfg),
+      state:   isKL ? 'KERALA' : 'TAMIL NADU',
+      code:    /^\d{2}/.test(coGstin) ? coGstin.slice(0, 2) : '',
+      gstin:   coGstin,
     },
   };
 }
@@ -28188,8 +28274,7 @@ function leBuildChalanHtml(o) {
   // The typed block REPLACES the registered address: the collection centre
   // the goods leave from is usually not the registered office, which is the
   // whole reason that block is configurable.
-  const addr = o.address ? lines(o.address)
-    : [pick('address1'), pick('address2'), [pick('place'), pick('pin')].filter(Boolean).join(' - ')].filter(Boolean);
+  const addr = lines(o.address || leChalanCompanyAddress(cfg));
   // The heading leads the block — what the place IS, above where it is. Same
   // face as the lines under it, which is how the reference form prints it.
   const headed = [String(o.heading || '').trim(), ...addr].filter(Boolean);
@@ -28393,7 +28478,7 @@ function leBuildChalanHtml(o) {
 // beside the form as it is typed. Every figure still goes through the SAME
 // leChalanLines() / leBuildChalanHtml() the printer gets, so the preview is
 // the paper and not an impression of it.
-const _dc = { all: [], lots: [], cfg: {}, auction: null, sampleOnly: false };
+const _dc = { all: [], lots: [], cfg: {}, auction: null, sampleOnly: false, swapped: false };
 
 async function loadDeliveryChalan() {
   try { _dc.cfg = await j('/api/company-settings/flat'); refreshMaskCfg(_dc.cfg); } catch (_) { _dc.cfg = {}; }
@@ -28482,6 +28567,8 @@ function dcBranchChanged() {
   const goodsEl = document.getElementById('dc-goods');
   if (goodsEl) { if (sb) goodsEl.value = 'cardamom'; goodsEl.disabled = sb; }
 
+  leChalanPaintParties('dc-parties', 'dc-swap',
+    leChalanPartyBlocks(cfg, branch, _dc.swapped), _dc.swapped);
   dcGoodsChanged();
 }
 
@@ -28522,7 +28609,7 @@ function dcCollect() {
     qty: numOrNull('dc-qty'), sampleQty: numOrNull('dc-sample-qty'),
     bags: v('dc-bags'), sampleBags: v('dc-sample-bags'),
     // Both ends follow from the Branch — see the note in the markup.
-    ...leChalanPartyBlocks(_dc.cfg || {}, String((document.getElementById('dc-branch') || {}).value || '')),
+    ...leChalanPartyBlocks(_dc.cfg || {}, String((document.getElementById('dc-branch') || {}).value || ''), _dc.swapped),
   };
 }
 

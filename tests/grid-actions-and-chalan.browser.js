@@ -84,6 +84,7 @@ function cleanup() {
   // rows — a header order read off an empty table proves nothing.
   await api('PUT', '/api/company-settings', { settings: {
     br1: 'BODI', trade_name: 'RNS SPICES', business_state: 'TAMIL NADU',
+    tn_gstin: '33AAACR1234A1Z9',
     tn_address1: 'REGISTERED STREET', tn_place: 'BODI', tn_pin: '625513',
     gst_goods: '5', commission: '1',
     hsn_cardamom: '09083120', hsn_gunny: '63051040', gunny_rate: '165',
@@ -341,6 +342,7 @@ function cleanup() {
       headGone: !document.getElementById('le-chalan-head'),
       addrGone: !document.getElementById('le-chalan-address'),
       receiverGone: !document.getElementById('le-chalan-raddr'),
+      swapBtn: !!document.getElementById('le-chalan-swap'),
       parties: document.getElementById('le-chalan-parties').textContent,
       mode: v('le-chalan-mode'), pos: v('le-chalan-pos'),
       date: v('le-chalan-date'), time: v('le-chalan-time'),
@@ -380,6 +382,7 @@ function cleanup() {
   // Branch and are no longer typed here.
   check('the dialog carries no address inputs any more',
         form.headGone && form.addrGone && form.receiverGone, JSON.stringify(form));
+  check('…but it does carry Swap', form.swapBtn === true, String(form.swapBtn));
   check('…but it says which two places it will print',
         /CARDAMOM COLLECTION CENTRE/.test(form.parties) && /RNS SPICES/.test(form.parties),
         form.parties);
@@ -716,7 +719,7 @@ function cleanup() {
       headGone: !document.getElementById('dc-head'),
       addrGone: !document.getElementById('dc-address'),
       receiverGone: !document.getElementById('dc-raddr'),
-      swapGone: !document.getElementById('dc-swap'),
+      swapBtn: !!document.getElementById('dc-swap'),
       previewHtml: fr && fr.contentDocument ? fr.contentDocument.body.innerHTML : '',
     };
   });
@@ -728,8 +731,8 @@ function cleanup() {
   check('…covering that whole branch', screen.qty === '1200.000' && screen.bags === '30',
         JSON.stringify({ qty: screen.qty, bags: screen.bags }));
   check('neither address block is typed here either',
-        screen.headGone && screen.addrGone && screen.receiverGone && screen.swapGone,
-        JSON.stringify(screen));
+        screen.headGone && screen.addrGone && screen.receiverGone, JSON.stringify(screen));
+  check('…and Swap is here too', screen.swapBtn === true, String(screen.swapBtn));
   // They are not gone from the DOCUMENT — they are derived, and the preview
   // beside the form is where the operator sees them.
   check('…but both still print, from the branch and the settings',
@@ -821,6 +824,71 @@ function cleanup() {
   check('the Kerala entry brings the Kerala address, GSTIN and code',
         /PUTTADY/.test(sbKl) && /KERALA/.test(sbKl) && /: 32</.test(sbKl)
         && /32AAAGS1234F1Z7/.test(sbKl), sbKl.slice(0, 300));
+
+  console.log('\n[11] Swap turns the pair round, on both surfaces');
+  // Neither surface types the address blocks, so Swap is a DIRECTION: the
+  // consignee's place moves under the company name and this branch becomes
+  // the consignee — the lorry coming back.
+  const sw = await page.evaluate(async () => {
+    const el = document.getElementById('dc-branch');
+    el.value = 'BODI'; el.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 300));
+    const read = () => ({ parties: document.getElementById('dc-parties').textContent,
+                          html: document.getElementById('dc-preview').contentDocument.body.innerHTML,
+                          cls: document.getElementById('dc-swap').className });
+    const out = { before: read() };
+    dcToggleSwap(); await new Promise(r => setTimeout(r, 300));
+    out.after = read();
+    dcToggleSwap(); await new Promise(r => setTimeout(r, 300));
+    out.back = read();
+    return out;
+  });
+  check('it starts pointing outwards — the branch sends',
+        /From[\s\S]{0,40}CARDAMOM COLLECTION CENTRE/.test(sw.before.parties)
+        && /To[\s\S]{0,30}RNS SPICES/.test(sw.before.parties), sw.before.parties);
+  check('swapped, the two change ends',
+        /From[\s\S]{0,30}RNS SPICES/.test(sw.after.parties)
+        && /To[\s\S]{0,40}CARDAMOM COLLECTION CENTRE/.test(sw.after.parties), sw.after.parties);
+  // …and on the PAPER, not just in the summary line.
+  check('…on the paper too', (() => {
+    const mast = (sw.after.html.match(/class="coaddr">([\s\S]*?)<\/div>/) || [])[1] || '';
+    const rcv  = (sw.after.html.match(/Details of Receiver[\s\S]{0,400}/) || [''])[0];
+    return /RNS BUILDING/.test(mast) && /CARDAMOM COLLECTION CENTRE/.test(rcv);
+  })(), sw.after.html.slice(0, 400));
+  // The GST identity does NOT travel with the name it used to sit under: the
+  // consignee is now this firm's own branch, so it takes the COMPANY's GSTIN.
+  // The whole receiver box — Name through GSTIN — not a window too short to
+  // reach the line being asserted.
+  const rcvBox = (h) => (h.match(/Details of Receiver[\s\S]*?<\/table>/) || [''])[0];
+  check('the consignee takes the COMPANY\'s GSTIN…',
+        /33AAACR1234A1Z9/.test(rcvBox(sw.after.html)), rcvBox(sw.after.html).slice(0, 300));
+  check('…not the GSTIN of the party that used to be there',
+        !/32ABFFR1926E1ZK/.test(rcvBox(sw.after.html)), 'the old consignee GSTIN must not follow the swap');
+  // Un-swapped it is the configured receiver's own, as before.
+  check('…which is the configured one again when it points outwards',
+        /32ABFFR1926E1ZK/.test(rcvBox(sw.before.html)), rcvBox(sw.before.html).slice(0, 300));
+  check('the button shows it is turned round', /btn-g/.test(sw.after.cls) && !/btn-g/.test(sw.before.cls),
+        sw.after.cls);
+  check('pressing it again puts everything back',
+        sw.back.parties === sw.before.parties && !/btn-g/.test(sw.back.cls), sw.back.parties);
+
+  // The dialog has the same control, and each challan starts un-swapped.
+  const swDlg = await page.evaluate(async () => {
+    hideModal('le-chalan-modal');
+    await leOpenChalan();
+    const before = document.getElementById('le-chalan-parties').textContent;
+    leChalanToggleSwap();
+    const after = document.getElementById('le-chalan-parties').textContent;
+    hideModal('le-chalan-modal');
+    await leOpenChalan();                       // a fresh challan
+    const reopened = document.getElementById('le-chalan-parties').textContent;
+    hideModal('le-chalan-modal');
+    return { before, after, reopened };
+  });
+  check('the dialog swaps the same way', /From[\s\S]{0,30}RNS SPICES/.test(swDlg.after),
+        swDlg.after);
+  check('…and each new challan starts pointing outwards again',
+        swDlg.reopened === swDlg.before, swDlg.reopened);
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log('--- server log tail ---\n' + srvLog.split('\n').slice(-15).join('\n'));
