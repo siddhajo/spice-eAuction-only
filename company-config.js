@@ -163,6 +163,20 @@ const DEFAULTS = [
   { key: 'br6_tel',  value: '', category: 'branches', label: 'Branch 6 Mobile', type: 'text' },
   { key: 'br7_tel',  value: '', category: 'branches', label: 'Branch 7 Mobile', type: 'text' },
   { key: 'br8_tel',  value: '', category: 'branches', label: 'Branch 8 Mobile', type: 'text' },
+  // Each branch's own POSTAL ADDRESS, one line per line. Printed under the
+  // company name on the Delivery Challan for goods leaving THAT branch — the
+  // collection centre a consignment goes out from is a different place from
+  // the registered office, and from every other branch. Blank falls back to
+  // the install-wide `chalan_address`, then to the company's own address.
+  { key: 'br1_addr', value: '', category: 'branches', label: 'Branch 1 Address', type: 'textarea' },
+  { key: 'br2_addr', value: '', category: 'branches', label: 'Branch 2 Address', type: 'textarea' },
+  { key: 'br3_addr', value: '', category: 'branches', label: 'Branch 3 Address', type: 'textarea' },
+  { key: 'br4_addr', value: '', category: 'branches', label: 'Branch 4 Address', type: 'textarea' },
+  { key: 'br5_addr', value: '', category: 'branches', label: 'Branch 5 Address', type: 'textarea' },
+  { key: 'br6_addr', value: '', category: 'branches', label: 'Branch 6 Address', type: 'textarea' },
+  { key: 'br7_addr', value: '', category: 'branches', label: 'Branch 7 Address', type: 'textarea' },
+  { key: 'br8_addr', value: '', category: 'branches', label: 'Branch 8 Address', type: 'textarea' },
+  { key: 'br9_addr', value: '', category: 'branches', label: 'Branch 9 Address', type: 'textarea' },
 
   // ── RATES ──────────────────────────────────────────────────
   // deduction1 / deduction2 / refund (Sample Refund Kgs) intentionally REMOVED.
@@ -780,12 +794,14 @@ const DEFAULTS = [
   { key: 'chalan_next_no',   value: '1',  category: 'lot_entry', label: 'Delivery Challan: Next Serial No', type: 'number' },
   { key: 'chalan_prefix',    value: '',   category: 'lot_entry', label: 'Delivery Challan: Serial Prefix (e.g. RNS-)', type: 'text' },
   { key: 'chalan_suffix',    value: '',   category: 'lot_entry', label: 'Delivery Challan: Serial Suffix (e.g. /26-27)', type: 'text' },
-  // Printed UNDER the company name, in place of the registered address — the
-  // collection centre or gate the goods leave from, which is usually not the
-  // registered office. One line per line of the printed block. Blank keeps
-  // the company's own address.
+  // Printed UNDER the company name, in place of the registered address. This
+  // is the FALLBACK: the address actually used is the one on the BRANCH the
+  // lots came from (Settings - Branches - "Branch N Address"), because a
+  // consignment leaves a particular collection centre, not the firm in
+  // general. This fills in for a branch with no address of its own, and
+  // blank falls back again to the company's registered address.
   { key: 'chalan_address',   value: '',   category: 'lot_entry',
-    label: 'Delivery Challan: Address block below the company name (one line each)', type: 'textarea' },
+    label: 'Delivery Challan: Fallback address block (used when the branch has none)', type: 'textarea' },
   // The consignment box, top right of the form.
   { key: 'chalan_transport_mode', value: 'By Road', category: 'lot_entry', label: 'Delivery Challan: Mode of Transport', type: 'text' },
   { key: 'chalan_place_of_supply', value: '', category: 'lot_entry', label: 'Delivery Challan: Place of Supply', type: 'text' },

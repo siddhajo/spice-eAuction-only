@@ -87,7 +87,11 @@ function cleanup() {
     hsn_cardamom: '09083120',
     chalan_veh_no: 'TN 55 AB 1234', chalan_rate: '310',
     chalan_prefix: 'DC-', chalan_suffix: '/26-27',
-    chalan_address: 'CARDAMOM COLLECTION CENTRE\nGATE ROAD\nBODI-625513',
+    // The address block is the BRANCH's. chalan_address is only the fallback,
+    // so it is deliberately set to something the test can tell apart.
+    br1_addr: 'CARDAMOM COLLECTION CENTRE\nGATE ROAD\nBODI-625513',
+    br2: 'CUMBUM', br2_addr: 'CUMBUM CENTRE\nMARKET ROAD\nCUMBUM-625516',
+    chalan_address: 'FALLBACK ADDRESS LINE',
     chalan_transport_mode: 'By Road', chalan_place_of_supply: 'NIRAPPELKADA',
     chalan_receiver_name: 'RNS SPICES', chalan_receiver_state: 'KERALA',
     chalan_receiver_code: '32', chalan_receiver_gstin: '32ABFFR1926E1ZK',
@@ -313,7 +317,8 @@ function cleanup() {
       open: document.getElementById('le-chalan-modal').classList.contains('show')
             || getComputedStyle(document.getElementById('le-chalan-modal')).display !== 'none',
       no: v('le-chalan-no'), veh: v('le-chalan-veh'), rate: v('le-chalan-rate'),
-      bags: v('le-chalan-bags'), addr: v('le-chalan-address'),
+      bags: v('le-chalan-bags'), sampleBags: v('le-chalan-sample-bags'),
+      addr: v('le-chalan-address'),
       mode: v('le-chalan-mode'), pos: v('le-chalan-pos'),
       to: v('le-chalan-to'), raddr: v('le-chalan-raddr'),
       rstate: v('le-chalan-rstate'), rcode: v('le-chalan-rcode'), rgstin: v('le-chalan-rgstin'),
@@ -333,9 +338,15 @@ function cleanup() {
   check('the rate pre-fills from its setting', String(form.rate) === '310', form.rate);
   check('the transport mode and place of supply pre-fill',
         form.mode === 'By Road' && form.pos === 'NIRAPPELKADA', JSON.stringify(form));
-  check('the address block pre-fills, all three lines',
+  // The address is the BRANCH's own, not the install-wide fallback — a
+  // consignment leaves a particular collection centre.
+  check('the address block comes from the lots\' BRANCH',
         form.addr.split('\n').length === 3 && /CARDAMOM COLLECTION CENTRE/.test(form.addr), form.addr);
+  check('…not the install-wide fallback', !/FALLBACK ADDRESS LINE/.test(form.addr), form.addr);
   check('bags default to the total on the ticked lots', String(form.bags) === '20', form.bags);
+  // Nothing on a lot records how many SAMPLE bags go with the load — the
+  // operator counts them onto the lorry — so it starts empty.
+  check('sample bags start empty, for the operator to count', form.sampleBags === '', form.sampleBags);
   // The receiver is the DESTINATION, which repeats — it comes from settings,
   // not from the seller on the lots.
   check('the receiver block pre-fills from settings',
@@ -356,14 +367,36 @@ function cleanup() {
   check('cancelling the form leaves the counter where it was', String(afterCancel.serial) === '1',
         JSON.stringify(afterCancel));
 
+  console.log('\n[6b] The address block follows the BRANCH');
+  const branchAddr = await page.evaluate(async () => {
+    const cfg = await j('/api/company-settings/flat');
+    return {
+      bodi:   leChalanBranchAddress(cfg, 'BODI'),
+      cumbum: leChalanBranchAddress(cfg, 'CUMBUM'),
+      // A branch name typed into a lot and typed into Settings is the same
+      // name twice, not one reference — so the match forgives case and spacing.
+      sloppy: leChalanBranchAddress(cfg, '  bodi '),
+      unknown: leChalanBranchAddress(cfg, 'NOWHERE'),
+      blank:   leChalanBranchAddress(cfg, ''),
+    };
+  });
+  check('each branch resolves to its OWN address',
+        /GATE ROAD/.test(branchAddr.bodi) && /MARKET ROAD/.test(branchAddr.cumbum),
+        JSON.stringify(branchAddr));
+  check('…matched case- and space-insensitively', branchAddr.sloppy === branchAddr.bodi, branchAddr.sloppy);
+  check('a branch with no address of its own falls through to the fallback',
+        branchAddr.unknown === '' && branchAddr.blank === '',
+        JSON.stringify({ unknown: branchAddr.unknown, blank: branchAddr.blank }));
+
   console.log('\n[7] What the challan prints — the reference form, line for line');
   const doc = await page.evaluate(async () => {
     const cfg = await j('/api/company-settings/flat');
     const o = {
       lots: _le.recentLots, cfg,
       chalanNo: 'DC-7/26-27', date: '2026-10-26', time: '20:20', veh: 'KL69B4797',
-      mode: 'By Road', placeOfSupply: 'NIRAPPELKADA', rate: 3000, bags: '112+4',
-      address: cfg.chalan_address,
+      mode: 'By Road', placeOfSupply: 'NIRAPPELKADA', rate: 3000,
+      bags: '194', sampleBags: '5',
+      address: leChalanBranchAddress(cfg, 'BODI'),
       receiver: { name: cfg.chalan_receiver_name, address: cfg.chalan_receiver_address,
                   state: cfg.chalan_receiver_state, code: cfg.chalan_receiver_code,
                   gstin: cfg.chalan_receiver_gstin },
@@ -377,7 +410,7 @@ function cleanup() {
   const h = doc.html;
   check('it is headed "Form GST Delivery Challan"', /Form GST Delivery Challan/.test(h));
   check('the company name is the masthead', /RNS SPICES/.test(h));
-  check('the typed address block prints under it, line by line',
+  check('the BRANCH address prints under it, line by line',
         /CARDAMOM COLLECTION CENTRE<br>GATE ROAD<br>BODI-625513/.test(h), h.slice(0, 1400));
   check('the consignment box carries all four of its lines',
         /Mode of Transport/.test(h) && /By Road/.test(h) && /KL69B4797/.test(h)
@@ -417,9 +450,11 @@ function cleanup() {
 
   check('the Remarks box prints its configured line',
         /Auction Sample Not for Sales, Only for Auction Purpose/.test(h));
-  // Bags is TEXT, printed verbatim: the office writes "112+4" to show the
-  // sample bags separately, which a number input could not hold.
-  check('Bags prints verbatim, not as a number', /Bags : 112\+4/.test(h), 'expected 112+4');
+  // "194+5" — the goods bags, then the SAMPLE bags riding with them, which
+  // the Remarks line declares are not for sale. Two inputs joined at print,
+  // not one typed string, so each number can be corrected on its own.
+  check('Bags prints the goods count and the sample count together',
+        /Bags : 194\+5/.test(h), 'expected 194+5');
   check('it closes with the terms and the signatory',
         /Terms &amp; Condition/.test(h) && /For RNS SPICES/.test(h) && /Authorised Signatory/.test(h));
   // An install with no uploaded logo must print an empty box, not a broken
