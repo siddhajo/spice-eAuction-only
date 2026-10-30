@@ -7782,17 +7782,40 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <input type="date" id="le-chalan-date"></div>
           <div class="fg" style="margin:0"><label>Time of Supply</label>
             <input type="time" id="le-chalan-time"></div>
-          <div class="fg" style="margin:0"><label>Rate (per kg)</label>
-            <input type="number" id="le-chalan-rate" step="0.01" min="0" placeholder="0.00"></div>
-          <!-- Bags is TEXT, not a count: the form prints it as written, and
-               the office writes "112+4" to show the sample bags separately. -->
-          <div class="fg" style="margin:0"><label>Bags</label>
-            <input type="text" id="le-chalan-bags" placeholder="194" autocomplete="off"
+          <!-- WHAT is travelling. The same form carries cardamom out to the
+               buyer and empty gunny back to the branch, and the two are
+               different goods: a different HSN, a different unit (kilos vs
+               bags), a different rate, and no sample line on the gunny one.
+               It pairs with Swap below — the return trip is usually the
+               gunny trip. -->
+          <div class="fg" style="margin:0"><label>Goods</label>
+            <select id="le-chalan-goods" onchange="leChalanGoodsChanged()">
+              <option value="cardamom">Cardamom</option>
+              <option value="gunny">Gunny</option>
+            </select></div>
+          <div class="fg" style="margin:0"><label id="le-chalan-rate-lbl">Rate (per kg)</label>
+            <input type="number" id="le-chalan-rate" step="0.01" min="0" placeholder="0.00" oninput="leChalanSyncTotals()"></div>
+          <!-- Quantity is editable for the same reason Bags is: part of a
+               load can go, and the figure on the paper is what left the gate.
+               It defaults to the ticked lots' net weight. GUNNY is counted in
+               bags, not kilos, so this whole field goes for gunny and the Bags
+               count below becomes the quantity. -->
+          <div class="fg le-ch-cardamom" style="margin:0"><label>Qty (kg)</label>
+            <input type="number" id="le-chalan-qty" step="0.001" min="0" oninput="leChalanSyncTotals()"
+                   title="Weight of goods going. Defaults to the net weight of the ticked lots."></div>
+          <div class="fg le-ch-cardamom" style="margin:0"><label>Sample Qty (kg)</label>
+            <input type="number" id="le-chalan-sample-qty" step="0.001" min="0" oninput="leChalanSyncTotals()"
+                   title="Sample weight travelling with the load — the SAMPLES line on the challan. Defaults to the ticked lots' sample weight; 0 drops the line."></div>
+          <!-- Bags is TEXT for cardamom, because the office writes "194+5" to
+               show the sample bags separately. For gunny it is the QUANTITY,
+               so only its leading number is read. -->
+          <div class="fg" style="margin:0"><label id="le-chalan-bags-lbl">Bags</label>
+            <input type="text" id="le-chalan-bags" placeholder="194" autocomplete="off" oninput="leChalanSyncTotals()"
                    title="Bags of goods. Defaults to the total on the ticked lots."></div>
           <!-- The "+5" in "194+5" — the sample bags travelling with the
                consignment, which the Remarks line declares are not for sale.
                Nothing on the lot records this: the operator counts them. -->
-          <div class="fg" style="margin:0"><label>Sample Bags</label>
+          <div class="fg le-ch-cardamom" style="margin:0"><label>Sample Bags</label>
             <input type="text" id="le-chalan-sample-bags" placeholder="5" autocomplete="off"
                    title="Count of sample bags going with the load. Prints as the +5 in &quot;194+5&quot;; leave blank to print the bag count alone."></div>
           <div class="fg" style="margin:0"><label>Mode of Transport</label>
@@ -7801,9 +7824,33 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <input type="text" id="le-chalan-pos" autocomplete="off"></div>
         </div>
 
-        <div class="fg" style="margin:10px 0 0"><label>Address below the company name <span style="font-weight:400;color:var(--text3)">— from the branch these lots came from (Settings → Branches)</span></label>
+        <!-- The challan's own Total row, shown before it prints: two typed
+             quantities at a typed rate is easy to get wrong, and the figure
+             that matters is the one at the bottom of the form. -->
+        <div id="le-chalan-totals" style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;margin:12px 0 0;padding:9px 12px;background:var(--spice-line);border-radius:8px;font-size:12.5px"></div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 6px">
+          Below the company name <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">— from the branch these lots came from (Settings → Branches)</span>
+        </div>
+        <div class="fg" style="margin:0"><label>Heading</label>
+          <input type="text" id="le-chalan-head" placeholder="CARDAMOM COLLECTION CENTRE" autocomplete="off"></div>
+        <div class="fg" style="margin:10px 0 0"><label>Address</label>
           <textarea id="le-chalan-address" rows="3" placeholder="Leave blank to print the company's registered address"
                     style="width:100%;resize:vertical"></textarea></div>
+
+        <!-- Swap — the same two places, the other way round. A consignment
+             runs from the collection centre to the building one day and back
+             the next, and both blocks are already typed; this exchanges them
+             instead of making the operator retype both. The receiver's State,
+             Code and GSTIN stay put: they identify the RECEIVER box, not
+             whichever address is sitting in it. -->
+        <div style="display:flex;justify-content:center;margin:12px 0 2px">
+          <button type="button" class="btn btn-o" id="le-chalan-swap" onclick="leChalanSwapAddresses()"
+                  style="font-size:12px;padding:5px 14px"
+                  title="Exchange this block with the Details of Receiver below — for a consignment running the other way">
+            ⇅ Swap with receiver
+          </button>
+        </div>
 
         <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 6px">Details of Receiver</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -27640,17 +27687,28 @@ async function leOpenChalan() {
   set('le-chalan-date', now.toISOString().slice(0, 10));
   set('le-chalan-time', String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0'));
   set('le-chalan-veh',  cfg.chalan_veh_no || '');
-  set('le-chalan-rate', cfg.chalan_rate   || '');
+  // Every challan opens on cardamom: it is the trip out, and the gunny one is
+  // the exception the operator chooses.
+  set('le-chalan-goods', 'cardamom');
+  set('le-chalan-rate', cfg.chalan_rate || '');
+  const rateEl0 = document.getElementById('le-chalan-rate');
+  if (rateEl0) rateEl0.dataset.seeded = rateEl0.value;   // so switching goods may replace it
   set('le-chalan-mode', cfg.chalan_transport_mode || 'By Road');
   set('le-chalan-pos',  cfg.chalan_place_of_supply || '');
+  const netQty = lots.reduce((n, l) => n + (Number(l.qty) || 0), 0);
+  const smpQty = leChalanSampleQty(lots, cfg);
+  set('le-chalan-qty', netQty ? netQty.toFixed(3) : '');
+  set('le-chalan-sample-qty', smpQty ? smpQty.toFixed(3) : '');
   set('le-chalan-bags', bags ? String(bags) : '');
   // Sample bags are a COUNT OF BAGS, not a weight, and nothing on the lot
   // records it — the operator counts them onto the lorry. Printed as the
   // "+5" in "194+5".
   set('le-chalan-sample-bags', '');
-  // The branch the goods are leaving from decides the address block.
-  set('le-chalan-address',
-      leChalanBranchAddress(cfg, (lots[0] || {}).branch) || cfg.chalan_address || '');
+  // The branch the goods are leaving from decides the block under the company
+  // name — what the place is called, and where it is.
+  const blk = leChalanBranchBlock(cfg, (lots[0] || {}).branch);
+  set('le-chalan-head',    blk.heading || cfg.chalan_heading || '');
+  set('le-chalan-address', blk.address || cfg.chalan_address || '');
   // Receiver — usually the same destination every time (a branch transfer),
   // so it comes from settings and is edited here only for a one-off.
   set('le-chalan-to',     cfg.chalan_receiver_name    || '');
@@ -27669,7 +27727,54 @@ async function leOpenChalan() {
       + `${bags} bag${bags === 1 ? '' : 's'} · ${qty.toFixed(3)} kg`;
   }
   _le_chalan = { lots, cfg, auction, previewNo };
+  leChalanGoodsChanged();        // labels + visibility + the first total
   showModal('le-chalan-modal');
+}
+
+// Cardamom or gunny — the choice drives four things at once, which is why it
+// is one control and not four. Gunny is counted in BAGS at the per-bag
+// `gunny_rate` from Settings - Rates (the canonical box, not a challan-only
+// copy), quotes `hsn_gunny`, and has no sample line: the cardamom-only
+// fields are hidden rather than ignored, so nothing invisible can still be
+// contributing to the total.
+function leChalanGoodsChanged() {
+  const gunny = leChalanGoods() === 'gunny';
+  const cfg = (_le_chalan && _le_chalan.cfg) || {};
+  document.querySelectorAll('#le-chalan-modal .le-ch-cardamom')
+    .forEach(el => { el.style.display = gunny ? 'none' : ''; });
+  const rateLbl = document.getElementById('le-chalan-rate-lbl');
+  if (rateLbl) rateLbl.textContent = gunny ? 'Rate (per bag)' : 'Rate (per kg)';
+  const bagsLbl = document.getElementById('le-chalan-bags-lbl');
+  if (bagsLbl) bagsLbl.textContent = gunny ? 'Bags being sent' : 'Bags';
+  // Each kind carries its own default rate. Only the rate the OTHER kind had
+  // just seeded is replaced — a figure the operator typed is theirs to keep.
+  const rateEl = document.getElementById('le-chalan-rate');
+  if (rateEl && rateEl.dataset.seeded === rateEl.value) {
+    rateEl.value = String((gunny ? cfg.gunny_rate : cfg.chalan_rate) || '');
+    rateEl.dataset.seeded = rateEl.value;
+  }
+  leChalanSyncTotals();
+}
+function leChalanGoods() {
+  const el = document.getElementById('le-chalan-goods');
+  return (el && el.value === 'gunny') ? 'gunny' : 'cardamom';
+}
+
+// Exchange the block under the company name with the Details of Receiver.
+//
+// The two are counterparts — a place and what it is called — so the heading
+// trades with the receiver's NAME and the two addresses trade with each
+// other. State, Code and GSTIN do NOT move: they label the receiver BOX, not
+// whichever address is currently sitting in it, and carrying them across
+// would quietly relabel the consignee's GST identity.
+function leChalanSwapAddresses() {
+  const swap = (a, b) => {
+    const ea = document.getElementById(a), eb = document.getElementById(b);
+    if (!ea || !eb) return;
+    const t = ea.value; ea.value = eb.value; eb.value = t;
+  };
+  swap('le-chalan-head', 'le-chalan-to');
+  swap('le-chalan-address', 'le-chalan-raddr');
 }
 
 async function leConfirmChalan() {
@@ -27707,9 +27812,13 @@ async function leConfirmChalan() {
     veh,
     mode: val('le-chalan-mode'),
     placeOfSupply: val('le-chalan-pos'),
+    goods: leChalanGoods(),
     rate: parseFloat(val('le-chalan-rate')) || 0,
+    qty: val('le-chalan-qty') === '' ? null : (parseFloat(val('le-chalan-qty')) || 0),
+    sampleQty: val('le-chalan-sample-qty') === '' ? null : (parseFloat(val('le-chalan-sample-qty')) || 0),
     bags: val('le-chalan-bags'),
     sampleBags: val('le-chalan-sample-bags'),
+    heading: val('le-chalan-head'),
     address: val('le-chalan-address'),
     receiver: {
       name: val('le-chalan-to'), address: val('le-chalan-raddr'),
@@ -27750,14 +27859,41 @@ async function leConfirmChalan() {
 // registered address, so a branch nobody has filled in still prints a header.
 // Mixed branches in one selection resolve on the FIRST lot: a challan travels
 // in one lorry out of one gate, and the operator can edit the block anyway.
-function leChalanBranchAddress(cfg, branch) {
+function leChalanBranchBlock(cfg, branch) {
   const norm = (v) => String(v == null ? '' : v).trim().toUpperCase().replace(/\s+/g, ' ');
   const want = norm(branch);
-  if (!want) return '';
-  for (let i = 1; i <= 9; i++) {
-    if (norm(cfg['br' + i]) === want) return String(cfg['br' + i + '_addr'] || '').trim();
+  if (want) {
+    for (let i = 1; i <= 9; i++) {
+      if (norm(cfg['br' + i]) !== want) continue;
+      return {
+        heading: String(cfg['br' + i + '_head'] || '').trim(),
+        address: String(cfg['br' + i + '_addr'] || '').trim(),
+      };
+    }
   }
-  return '';
+  return { heading: '', address: '' };
+}
+// Kept under its own name because the address alone is what most callers want.
+function leChalanBranchAddress(cfg, branch) {
+  return leChalanBranchBlock(cfg, branch).address;
+}
+
+// The SAMPLES quantity on a challan.
+//
+// It is NOT the sum of `lots.sample_wt` — that is the weight actually drawn
+// off each lot at entry, which varies. What travels on the challan is the
+// AUCTION sample: a fixed draw per lot, the same two figures the Commission
+// Bill deducts — SB Sample Refund plus Trader Sample (Settings - Rates) —
+// taken once for every lot on the consignment. So: lots x (refund + trader).
+//
+// Reading the same `sb_refund` / `sb_trader_sample` boxes the bill reads
+// keeps the paper that moves the goods agreeing with the paper that prices
+// them. Both default to 0, in which case there is no sample row at all.
+function leChalanSampleQty(lots, cfg) {
+  const per = (Number((cfg || {}).sb_refund) || 0) + (Number((cfg || {}).sb_trader_sample) || 0);
+  // Rounded to the gram: a float product like 3 x 0.45 lands on
+  // 1.3499999999999999 and would print a nonsense tail.
+  return Math.round((lots || []).length * per * 1000) / 1000;
 }
 
 // The goods lines, derived from the ticked lots.
@@ -27770,14 +27906,64 @@ function leChalanBranchAddress(cfg, branch) {
 // weight, so a godown movement does not print an empty row.
 function leChalanLines(o) {
   const lots = o.lots || [];
+  const cfg = o.cfg || {};
   const rate = Number(o.rate) || 0;
-  const desc = (o.cfg && o.cfg.chalan_goods_desc) || 'CARDAMOM';
-  const hsn  = (o.cfg && o.cfg.hsn_cardamom) || '';
-  const qty    = lots.reduce((t, l) => t + (Number(l.qty) || 0), 0);
-  const sample = lots.reduce((t, l) => t + (Number(l.sample_wt) || 0), 0);
-  const out = [{ desc, hsn, qty, rate, value: qty * rate }];
-  if (sample > 0) out.push({ desc: 'SAMPLES', hsn, qty: sample, rate, value: sample * rate });
+  // GUNNY: ONE line, counted in bags at a per-bag rate, under the gunny HSN,
+  // and no sample row — empty sacks going back carry no auction sample.
+  if (o.goods === 'gunny') {
+    const bags = parseInt(String(o.bags == null ? '' : o.bags).replace(/[^0-9]/g, ''), 10) || 0;
+    return [{
+      desc: cfg.chalan_gunny_desc || 'GUNNY',
+      hsn: cfg.hsn_gunny || '',
+      qty: bags, unit: 'nos', rate, value: bags * rate,
+    }];
+  }
+  const desc = cfg.chalan_goods_desc || 'CARDAMOM';
+  const hsn  = cfg.hsn_cardamom || '';
+  // A TYPED quantity wins over the lots' own — part of a load can go, and the
+  // paper has to say what actually left. `== null` rather than a falsy test,
+  // so a deliberate 0 (no samples on this trip) is honoured instead of
+  // silently falling back to the lots' sample weight.
+  const qty = o.qty != null ? (Number(o.qty) || 0)
+    : lots.reduce((t, l) => t + (Number(l.qty) || 0), 0);
+  const sample = o.sampleQty != null ? (Number(o.sampleQty) || 0)
+    : leChalanSampleQty(lots, cfg);
+  const out = [{ desc, hsn, qty, unit: 'kg', rate, value: qty * rate }];
+  if (sample > 0) out.push({ desc: 'SAMPLES', hsn, qty: sample, unit: 'kg', rate, value: sample * rate });
   return out;
+}
+
+// Keep the dialog's Total row in step with what has been typed. It reads the
+// SAME leChalanLines() the printed form does, so the figure on screen cannot
+// drift from the figure on the paper.
+function leChalanSyncTotals() {
+  const host = document.getElementById('le-chalan-totals');
+  if (!host || !_le_chalan) return;
+  const num = (id) => {
+    const el = document.getElementById(id);
+    const v = el ? String(el.value || '').trim() : '';
+    return v === '' ? null : (Number(v) || 0);
+  };
+  const goods = leChalanGoods();
+  const bagsEl = document.getElementById('le-chalan-bags');
+  const rows = leChalanLines({
+    lots: _le_chalan.lots, cfg: _le_chalan.cfg || {}, goods,
+    rate: num('le-chalan-rate') || 0,
+    qty: num('le-chalan-qty'), sampleQty: num('le-chalan-sample-qty'),
+    bags: bagsEl ? bagsEl.value : '',
+  });
+  const qty = rows.reduce((t, r) => t + r.qty, 0);
+  const val = rows.reduce((t, r) => t + r.value, 0);
+  const n3 = (v) => v.toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  const n2 = (v) => v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const cell = (k, v) => `<span style="color:var(--text3)">${k}</span> <strong style="font-size:13.5px">${v}</strong>`;
+  host.innerHTML = [
+    cell('Total Qty', goods === 'gunny'
+      ? qty.toLocaleString('en-IN') + ' bags'
+      : n3(qty) + ' kg'),
+    cell('Total Value', '\u20b9' + n2(val)),
+    `<span style="color:var(--text3);margin-left:auto">${rows.length} line${rows.length === 1 ? '' : 's'} on the challan</span>`,
+  ].join('');
 }
 
 // Pure builder: the ticked lots plus the typed despatch details in, a
@@ -27802,6 +27988,9 @@ function leBuildChalanHtml(o) {
   // whole reason that block is configurable.
   const addr = o.address ? lines(o.address)
     : [pick('address1'), pick('address2'), [pick('place'), pick('pin')].filter(Boolean).join(' - ')].filter(Boolean);
+  // The heading leads the block — what the place IS, above where it is. Same
+  // face as the lines under it, which is how the reference form prints it.
+  const headed = [String(o.heading || '').trim(), ...addr].filter(Boolean);
 
   // "26-10-2026; 08.20 PM" — the form's own date and time shape, not the
   // install's date_format: this is stationery, printed the way it is printed.
@@ -27820,14 +28009,37 @@ function leBuildChalanHtml(o) {
   const supply = [dmy(o.date), ampm(o.time)].filter(Boolean).join('; ');
 
   const rows = leChalanLines(o);
+  // NOTE on the markup below — keep developer comments OUT of the returned
+  // document. It is handed to a printer and read by the tax office; an HTML
+  // comment explaining the code travels with it, and (found the hard way) its
+  // example text also shows up in anything that greps the output.
+  //
+  // Two things the markup does that are not obvious:
+  //   • "Bags : 194+5" joins the goods bags and the SAMPLE bags the Remarks
+  //     line declares. They are two fields joined at print, not one typed
+  //     string, so each number can be corrected on its own — and the sample
+  //     half is dropped for gunny, which carries none.
+  //   • The logo <img> removes itself on error: an install that has uploaded
+  //     no mark must print an empty box, not a broken-image glyph, and the
+  //     logo is a FILE on disk that settings cannot vouch for.
+  //
+  // The cardamom remark declares the auction samples riding along. A gunny
+  // challan carries none, so repeating it there would be a false statement on
+  // a GST document — gunny has its own line, and blank prints no Remarks row.
+  const remark = String((o.goods === 'gunny' ? cfg.chalan_gunny_remarks : cfg.chalan_remarks) || '').trim();
   const totQty = rows.reduce((t, r) => t + r.qty, 0);
   const totVal = rows.reduce((t, r) => t + r.value, 0);
   const blankRow = '<tr class="sp"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+  // Bags are a COUNT and print whole; kilos are a weight and print to three
+  // decimals. "60.000" bags would read as a weight.
+  const qfmt = (r) => r.unit === 'nos'
+    ? (Number(r.qty) || 0).toLocaleString('en-IN')
+    : n3(r.qty);
   const body = rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td>
       <td>${E(r.desc)}</td>
       <td class="c">${E(r.hsn)}</td>
-      <td class="r">${n3(r.qty)}</td>
+      <td class="r">${qfmt(r)}</td>
       <td class="r">${n2(r.rate)}</td>
       <td class="r">${n2(r.value)}</td>
       <td class="r">${n2(r.value)}</td>
@@ -27886,15 +28098,11 @@ function leBuildChalanHtml(o) {
 <div class="doc">
 
   <div class="row">
-    <!-- The company's own uploaded mark. An install that has not uploaded
-         one must print an empty box, not a broken-image glyph, so the tag
-         removes itself rather than being guarded by a config key (the logo
-         is a FILE on disk; settings do not know whether it is there). -->
     <div class="logo"><img src="/logo-ispl.png" alt="" onerror="this.style.display='none'"></div>
     <div class="mast">
       <div class="formname">Form GST Delivery Challan</div>
       <div class="coname">${E(tradeName)}</div>
-      <div class="coaddr">${addr.map(E).join('<br>')}</div>
+      <div class="coaddr">${headed.map(E).join('<br>')}</div>
     </div>
   </div>
 
@@ -27943,7 +28151,7 @@ function leBuildChalanHtml(o) {
         ${blankRow}
         <tr class="b">
           <td class="c" colspan="3">Total</td>
-          <td class="r">${n3(totQty)}</td>
+          <td class="r">${rows.length && rows[0].unit === 'nos' ? totQty.toLocaleString('en-IN') : n3(totQty)}</td>
           <td></td>
           <td class="r">${n2(totVal)}</td>
           <td class="r">${n2(totVal)}</td>
@@ -27958,12 +28166,11 @@ function leBuildChalanHtml(o) {
     <span class="b" style="flex:1">${E(o.words || '')}</span>
   </div></div>
 
-  <div class="row"><div class="pad remarks" style="flex:1"><span class="u">Remarks:</span> <span class="b">${E(cfg.chalan_remarks || '')}</span></div></div>
-  <!-- "194+5": the bags of goods, then the SAMPLE bags riding with them,
-       which the Remarks line above says are not for sale. Joined here rather
-       than typed as one string so each number stays a number the operator can
-       correct on its own. -->
-  <div class="row"><div class="pad" style="flex:1">Bags : ${E([o.bags, o.sampleBags].map(x => String(x == null ? '' : x).trim()).filter(Boolean).join('+'))}</div></div>
+  ${remark ? `<div class="row"><div class="pad remarks" style="flex:1"><span class="u">Remarks:</span> <span class="b">${E(remark)}</span></div></div>` : ''}
+  <div class="row"><div class="pad" style="flex:1">Bags : ${E(
+    [o.bags, o.goods === 'gunny' ? '' : o.sampleBags]
+      .map(x => String(x == null ? '' : x).trim()).filter(Boolean).join('+')
+  )}</div></div>
 
   <div class="row sign">
     <div>Terms &amp; Condition :${lines(cfg.chalan_terms).map(x => '<br>' + E(x)).join('')}</div>
@@ -29257,16 +29464,18 @@ function renderSettingsPanel(){
     const byNum={};
     for(const f of fields){
       const n=num(f.key); if(!n) continue;
-      (byNum[n]=byNum[n]||{})[f.key.includes('_tel')?'tel':f.key.includes('_addr')?'addr':'name']=f;
+      const slot=f.key.includes('_tel')?'tel':f.key.includes('_addr')?'addr':f.key.includes('_head')?'head':'name';
+      (byNum[n]=byNum[n]||{})[slot]=f;
     }
     let inner='';
     for(const n of Object.keys(byNum).sort((a,b)=>Number(a)-Number(b))){
       const g=byNum[n];
       if(g.name)inner+=fld(g.name);
       if(g.tel)inner+=fld(g.tel);
+      if(g.head)inner+=fld(g.head);
       if(g.addr)inner+=fld(g.addr);
     }
-    html+=sectionCard(ck,'Branch Offices','Each branch name sits beside the mobile number that reaches it, with the branch\u2019s own postal address below. The address is what prints on a Delivery Challan for goods leaving that branch.',fields.length,inner,'🏪');
+    html+=sectionCard(ck,'Branch Offices','Each branch name sits beside the mobile number that reaches it, then what the place is called and its postal address. Those last two are what print under the company name on a Delivery Challan for goods leaving that branch.',fields.length,inner,'🏪');
   }else if(ck==='mode'){
     // Three fields, all custom-rendered (locked text, guarded dropdown,
     // date sampler) — but they still go through renderGroupedFields so

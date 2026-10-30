@@ -163,8 +163,24 @@ const DEFAULTS = [
   { key: 'br6_tel',  value: '', category: 'branches', label: 'Branch 6 Mobile', type: 'text' },
   { key: 'br7_tel',  value: '', category: 'branches', label: 'Branch 7 Mobile', type: 'text' },
   { key: 'br8_tel',  value: '', category: 'branches', label: 'Branch 8 Mobile', type: 'text' },
-  // Each branch's own POSTAL ADDRESS, one line per line. Printed under the
-  // company name on the Delivery Challan for goods leaving THAT branch — the
+  // What each branch IS — "CARDAMOM COLLECTION CENTRE" — printed as the
+  // heading of the address block under the company name on a Delivery
+  // Challan. Its own field rather than the first line of the address,
+  // because it is the counterpart of the receiver's NAME: the challan can
+  // swap the two blocks over, and a heading buried in a textarea could not
+  // change places with a name.
+  { key: 'br1_head', value: '', category: 'branches', label: 'Branch 1 Centre Name', type: 'text' },
+  { key: 'br2_head', value: '', category: 'branches', label: 'Branch 2 Centre Name', type: 'text' },
+  { key: 'br3_head', value: '', category: 'branches', label: 'Branch 3 Centre Name', type: 'text' },
+  { key: 'br4_head', value: '', category: 'branches', label: 'Branch 4 Centre Name', type: 'text' },
+  { key: 'br5_head', value: '', category: 'branches', label: 'Branch 5 Centre Name', type: 'text' },
+  { key: 'br6_head', value: '', category: 'branches', label: 'Branch 6 Centre Name', type: 'text' },
+  { key: 'br7_head', value: '', category: 'branches', label: 'Branch 7 Centre Name', type: 'text' },
+  { key: 'br8_head', value: '', category: 'branches', label: 'Branch 8 Centre Name', type: 'text' },
+  { key: 'br9_head', value: '', category: 'branches', label: 'Branch 9 Centre Name', type: 'text' },
+
+  // Each branch's own POSTAL ADDRESS, one line per line. Printed under that
+  // heading on the Delivery Challan for goods leaving THAT branch — the
   // collection centre a consignment goes out from is a different place from
   // the registered office, and from every other branch. Blank falls back to
   // the install-wide `chalan_address`, then to the company's own address.
@@ -800,6 +816,8 @@ const DEFAULTS = [
   // consignment leaves a particular collection centre, not the firm in
   // general. This fills in for a branch with no address of its own, and
   // blank falls back again to the company's registered address.
+  { key: 'chalan_heading',   value: '',   category: 'lot_entry',
+    label: 'Delivery Challan: Fallback heading (used when the branch has none)', type: 'text' },
   { key: 'chalan_address',   value: '',   category: 'lot_entry',
     label: 'Delivery Challan: Fallback address block (used when the branch has none)', type: 'textarea' },
   // The consignment box, top right of the form.
@@ -820,10 +838,20 @@ const DEFAULTS = [
   // The goods line's description. The HSN beside it is NOT a challan setting:
   // it reads `hsn_cardamom` (Settings - HSN), the canonical box every other
   // document already quotes — see the "one config, one box" rule.
-  { key: 'chalan_goods_desc', value: 'CARDAMOM', category: 'lot_entry', label: 'Delivery Challan: Description of Goods', type: 'text' },
+  { key: 'chalan_goods_desc', value: 'CARDAMOM', category: 'lot_entry', label: 'Delivery Challan: Description of Goods (Cardamom)', type: 'text' },
+  // The OTHER thing that travels on a challan: empty gunny going back to the
+  // branch the cardamom came from. Same form, different goods — so it reads
+  // the gunny HSN (`hsn_gunny`), is counted in BAGS at the per-bag
+  // `gunny_rate` from Settings - Rates, and carries no sample line at all.
+  { key: 'chalan_gunny_desc', value: 'GUNNY', category: 'lot_entry', label: 'Delivery Challan: Description of Goods (Gunny)', type: 'text' },
   // Printed verbatim in the Remarks and Terms boxes at the foot.
   { key: 'chalan_remarks',   value: 'Auction Sample Not for Sales, Only for Auction Purpose',
-    category: 'lot_entry', label: 'Delivery Challan: Remarks', type: 'text' },
+    category: 'lot_entry', label: 'Delivery Challan: Remarks (Cardamom)', type: 'text' },
+  // Remarks are PER GOODS TYPE. The cardamom one declares the auction samples
+  // riding along; a gunny challan carries no samples, so repeating that line
+  // on it would be a false statement on a GST document. Blank prints no
+  // Remarks row at all.
+  { key: 'chalan_gunny_remarks', value: '', category: 'lot_entry', label: 'Delivery Challan: Remarks (Gunny)', type: 'text' },
   { key: 'chalan_terms',     value: '',   category: 'lot_entry',
     label: 'Delivery Challan: Terms & Condition', type: 'textarea' },
   // Physical paper width of the lot-receipt slip, in millimetres. Thermal
