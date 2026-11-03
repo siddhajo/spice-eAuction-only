@@ -7806,9 +7806,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <option value="cardamom">Cardamom</option>
               <option value="gunny">Gunny</option>
             </select></div>
-          <div class="fg" style="margin:0"><label id="le-chalan-rate-lbl">Rate (per kg)</label>
-            <input type="number" id="le-chalan-rate" step="0.01" min="0" placeholder="0.00" oninput="leChalanSyncTotals()"></div>
-          <!-- Quantity is editable for the same reason Bags is: part of a
+          <!-- Quantity before rate: WHAT is going, then what it is worth —
+               the order the goods table prints them in, and the order they
+               come off the weighbridge slip.
+               Quantity is editable for the same reason Bags is: part of a
                load can go, and the figure on the paper is what left the gate.
                It defaults to the ticked lots' net weight. GUNNY is counted in
                bags, not kilos, so this whole field goes for gunny and the Bags
@@ -7816,6 +7817,8 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div class="fg le-ch-cardamom le-ch-netonly" style="margin:0"><label>Qty (kg)</label>
             <input type="number" id="le-chalan-qty" step="0.001" min="0" oninput="leChalanSyncTotals()"
                    title="Weight of goods going. Defaults to the net weight of the ticked lots."></div>
+          <div class="fg" style="margin:0"><label id="le-chalan-rate-lbl">Rate (per kg)</label>
+            <input type="number" id="le-chalan-rate" step="0.01" min="0" placeholder="0.00" oninput="leChalanSyncTotals()"></div>
           <div class="fg le-ch-cardamom" style="margin:0"><label>Sample Qty (kg)</label>
             <input type="number" id="le-chalan-sample-qty" step="0.001" min="0" oninput="leChalanSyncTotals()"
                    title="Sample weight travelling with the load — the SAMPLES line on the challan. Defaults to the ticked lots' sample weight; 0 drops the line."></div>
@@ -9340,10 +9343,11 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                 <input type="date" id="dc-date" oninput="dcPreview()"></div>
               <div class="fg" style="margin:0"><label>Time of Supply</label>
                 <input type="time" id="dc-time" oninput="dcPreview()"></div>
-              <div class="fg" style="margin:0"><label id="dc-rate-lbl">Rate (per kg)</label>
-                <input type="number" id="dc-rate" step="0.01" min="0" oninput="dcPreview()"></div>
+              <!-- Quantity before rate — see the dialog. -->
               <div class="fg dc-netonly dc-cardamom" style="margin:0"><label>Qty (kg)</label>
                 <input type="number" id="dc-qty" step="0.001" min="0" oninput="dcPreview()"></div>
+              <div class="fg" style="margin:0"><label id="dc-rate-lbl">Rate (per kg)</label>
+                <input type="number" id="dc-rate" step="0.01" min="0" oninput="dcPreview()"></div>
               <div class="fg dc-cardamom" style="margin:0"><label>Sample Qty (kg)</label>
                 <input type="number" id="dc-sample-qty" step="0.001" min="0" oninput="dcPreview()"></div>
               <div class="fg" style="margin:0"><label id="dc-bags-lbl">Bags</label>
@@ -28097,6 +28101,9 @@ function leChalanPartyBlocks(cfg, branch, swapped) {
     const kl = branch === LE_SB_KL;
     const gstin = String((kl ? cfg.spices_board_gstin_kl : cfg.spices_board_gstin_tn) || '').trim();
     return _leChalanDirect({
+      // Which party the Board is. It only becomes the SENDER when the
+      // challan is turned round — see _leChalanDirect.
+      sbParty: true,
       heading: '', address: '',
       receiver: {
         name: 'SPICES BOARD',
@@ -28114,6 +28121,7 @@ function leChalanPartyBlocks(cfg, branch, swapped) {
   }
   const blk = leChalanBranchBlock(cfg, branch);
   return _leChalanDirect({
+    sbParty: false,
     heading: blk.heading || cfg.chalan_heading || '',
     address: blk.address || cfg.chalan_address || '',
     receiver: {
@@ -28138,11 +28146,21 @@ function leChalanPartyBlocks(cfg, branch, swapped) {
 // registration against another firm's name, which is worse than leaving it
 // blank.
 function _leChalanDirect(base, cfg, swapped) {
-  if (!swapped) return base;
+  // Pointing outwards, this firm is the sender whoever the consignee is —
+  // including the Spices Board, which is then merely the other party.
+  if (!swapped) return { ...base, senderIsSB: false, senderName: '' };
+  // Swapped, the party that WAS the consignee is now sending — so the
+  // masthead becomes theirs. `senderName` empty means "this company", which
+  // is every challan but a turned-round Spices Board one.
+  const senderName = base.sbParty ? 'SPICES BOARD' : '';
   const coGstin = leChalanCompanyGstin(cfg);
   const isKL = String(cfg.business_state || '').toUpperCase().includes('KERALA');
   return {
-    heading: base.receiver.name,
+    senderIsSB: !!base.sbParty,
+    senderName,
+    // The heading line would only repeat the masthead when the Board is
+    // sending, so it is dropped there and the address stands alone.
+    heading: senderName ? '' : base.receiver.name,
     address: base.receiver.address,
     receiver: {
       name:    base.heading || cfg.trade_name || cfg.short_name || '',
@@ -28270,7 +28288,12 @@ function leBuildChalanHtml(o) {
   const sample = lots[0] || {};
   const isKerala = String(sample.state || cfg.business_state || '').toUpperCase().includes('KERALA');
   const pick = (k) => isKerala ? (cfg['kl_' + k] || cfg['tn_' + k] || '') : (cfg['tn_' + k] || '');
-  const tradeName = cfg.trade_name || cfg.short_name || '';
+  // WHOSE document this is. Normally the company's; on a turned-round Spices
+  // Board challan the Board is sending, so its name heads the form and its
+  // own mark goes beside it — the company's logo there would claim the
+  // consignment came from this firm.
+  const tradeName = o.senderName || cfg.trade_name || cfg.short_name || '';
+  const logoSrc = o.senderIsSB ? '/logo-sb.png' : '/logo-ispl.png';
   // The typed block REPLACES the registered address: the collection centre
   // the goods leave from is usually not the registered office, which is the
   // whole reason that block is configurable.
@@ -28385,7 +28408,7 @@ function leBuildChalanHtml(o) {
 <div class="doc">
 
   <div class="row">
-    <div class="logo"><img src="/logo-ispl.png" alt="" onerror="this.style.display='none'"></div>
+    <div class="logo"><img src="${logoSrc}" alt="" onerror="this.style.display='none'"></div>
     <div class="mast">
       <div class="formname">Form GST Delivery Challan</div>
       <div class="coname">${E(tradeName)}</div>
@@ -30053,6 +30076,9 @@ function renderSettingsPanel(){
     // every other category.
     if (ck === 'company') {
       html += logoUploadWidget('ispl', 'Company Logo');
+      // Only used on a Delivery Chalan the Spices Board sends (Branch =
+      // Spices Board, turned round with Swap). Nothing else reads it.
+      html += logoUploadWidget('sb', 'Spices Board Logo (delivery chalan)');
     }
     // Per-print renderer ENGINE settings (sales_invoice_engine, …) are no
     // longer user-facing — the Layout dropdown below now drives the engine
@@ -30177,7 +30203,7 @@ function renderSettingsPanel(){
     }
   }
   // Company tab logo preview — single identity in this build.
-  if (ck === 'company') refreshLogoPreview('ispl');
+  if (ck === 'company') { refreshLogoPreview('ispl'); refreshLogoPreview('sb'); }
 }
 
 // ── Settings → Rates & Charges: per-field change history ──────────

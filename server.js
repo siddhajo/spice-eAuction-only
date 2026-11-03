@@ -2642,6 +2642,12 @@ app.put('/api/company-presets/:code', requireSettingsWrite, (_req, res) => {
 const LOGO_FILES = {
   ispl: path.join(__dirname, 'public', 'logo-ispl.png'),
   asp:  path.join(__dirname, 'public', 'logo-asp.png'),
+  // The SPICES BOARD's own mark, for a delivery challan the Board SENDS —
+  // its name heads that document, so the company's logo beside it would
+  // claim the consignment came from this firm. A slot rather than a config
+  // path, so it is uploaded, persisted and removed exactly like the
+  // company's own.
+  sb:   path.join(__dirname, 'public', 'logo-sb.png'),
 };
 // Persistent logo storage. Every logo reader resolves the image from `public/`,
 // but `public/` ships inside the deploy image and is rebuilt on each redeploy:
@@ -2654,6 +2660,7 @@ const LOGO_PERSIST_DIR = path.join(__dirname, 'data', 'branding');
 const LOGO_PERSIST_FILES = {
   ispl: path.join(LOGO_PERSIST_DIR, 'logo-ispl.png'),
   asp:  path.join(LOGO_PERSIST_DIR, 'logo-asp.png'),
+  sb:   path.join(LOGO_PERSIST_DIR, 'logo-sb.png'),
 };
 // Sync persistent → public on boot. When only a public copy exists (first run
 // after this change, before the committed logo is removed from the repo) it is
@@ -2674,7 +2681,7 @@ function rehydrateLogos() {
 }
 app.post('/api/company-settings/logo/:which', requireSettingsWrite, upload.single('file'), (req, res) => {
   const which = req.params.which;
-  if (!LOGO_FILES[which]) return res.status(400).json({ error: 'Invalid logo type (use ispl or asp)' });
+  if (!LOGO_FILES[which]) return res.status(400).json({ error: 'Invalid logo type (use ispl, asp or sb)' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   // Only allow image types
   const ext = (req.file.originalname.split('.').pop() || '').toLowerCase();
