@@ -44321,7 +44321,20 @@ function payLwClearField(inputId) {
   el.focus();
 }
 
-async function payLwSearch() {
+// `opts.keepSelection` — carry the operator's ticks across instead of
+// re-ticking everything.
+//
+// A fresh SEARCH starts fully ticked, which is right: the operator asked for
+// these lots and the next thing they do is export them. A REFRESH after an
+// action is a different event entirely — they have already narrowed the
+// selection to the lots they meant, and the re-pull is only there so the rows
+// show the new state. Re-ticking there silently re-armed the export: tick one
+// lot, press Export Bank Payment, and while the browser's Save dialog was
+// still open the mark-paid refresh ran behind it and the button came back
+// reading "Export Bank Payment (53)". The next press would have paid the whole
+// trade. So every post-action re-pull passes this.
+async function payLwSearch(opts) {
+  const keepSelection = !!(opts && opts.keepSelection);
   const aid = Number(document.getElementById('paylw-auction')?.value || 0);
   if (!aid) { alert('Select a trade first'); return; }
   _payLwState.aid = aid;
@@ -44365,8 +44378,19 @@ async function payLwSearch() {
     // "…have no bank account" confirm. They stay visible, just unticked, and
     // the header checkbox still selects the lot.
     // Paid lots are never auto-ticked — they're done and locked out.
-    _payLwState.selected = new Set(
-      _payLwState.lots.filter(l => !l.paid_at && (link !== 'all' || l.linked)).map(l => l.id));
+    //
+    // On a post-action refresh the operator's own ticks are kept instead (see
+    // the note on this function). Ids that are gone from the result, or that
+    // the action has just made unselectable — a lot exported and marked paid
+    // is the usual case — fall out on their own, so the count can only ever
+    // shrink. It can never silently grow.
+    const _prevSel = _payLwState.selected;
+    _payLwState.selected = keepSelection
+      ? new Set(_payLwState.lots
+          .filter(l => _prevSel.has(l.id) && !l.paid_at && !_payLwUnpriced(l))
+          .map(l => l.id))
+      : new Set(
+          _payLwState.lots.filter(l => !l.paid_at && (link !== 'all' || l.linked)).map(l => l.id));
     // Undo ticks never carry across a search, and are never pre-filled.
     _payLwState.selectedPaid = new Set();
     _payLwRender();
@@ -45468,7 +45492,10 @@ async function payLwExportBank() {
       });
       if (mk.ok) {
         toast(`Exported ${lots.length} lot${lots.length === 1 ? '' : 's'} across ${names.length} seller${names.length === 1 ? '' : 's'} — marked paid`);
-        await payLwSearch();   // re-pull so the rows show as paid
+        // Keep the ticks: the exported lots are paid now and drop out of the
+        // selection on their own, and the lots the operator deliberately left
+        // out must NOT come back ticked while the Save dialog is still open.
+        await payLwSearch({ keepSelection: true });
       } else {
         toast(`Exported ${lots.length} lot${lots.length === 1 ? '' : 's'} — could NOT mark them paid (re-export is still possible)`);
       }
@@ -45493,7 +45520,7 @@ async function payLwUnmarkPaid(lotId, name) {
     });
     if (r.ok) {
       toast(`Unmarked — ${name || 'lot'} is payable again`);
-      await payLwSearch();   // re-pull so the row drops its paid badge/lock
+      await payLwSearch({ keepSelection: true });   // re-pull so the row drops its paid badge/lock
     } else {
       const e = await r.json().catch(() => ({}));
       alert(`Could not unmark: ${e.error || ('HTTP ' + r.status)}`);
@@ -45537,7 +45564,7 @@ async function payLwUndoSelected() {
       const n = Number(d.cleared);
       toast(`Unmarked ${Number.isFinite(n) ? n : lots.length} lot${(Number.isFinite(n) ? n : lots.length) === 1 ? '' : 's'} — payable again`);
       _payLwState.selectedPaid = new Set();
-      await payLwSearch();   // re-pull so the rows drop their paid badge/lock
+      await payLwSearch({ keepSelection: true });   // re-pull so the rows drop their paid badge/lock
     } else {
       const e = await r.json().catch(() => ({}));
       alert(`Could not undo: ${e.error || ('HTTP ' + r.status)}`);
@@ -45573,7 +45600,7 @@ async function payLwUndoAdvance(lotId, name) {
       body: JSON.stringify({ items: [{ lotId, advance: 0 }] }),
     });
     toast(`Advance removed from lot ${lot.lot_no}`);
-    await payLwSearch();   // re-pull so Payable, the badge and the totals agree
+    await payLwSearch({ keepSelection: true });   // re-pull so Payable, the badge and the totals agree
   } catch (e) {
     alert('Could not remove the advance: ' + (e.message || e));
   }
@@ -45608,7 +45635,7 @@ async function payLwUndoAdvanceSelected() {
     const n = Number(d && d.cleared);
     const shown = Number.isFinite(n) ? n : lots.length;
     toast(`Advance removed from ${shown} lot${shown === 1 ? '' : 's'} (₹${fmtI(total, 2)})`);
-    await payLwSearch();
+    await payLwSearch({ keepSelection: true });
   } catch (e) {
     // Nothing was written — the endpoint rejects the batch as a whole.
     alert('Nothing was removed: ' + (e.message || e));
@@ -45686,10 +45713,12 @@ function payLwOpenAdvance() {
 // inputs, so a re-render on every keystroke would take the cursor with it —
 // payLwAdvSync() updates the totals and the validation in place instead.
 //
-// `tickIds` (a Set of lot ids) pins the ticks explicitly. Only the post-save
-// redraw passes it: payLwSearch() has just reset the screen's selection to
-// "everything payable", so deriving the ticks from it there would silently
-// re-tick every lot and throw away the operator's narrowing.
+// `tickIds` (a Set of lot ids) pins the DIALOG's ticks explicitly. Only the
+// post-save redraw passes it: the lots it just saved an advance against are
+// the ones it should still be showing ticked, and those are not necessarily
+// what the screen behind has selected. (The screen's own selection now
+// survives the re-pull — payLwSearch({keepSelection:true}) — so this is about
+// the dialog keeping its own place, not about repairing the screen.)
 function _payLwAdvRender(tickIds) {
   const body = document.getElementById('paylw-adv-body');
   if (!body) return;
@@ -46062,16 +46091,16 @@ async function payLwSaveAdvance() {
         items: changed.map(r => ({ lotId: r.lot.id, advance: r.amount, bankId: r.amount > 0 ? r.bankId : null })),
       }),
     });
-    // Which rows were ticked, captured BEFORE the reload — payLwSearch() resets
-    // the screen's selection to "everything payable", so the ticks have to be
-    // carried across by hand or the operator's narrowing is lost.
+    // The rows this save covered, captured BEFORE the reload so the dialog can
+    // redraw with them still ticked. (The SCREEN's selection is carried across
+    // by payLwSearch({keepSelection:true}) below; this is the dialog's own.)
     const tickedIds = new Set(rows.map(r => r.lot.id));
     const saved = Number(d && d.saved) || 0, cleared = Number(d && d.cleared) || 0;
     const bits = [];
     if (saved)   bits.push(`advance recorded on ${saved} lot${saved === 1 ? '' : 's'} (₹${fmtI(total, 2)})`);
     if (cleared) bits.push(`removed from ${cleared} lot${cleared === 1 ? '' : 's'}`);
     toast(bits.join(' · ') || 'Advance saved');
-    await payLwSearch();   // re-pull so Payable, the badge and the totals agree
+    await payLwSearch({ keepSelection: true });   // re-pull so Payable, the badge and the totals agree
     // The dialog STAYS OPEN. Recording an advance and sending it to the bank
     // are two halves of one job, and Export advance lives in this dialog —
     // closing here made the operator reopen Pay Advance and re-tick the same
