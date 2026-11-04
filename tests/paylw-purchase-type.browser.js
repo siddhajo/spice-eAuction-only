@@ -13,10 +13,16 @@
 //
 //   [switch]  the control exists, defaults to Both, and Both is today's screen
 //   [fold]    RD = one row per seller, with the lot count and summed figures
-//   [expand]  clicking the count reveals that seller's ordinary lot rows
+//   [open]    clicking the count opens that seller's lots in a DIALOG
 //   [tick]    a group box ticks exactly its own payable lots
 //   [mixed]   a seller whose lots differ says "mixed" rather than picking one
 //   [urd]     URD stays strictly lot-wise
+//
+// The lots used to open as an inline drawer inside the results table, which
+// has its own 62vh scroller — a seller with a dozen lots made a panel taller
+// than the room left, so the operator scrolled a box inside the page and the
+// row they had opened scrolled out of sight. Hence the dialog, and hence
+// [open] asserting the table behind stays one row per seller.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -256,63 +262,57 @@ function cleanup() {
       mk && /1000022222/.test(mk.bank), mk && mk.bank);
   }
 
-  console.log('[expand] the lot count opens the seller');
+  console.log('[open] the lot count opens the seller in a dialog');
   {
     const key = (await topRows()).find(r => /MURUGANANDAM/.test(r.seller)).group;
-    await page.evaluate(k => payLwToggleGroup(k), key);
-    await page.waitForFunction(() => !!document.querySelector('#paylw-body tr.paylw-grp-kids'), { timeout: 8000 });
+    await page.evaluate(k => payLwOpenGroup(k), key);
+    await page.waitForFunction(
+      () => document.getElementById('paylw-group-modal')?.classList.contains('show')
+            && document.querySelectorAll('#paylw-group-body tbody tr').length > 0,
+      { timeout: 8000 });
     const kids = await page.evaluate(() => Array.from(
-      document.querySelectorAll('#paylw-body tr.paylw-grp-kids tbody tr'))
+      document.querySelectorAll('#paylw-group-body tbody tr'))
       .map(tr => (tr.children[2]?.textContent || '').trim()));
-    check('its three lot rows appear', kids.length === 3 && kids.join(',') === '3,4,5', kids.join(','));
-    check('the outer table still shows two seller rows',
+    check('its three lot rows are in the dialog', kids.length === 3 && kids.join(',') === '3,4,5',
+      kids.join(','));
+    check('the table behind is untouched — still two seller rows',
       (await topRows()).length === 2, String((await topRows()).length));
-    check('the disclosure arrow flips to open',
-      /▾/.test((await topRows()).find(r => /MURUGANANDAM/.test(r.seller)).lotCell));
-    // The drawer must LOOK nested. It first shipped as a pale theme tint on a
-    // pale table and was indistinguishable from the rows around it, so the
-    // separation is asserted rather than eyeballed: a different ground from
-    // the outer row, an accent rail, and a quiet inner header instead of the
-    // outer table's dark band.
-    const look = await page.evaluate(() => {
-      const kid = document.querySelector('#paylw-body tr.paylw-kids > td');
-      const outer = document.querySelector('#paylw-body > .paylw-scroll > table > tbody > tr:not(.paylw-grp-kids)');
-      const innerTh = document.querySelector('#paylw-body .paylw-kids-inner thead th:nth-child(2)');
-      const outerTh = document.querySelector('#paylw-body > .paylw-scroll > table > thead th:nth-child(2)');
-      const bg = (el) => el ? getComputedStyle(el).backgroundColor : '';
-      const rowBg = (() => {
-        let e = outer && outer.children[1];
-        while (e) {
-          const c = getComputedStyle(e).backgroundColor;
-          const m = String(c).match(/[\d.]+/g);
-          if (m && (m.length < 4 || parseFloat(m[3]) > 0) && c !== 'transparent') return c;
-          e = e.parentElement;
-        }
-        return 'rgb(255, 255, 255)';
-      })();
-      const cs = kid ? getComputedStyle(kid) : null;
-      return {
-        kidBg: bg(kid), rowBg,
-        railWidth: cs ? parseFloat(cs.borderLeftWidth) : 0,
-        shadow: cs ? cs.boxShadow : '',
-        innerThBg: bg(innerTh), outerThBg: bg(outerTh),
-        hasCaption: !!document.querySelector('#paylw-body .paylw-kids-cap'),
-      };
+    check('the dialog names the seller and the count',
+      await page.evaluate(() => /MURUGANANDAM K/.test(document.getElementById('paylw-group-title').textContent)
+                                && /3 lots/.test(document.getElementById('paylw-group-title').textContent)),
+      await page.evaluate(() => document.getElementById('paylw-group-title').textContent));
+    check('…and carries the seller\'s totals in its subtitle',
+      await page.evaluate(() => /Payable/.test(document.getElementById('paylw-group-sub').textContent)),
+      await page.evaluate(() => document.getElementById('paylw-group-sub').textContent));
+    // The lots get the dialog's own scroll — that is the whole point of the
+    // change, so it is asserted rather than assumed.
+    const scrolls = await page.evaluate(() => {
+      const el = document.querySelector('#paylw-group-body .paylw-group-scroll');
+      return el ? getComputedStyle(el).overflowY : null;
     });
-    check('the drawer has a different ground from the rows around it',
-      look.kidBg && look.rowBg && look.kidBg !== look.rowBg,
-      `drawer ${look.kidBg} vs row ${look.rowBg}`);
-    check('…an accent rail down its left', look.railWidth >= 3, String(look.railWidth));
-    check('…and an inset shadow so it reads as opened',
-      /inset/.test(look.shadow), look.shadow);
-    check('the inner header is NOT the outer table\'s dark band',
-      look.innerThBg && look.outerThBg && look.innerThBg !== look.outerThBg,
-      `inner ${look.innerThBg} vs outer ${look.outerThBg}`);
-    check('the drawer names the seller it belongs to', look.hasCaption);
-
-    await page.evaluate(k => payLwToggleGroup(k), key);
-    const stillThere = await page.evaluate(() => !!document.querySelector('#paylw-body tr.paylw-grp-kids'));
-    check('clicking again closes it', !stillThere);
+    check('the lots scroll inside the dialog', scrolls === 'auto' || scrolls === 'scroll', String(scrolls));
+    check('no inline drawer is left in the table',
+      await page.evaluate(() => !document.querySelector('#paylw-body tr.paylw-grp-kids')));
+    // A tick inside the dialog is the SAME selection the toolbar counts.
+    const before = await selectedCount();
+    await page.evaluate(() => {
+      const cb = document.querySelector('#paylw-group-body tbody .paylw-cb');
+      if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change', { bubbles: true })); }
+    });
+    check('ticking in the dialog moves the screen\'s own selection',
+      (await selectedCount()) !== before, `${before} → ${await selectedCount()}`);
+    // Esc closes it, and the state goes with it.
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(
+      () => !document.getElementById('paylw-group-modal')?.classList.contains('show'),
+      { timeout: 8000 });
+    check('Escape closes the dialog',
+      await page.evaluate(() => !document.getElementById('paylw-group-modal').classList.contains('show')));
+    check('…and clears the open-group state',
+      await page.evaluate(() => _payLwState.openGroup === null),
+      await page.evaluate(() => String(_payLwState.openGroup)));
+    check('the table behind is still intact', (await topRows()).length === 2,
+      String((await topRows()).length));
   }
 
   console.log('[tick] a group box ticks exactly its own lots');

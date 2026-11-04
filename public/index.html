@@ -2360,43 +2360,17 @@ tr:hover td{background:var(--spice-cream)}
 .paylw-scroll .paylw-table{margin:0}
 .paylw-scroll .paylw-table thead th{position:sticky;top:-1px;z-index:2}
 
-/* ── Expanded seller drawer (RD seller-wise view) ─────────────────────────
-   The lots of one seller, opened under their summary row. This started out as
-   a pale theme tint on a pale table and was unreadable as a NESTED thing —
-   it looked like more rows of the same table.
-   Three cues do the separating, none of them colour alone:
-     • a recessed grey ground (--spice-line, which flips in dark mode) that is
-       plainly not the white table around it;
-     • a thick accent rail down the left, tying the drawer to the row above;
-     • an inset top shadow, so it reads as having opened out of that row.
-   The inner table also drops the outer table's dark header band for a quiet
-   one — a second dark band reads as a second, equal table rather than as
-   detail belonging to the seller above. */
-.paylw-kids > td{
-  padding:0 !important;
-  background:var(--spice-line);
-  border-left:4px solid var(--spice-cardamom);
-  box-shadow:inset 0 7px 7px -7px rgba(0,0,0,.28)
-}
-.paylw-kids-inner{padding:9px 12px 11px 12px}
-.paylw-kids-cap{
-  font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
-  color:var(--spice-cardamom-dk);margin:0 0 6px 2px
-}
-/* The nested table itself: its own white surface, so the grey drawer frames
-   it rather than tinting it. */
-.paylw-kids-inner .paylw-table{
-  background:var(--spice-paper);border-radius:7px;overflow:hidden;
-  box-shadow:0 1px 2px rgba(0,0,0,.07)
-}
-.paylw-kids-inner .paylw-table thead th{
-  position:static;background:var(--spice-cardamom-lt) !important;
-  color:var(--spice-cardamom-dk);font-size:10px;font-weight:700;
-  border-bottom:1px solid var(--spice-line)
-}
-body[data-dark="1"] .paylw-kids-inner .paylw-table thead th{
-  background:var(--spice-line) !important;color:var(--spice-text-main)
-}
+/* ── One seller's lots, in a dialog (RD seller-wise view) ─────────────────
+   This was an inline drawer under the seller's row. The results table has its
+   own 62vh scroller, so a seller with a dozen lots opened a panel taller than
+   the room left: the operator ended up scrolling a box inside the page and
+   the row they had just opened scrolled away above it. A dialog gives the
+   lots the page's full width and a scroll of their own.
+   The table inside keeps the screen's own header band — here it IS the only
+   table, so there is nothing for it to be confused with. */
+.paylw-group-scroll{max-height:min(56vh,620px);overflow:auto;border:1px solid var(--spice-line);border-radius:8px}
+.paylw-group-scroll .paylw-table{margin:0}
+.paylw-group-scroll .paylw-table thead th{position:sticky;top:-1px;z-index:2}
 
 /* Seller Bank Account rows (Add/Edit Seller) — a 2×2 grid that always fits
    inside the modal, with larger, clearly legible inputs + labels. */
@@ -8459,6 +8433,31 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
          lot-wise Payments screen. Opens on the CURRENT search results (paid
          lots excluded — they are settled), one row per lot, so the operator
          works against exactly what they filtered for. -->
+    <!-- ══ ONE SELLER'S LOTS (RD seller-wise view) ══════════════════
+         Opened by the lot count on a seller row. This used to be an inline
+         drawer inside the results table, which sits in its own 62vh scroller:
+         a seller with a dozen lots produced a panel taller than the space
+         left, so the operator scrolled a box inside the page and the row they
+         had opened scrolled out of sight. A dialog gives the lots the full
+         width and their own scroll, and leaves the table behind alone.
+         The rows ARE the ordinary lot rows (_payLwLotRow), so the ticks, the
+         bank picker, Pay Advance and the undo buttons are the same ones — and
+         a tick here is the same selection the toolbar is counting. -->
+    <div class="modal-bg" id="paylw-group-modal" style="z-index:60"><div class="modal has-x" style="max-width:1180px;width:96vw">
+      <!-- An explicit ✕ so installModalCloseButtons() leaves this one alone:
+           its generic one calls hideModal() straight, which would hide the
+           dialog while `openGroup` still named a seller and the table behind
+           never repainted. Everything closing goes through payLwCloseGroup(). -->
+      <button type="button" class="modal-x" title="Close" aria-label="Close" onclick="payLwCloseGroup()">&times;</button>
+      <h2 id="paylw-group-title" style="margin-bottom:4px">Seller's lots</h2>
+      <div id="paylw-group-sub" style="font-size:12.5px;color:var(--spice-text-mute);margin-bottom:12px;line-height:1.6"></div>
+      <div id="paylw-group-body"></div>
+      <div class="actions" style="align-items:center">
+        <div id="paylw-group-foot" style="margin-right:auto;font-size:12.5px;color:var(--text2)"></div>
+        <button class="btn btn-g" type="button" onclick="payLwCloseGroup()">Done</button>
+      </div>
+    </div></div>
+
     <div class="modal-bg" id="paylw-adv-modal" style="z-index:60"><div class="modal" style="max-width:1060px;width:96vw">
       <h2>💰 Pay Advance</h2>
       <p style="font-size:12.5px;color:var(--spice-text-mute);margin-bottom:12px;line-height:1.6">
@@ -44229,10 +44228,11 @@ const _payLwState = {
   // so the rows always describe the data actually on screen, even if the
   // operator changes the dropdown before pressing Search.
   ptype: 'all',
-  // Group keys (see _payLwGroups) whose member lots are showing. Survives a
-  // re-render so adding a bank account doesn't collapse the seller the
-  // operator is working through.
-  expanded: new Set(),
+  // The group key (see _payLwGroups) whose lots are open in the dialog, or
+  // null. One at a time — it is a dialog, not an accordion. Survives a
+  // re-render so adding a bank account doesn't shut the seller the operator
+  // is working through.
+  openGroup: null,
   // Ticked lot ids — what Export Bank Payment actually pays. Held in state
   // rather than read off the DOM so a re-render (adding an account, say)
   // doesn't silently throw the operator's selection away. A fresh search
@@ -44265,7 +44265,7 @@ function payLwOnAuctionChange() {
   _payLwState.selected = new Set();
   _payLwState.selectedPaid = new Set();
   _payLwState.missing = [];
-  _payLwState.expanded = new Set();
+  _payLwState.openGroup = null;
   // The previous trade's counts say nothing about this one — drop them so the
   // status options go back to plain labels until a search fills them again.
   _payLwState.statusCounts = null;
@@ -44294,7 +44294,7 @@ function payLwClear() {
   _payLwState.statusCounts = null;
   _payLwState.status = 'all';
   _payLwState.ptype = 'all';
-  _payLwState.expanded = new Set();
+  _payLwState.openGroup = null;
   _payLwState.sort = null;
   _payLwState.lots = [];
   _payLwState.selected = new Set();
@@ -44367,8 +44367,9 @@ async function payLwSearch(opts) {
     // fold an RD result set by seller and label lot counts that nothing in the
     // data supports.
     _payLwState.ptype = ptype;
-    // Groups from the previous search mean nothing to this one.
-    _payLwState.expanded = new Set();
+    // A seller open in the dialog may not even be in the new result set; the
+    // dialog repaints to say so rather than showing the previous search's lots.
+    if (_payLwState.openGroup) _payLwGroupModalRender();
     _payLwState.missing = d.missing || [];
     _payLwState.searched = true;
     // A new result set starts fully ticked — the common case is "export what
@@ -44621,11 +44622,99 @@ function payLwTickGroupPaid(key, checked) {
   _payLwRender();
 }
 
-// Show / hide one group's member lots.
-function payLwToggleGroup(key) {
-  if (_payLwState.expanded.has(key)) _payLwState.expanded.delete(key);
-  else _payLwState.expanded.add(key);
+// Open one seller's lots in a dialog. The rows are the ordinary per-lot rows,
+// so every tick, badge, bank picker and undo button is the same control the
+// lot-wise view uses — and a tick here moves the SAME selection the toolbar
+// counts, because both read `_payLwState.selected`.
+function payLwOpenGroup(key) {
+  const g = _payLwGroups().find(x => x.key === key);
+  if (!g) return;
+  _payLwState.openGroup = key;
+  _payLwGroupModalRender();
+  showModal('paylw-group-modal');
+}
+function payLwCloseGroup() {
+  if (!_payLwState.openGroup) { hideModal('paylw-group-modal'); return; }
+  _payLwState.openGroup = null;
+  hideModal('paylw-group-modal');
+  // Repaint the table behind: a bank change or an advance undone in the dialog
+  // has to show on the seller's summary row too.
   _payLwRender();
+}
+// Esc closes it, like every other dialog on this screen. Guarded on the
+// dialog actually being up so this never swallows an Esc meant for something
+// else stacked above it.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const bg = document.getElementById('paylw-group-modal');
+  if (bg && bg.classList.contains('show')) { e.stopPropagation(); payLwCloseGroup(); }
+});
+// Kept as the old name so anything still calling it opens the dialog rather
+// than silently doing nothing.
+function payLwToggleGroup(key) {
+  if (_payLwState.openGroup === key) payLwCloseGroup(); else payLwOpenGroup(key);
+}
+
+// Paint the dialog from current state. Called on open and again after any
+// re-render, so a bank account added or an advance removed inside the dialog
+// is reflected without closing it.
+function _payLwGroupModalRender() {
+  const key = _payLwState.openGroup;
+  if (!key) return;
+  const g = _payLwGroups().find(x => x.key === key);
+  const body = document.getElementById('paylw-group-body');
+  if (!body) return;
+  // The seller can vanish from the result set under the dialog — a re-search,
+  // or every one of their lots marked paid. Say so rather than showing an
+  // empty table that looks like a loading failure.
+  if (!g) {
+    body.innerHTML = `<div style="padding:28px;text-align:center;color:var(--text3);font-size:13px">
+      These lots are no longer in the results — the search or a filter has changed.</div>`;
+    const t = document.getElementById('paylw-group-title');
+    if (t) t.textContent = 'Seller’s lots';
+    const s = document.getElementById('paylw-group-sub'); if (s) s.textContent = '';
+    const f = document.getElementById('paylw-group-foot'); if (f) f.textContent = '';
+    return;
+  }
+  const canWrite = document.body.getAttribute('data-perm-lot-write') === '1';
+  const lots = g.lots;
+  const sum = (fn) => lots.reduce((s, l) => s + (Number(fn(l)) || 0), 0);
+  const qty = sum(l => l.qty);
+  const advance = sum(l => l.advance);
+  const tds = sum(l => l.tds);
+  const payable = sum(l => l.payable);
+  const paidN = lots.filter(l => l.paid_at).length;
+
+  const title = document.getElementById('paylw-group-title');
+  if (title) title.textContent = `${g.name} — ${lots.length} lot${lots.length === 1 ? '' : 's'}`;
+  const sub = document.getElementById('paylw-group-sub');
+  if (sub) {
+    const bits = [`Qty <strong>${fmtI(qty, 3)}</strong>`];
+    if (advance > 0) bits.push(`Advance <strong>₹${fmtI(advance, 2)}</strong>`);
+    if (tds > 0) bits.push(`TDS <strong>₹${fmtI(tds, 2)}</strong>`);
+    bits.push(`Payable <strong style="color:var(--spice-cardamom-dk)">₹${fmtI(payable, 2)}</strong>`);
+    if (paidN) bits.push(`<span style="color:#166534">${paidN} already paid</span>`);
+    sub.innerHTML = bits.join(' &nbsp;·&nbsp; ');
+  }
+  body.innerHTML = `
+    <div class="paylw-group-scroll">
+      <table class="paylw-table" style="width:100%">
+        <thead><tr>
+          <th style="width:36px"></th><th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th>
+          <th>Branch</th><th style="min-width:320px">Bank</th>
+          <th style="text-align:right">Advance</th><th style="text-align:right">Payable</th>
+        </tr></thead>
+        <tbody>${lots.map(l => _payLwLotRow(l, canWrite)).join('')}</tbody>
+      </table>
+    </div>`;
+  const foot = document.getElementById('paylw-group-foot');
+  if (foot) {
+    const sel = _payLwGroupSelectable(g).filter(l => _payLwState.selected.has(l.id)).length;
+    const can = _payLwGroupSelectable(g).length;
+    foot.textContent = can
+      ? `${sel} of ${can} payable lot${can === 1 ? '' : 's'} ticked — the same selection the toolbar is counting`
+      : 'No payable lots here';
+  }
 }
 
 // One summary row per seller, plus that seller's lot rows when expanded.
@@ -44720,13 +44809,13 @@ function _payLwGroupRows(canWrite) {
       badges += badge('#FEF2F2', '#B91C1C', `₹${fmtI(over, 2)} more was advanced than these lots finally came to — it has to be recovered from the seller.`, `⚠ over ₹${fmtI(over, 2)}`);
     }
 
-    const open = _payLwState.expanded.has(g.key);
-    // The lot count is the disclosure control: this row stands for N lots, and
-    // clicking the count is the obvious way to ask which.
-    const lotsCell = `<button type="button" onclick="payLwToggleGroup('${esc(g.key)}')"
-        style="background:none;border:none;padding:0;cursor:pointer;font:inherit;font-weight:600;color:var(--spice-cardamom-dk);display:inline-flex;gap:4px;align-items:center"
-        title="${open ? 'Hide' : 'Show'} this seller's ${lots.length} lot${lots.length === 1 ? '' : 's'}">
-        <span style="font-size:10px">${open ? '▾' : '▸'}</span>${lots.length} lot${lots.length === 1 ? '' : 's'}</button>`;
+    // The lot count is the control: this row stands for N lots, and clicking
+    // the count is the obvious way to ask which. It opens a dialog — see
+    // payLwOpenGroup() for why this is not an inline drawer any more.
+    const lotsCell = `<button type="button" onclick="payLwOpenGroup('${esc(g.key)}')"
+        style="background:none;border:none;padding:0;cursor:pointer;font:inherit;font-weight:600;color:var(--spice-cardamom-dk);text-decoration:underline;text-underline-offset:2px;display:inline-flex;gap:5px;align-items:center"
+        title="Open this seller's ${lots.length} lot${lots.length === 1 ? '' : 's'}">
+        ${lots.length} lot${lots.length === 1 ? '' : 's'}<span style="font-size:10px;opacity:.75">⧉</span></button>`;
 
     // Group box. Unpaid groups tick their payable lots for the export; a
     // fully-paid group offers the admin undo instead, exactly as a paid lot row
@@ -44763,24 +44852,9 @@ function _payLwGroupRows(canWrite) {
 
     // Expanded: the ordinary per-lot rows, tinted to read as children of the
     // seller above rather than as peers of the other group rows.
-    // Expanded: the ordinary per-lot rows, in a recessed drawer so they read
-    // as this seller's detail rather than as more rows of the outer table.
-    // See the .paylw-kids CSS for the three separating cues.
-    const children = open
-      ? `<tr class="paylw-grp-kids paylw-kids"><td colspan="8">
-           <div class="paylw-kids-inner">
-             <div class="paylw-kids-cap">${esc(g.name)} — ${lots.length} lot${lots.length === 1 ? '' : 's'}</div>
-             <table class="paylw-table" style="width:100%;margin:0">
-               <thead><tr>
-                 <th style="width:36px"></th><th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th>
-                 <th>Branch</th><th style="min-width:320px">Bank</th>
-                 <th style="text-align:right">Advance</th><th style="text-align:right">Payable</th>
-               </tr></thead>
-               <tbody>${lots.map(l => _payLwLotRow(l, canWrite)).join('')}</tbody>
-             </table>
-           </div></td></tr>`
-      : '';
-    return groupRow + children;
+    // No nested rows any more — the lots open in their own dialog, which is
+    // what keeps this table one row per seller however many lots a seller has.
+    return groupRow;
   }).join('');
 }
 
@@ -45074,6 +45148,9 @@ function _payLwRender() {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+  // Keep the open dialog in step: a bank account added or an advance undone
+  // from inside it has to repaint there too, not only on the table behind.
+  _payLwGroupModalRender();
   _payLwRefreshSelection();
 }
 
