@@ -18597,8 +18597,9 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
 //           of Supply). Same predicate the purchase and bill generators gate
 //           their eligible-lot queries on — calculations.hasValidGstinSql —
 //           so this screen and those documents can never disagree about which
-//           side a seller is on. The client renders `urd` seller-wise and the
-//           other two lot-wise; the SERVER only filters.
+//           side a seller is on. The client renders `rd` seller-wise (a dealer
+//           is settled as a party) and the other two lot-wise; the SERVER only
+//           filters.
 //   status  all (default) | paid | advance | unpaid — where the lot stands in
 //           the payment run. The three buckets PARTITION the result: a lot is
 //           `paid` once it carries a paid stamp (whether or not an advance was

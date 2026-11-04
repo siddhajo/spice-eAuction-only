@@ -1,18 +1,22 @@
 // Payments — Lot-wise: the RD / URD purchase-type views, driven through the
 // REAL screen in a headless Chrome.
 //
+// A registered dealer is settled as a PARTY — one consolidated payment over
+// whatever lots they brought — so the RD view folds one row per seller. An
+// agriculturist is paid LOT BY LOT, so the URD view stays lot-wise.
+//
 // The server-side split is covered by paylw-purchase-type.http.js. What only a
-// browser can answer is whether the URD view actually FOLDS: one row per
+// browser can answer is whether the RD view actually FOLDS: one row per
 // seller, the lot count as the disclosure control, aggregates that add up, and
 // — the part that protects money — a group checkbox that ticks its own lots
 // and nothing else, so the export count still reconciles.
 //
 //   [switch]  the control exists, defaults to Both, and Both is today's screen
-//   [fold]    URD = one row per seller, with the lot count and summed figures
+//   [fold]    RD = one row per seller, with the lot count and summed figures
 //   [expand]  clicking the count reveals that seller's ordinary lot rows
 //   [tick]    a group box ticks exactly its own payable lots
 //   [mixed]   a seller whose lots differ says "mixed" rather than picking one
-//   [rd]      RD stays strictly lot-wise
+//   [urd]     URD stays strictly lot-wise
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -68,8 +72,9 @@ function cleanup() {
   const auc = await api('POST', '/api/auctions', { ano: '61', date: '2026-10-20', state: 'TAMIL NADU' });
   const aid = auc.d && (auc.d.id || (auc.d.auction && auc.d.auction.id));
 
-  // One RD dealer with 2 lots, and two URD planters: one with 3 lots in a
-  // single branch, one with 2 lots across two branches (the "mixed" case).
+  // Two RD dealers — one with 3 lots in a single branch, one with 2 lots
+  // across two branches (the "mixed" case) — and one URD planter with 2 lots,
+  // which must stay lot-wise.
   const mk = async (name, cr, banks) => {
     const t = await api('POST', '/api/traders',
       { name, cr, padd: 'ADDR', ppla: 'PLACE', banks: banks || [] });
@@ -79,9 +84,10 @@ function cleanup() {
   };
   const acct = (n, holder) => [{ acctnum: n, ifsc: 'HDFC0001234', bank_name: 'HDFC',
     holder_name: holder, account_type: 'Savings', is_default: 1 }];
-  const dealerId  = await mk('AAA TRADERS',    'GSTIN.33AAHCE4551A1Z8', acct('1000011111', 'AAA TRADERS'));
-  const planterId = await mk('MURUGANANDAM K', '',                      acct('1000022222', 'MURUGANANDAM K'));
-  const mixedId   = await mk('RAVI KUMAR',     'CR.4821',               acct('1000033333', 'RAVI KUMAR'));
+  // GSTIN in `cr` ⇒ RD. The two folded sellers are therefore the dealers.
+  const planterId = await mk('MURUGANANDAM K', 'GSTIN.33AAHCE4551A1Z8', acct('1000022222', 'MURUGANANDAM K'));
+  const mixedId   = await mk('RAVI KUMAR',     '33AAHCE4551A1Z9',       acct('1000033333', 'RAVI KUMAR'));
+  const dealerId  = await mk('AAA TRADERS',    '',                      acct('1000011111', 'AAA TRADERS'));
 
   const addLot = async (lot_no, name, cr, traderId, branch) => {
     const r = await api('POST', '/api/lots', {
@@ -93,13 +99,15 @@ function cleanup() {
     await api('PUT', `/api/lots/${id}`, { price: 2000, amount: 200000, balance: 196000 });
     return id;
   };
-  await addLot('1', 'AAA TRADERS', 'GSTIN.33AAHCE4551A1Z8', dealerId, 'ANAVILASAM');
-  await addLot('2', 'AAA TRADERS', 'GSTIN.33AAHCE4551A1Z8', dealerId, 'ANAVILASAM');
-  await addLot('3', 'MURUGANANDAM K', '', planterId, 'ANAVILASAM');
-  await addLot('4', 'MURUGANANDAM K', '', planterId, 'ANAVILASAM');
-  await addLot('5', 'MURUGANANDAM K', '', planterId, 'ANAVILASAM');
-  await addLot('6', 'RAVI KUMAR', 'CR.4821', mixedId, 'ANAVILASAM');
-  await addLot('7', 'RAVI KUMAR', 'CR.4821', mixedId, 'BODINAYAKANUR');
+  // Lots 1-2: the URD planter, which must stay lot-wise.
+  await addLot('1', 'AAA TRADERS', '', dealerId, 'ANAVILASAM');
+  await addLot('2', 'AAA TRADERS', '', dealerId, 'ANAVILASAM');
+  // Lots 3-5: an RD dealer in one branch. Lots 6-7: an RD dealer across two.
+  await addLot('3', 'MURUGANANDAM K', 'GSTIN.33AAHCE4551A1Z8', planterId, 'ANAVILASAM');
+  await addLot('4', 'MURUGANANDAM K', 'GSTIN.33AAHCE4551A1Z8', planterId, 'ANAVILASAM');
+  await addLot('5', 'MURUGANANDAM K', 'GSTIN.33AAHCE4551A1Z8', planterId, 'ANAVILASAM');
+  await addLot('6', 'RAVI KUMAR', '33AAHCE4551A1Z9', mixedId, 'ANAVILASAM');
+  await addLot('7', 'RAVI KUMAR', '33AAHCE4551A1Z9', mixedId, 'BODINAYAKANUR');
 
   // ── Drive the real screen ────────────────────────────────────────────
   let chrome = null;
@@ -195,11 +203,11 @@ function cleanup() {
     check('…under a "Lot" column', (await header()).includes('Lot'), (await header()).join(' | '));
   }
 
-  console.log('[rd] RD Purchase stays strictly lot-wise');
+  console.log('[urd] URD Purchase stays strictly lot-wise');
   {
-    await search('rd');
+    await search('urd');
     const rows = await topRows();
-    check('only the dealer\'s two lots, one row each',
+    check('only the agriculturist\'s two lots, one row each',
       rows.length === 2 && rows.every(r => !r.group && /AAA TRADERS/.test(r.seller)),
       `${rows.length} :: ${rows.map(r => r.seller + '/' + r.lotCell).join(' | ')}`);
     check('lot numbers, not counts', rows.map(r => r.lotCell).join(',') === '1,2',
@@ -207,22 +215,22 @@ function cleanup() {
     check('the column is still "Lot"', (await header()).includes('Lot'));
   }
 
-  console.log('[fold] URD Purchase folds one row per seller');
-  let urdRows;
+  console.log('[fold] RD Purchase folds one row per seller');
+  let foldedRows;
   {
-    await search('urd');
-    urdRows = await topRows();
-    check('two sellers, not five lots', urdRows.length === 2,
-      `${urdRows.length} :: ${urdRows.map(r => r.seller).join(' | ')}`);
-    check('every row is a group row', urdRows.every(r => r.group.startsWith('t:')),
-      urdRows.map(r => r.group).join(' | '));
+    await search('rd');
+    foldedRows = await topRows();
+    check('two sellers, not five lots', foldedRows.length === 2,
+      `${foldedRows.length} :: ${foldedRows.map(r => r.seller).join(' | ')}`);
+    check('every row is a group row', foldedRows.every(r => r.group.startsWith('t:')),
+      foldedRows.map(r => r.group).join(' | '));
     check('the column heading becomes "Lots"',
       (await header()).includes('Lots') && !(await header()).includes('Lot'),
       (await header()).join(' | '));
-    const mk = urdRows.find(r => /MURUGANANDAM/.test(r.seller));
-    const rk = urdRows.find(r => /RAVI KUMAR/.test(r.seller));
-    check('the planter with 3 lots says so', mk && /3 lots/.test(mk.lotCell), mk && mk.lotCell);
-    check('the planter with 2 lots says so', rk && /2 lots/.test(rk.lotCell), rk && rk.lotCell);
+    const mk = foldedRows.find(r => /MURUGANANDAM/.test(r.seller));
+    const rk = foldedRows.find(r => /RAVI KUMAR/.test(r.seller));
+    check('the dealer with 3 lots says so', mk && /3 lots/.test(mk.lotCell), mk && mk.lotCell);
+    check('the dealer with 2 lots says so', rk && /2 lots/.test(rk.lotCell), rk && rk.lotCell);
     check('Qty is summed over the seller\'s lots (3 × 100)',
       mk && /300/.test(mk.qty.replace(/,/g, '')), mk && mk.qty);
     // 3 × 1,96,000 = 5,88,000. Read as a NUMBER rather than pattern-matched,
@@ -232,8 +240,8 @@ function cleanup() {
       mk && asNum(mk.payable) === 588000, mk && `${mk.payable} → ${asNum(mk.payable)}`);
     check('…and the other seller\'s is its own 2 × 1,96,000 = 3,92,000',
       rk && asNum(rk.payable) === 392000, rk && `${rk.payable} → ${asNum(rk.payable)}`);
-    check('no RD seller appears in the URD view',
-      !urdRows.some(r => /AAA TRADERS/.test(r.seller)), urdRows.map(r => r.seller).join(' | '));
+    check('no URD seller appears in the RD view',
+      !foldedRows.some(r => /AAA TRADERS/.test(r.seller)), foldedRows.map(r => r.seller).join(' | '));
   }
 
   console.log('[mixed] differing values are named, not guessed');
@@ -268,7 +276,7 @@ function cleanup() {
 
   console.log('[tick] a group box ticks exactly its own lots');
   {
-    await search('urd');
+    await search('rd');
     await page.evaluate(() => payLwTickAll(false));
     check('nothing selected to start', (await selectedCount()) === 0, String(await selectedCount()));
     const key = (await topRows()).find(r => /MURUGANANDAM/.test(r.seller)).group;

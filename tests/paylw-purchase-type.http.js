@@ -1,9 +1,9 @@
 // Payments — lot-wise: the RD / URD purchase-type split (?ptype).
 //
-// RD and URD sellers are not paid the same way. A registered dealer is
-// invoiced and settled lot by lot; an agriculturist is covered by one Bill of
-// Supply and paid as a party. The screen now lets the operator ask for one or
-// the other, and the URD view folds the table one row per seller.
+// RD and URD sellers are not paid the same way. A registered dealer is settled
+// as a PARTY — one consolidated payment over whatever lots they brought — and
+// an agriculturist is paid LOT BY LOT. The screen now lets the operator ask
+// for one or the other, and the RD view folds the table one row per seller.
 //
 // The SERVER's job is only the filter — and the thing that must never drift is
 // WHICH predicate splits the two. It has to be the GSTIN-on-`cr` rule that
