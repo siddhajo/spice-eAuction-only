@@ -946,6 +946,10 @@ async function initDb() {
     error TEXT DEFAULT '',
     ref_type TEXT DEFAULT '',
     ref_id TEXT DEFAULT '',
+    -- Last ten digits of the phone column, written at insert. The gate in
+    -- wa-compliance.js keys every per-contact counter on it; see the
+    -- migration of the same name for why it is persisted and not computed.
+    phone_key TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime')),
     updated_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
@@ -959,6 +963,95 @@ async function initDb() {
     body TEXT DEFAULT '',
     received_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
+
+  // ── WHATSAPP CONSENT LEDGER ────────────────────────────────
+  // Who has agreed to be messaged, who has asked us to stop, and — the part
+  // Meta actually asks a business to be able to produce — WHERE each of
+  // those came from.
+  //
+  // This table is the fix for the 2026-11-04 account disablement ("breach of
+  // Terms of Acceptable Use"). Before it existed there was nowhere to record
+  // an opt-in, so every send rested on the assumption that a phone number in
+  // the master implied permission; and an inbound "STOP" was written to
+  // whatsapp_inbound, read by nobody, and the greetings kept going. See
+  // wa-compliance.js for the rules this table feeds.
+  //
+  // KEYED ON THE LAST TEN DIGITS, not the number as typed. The send log
+  // holds 91 + ten, the masters mostly hold the bare ten, and an operator
+  // entering an opt-out by hand types whatever they were read over the
+  // phone — all three have to land on the same row or an opt-out is honoured
+  // for one spelling of a number and ignored for another.
+  //
+  // The absence of a row is a THIRD state ("never asked") and is deliberately
+  // never stored: writing it would make an untouched master look audited.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS wa_consent (
+    phone_key TEXT PRIMARY KEY,                -- last 10 digits; see above
+    phone TEXT DEFAULT '',                     -- as captured, for display
+    status TEXT NOT NULL DEFAULT 'in',         -- 'in' | 'out'
+    -- HOW MUCH an opt-out covers. 'all' (the default, and what a bare
+    -- "STOP" means by Meta's own convention) silences every message,
+    -- invoices included. 'marketing' is for the person who actually said
+    -- "stop the birthday messages but keep sending my bills" — a real
+    -- request, and one that a single total-silence setting could only
+    -- answer by cutting them off from their own documents. Only an
+    -- operator can record the narrower scope: no automatic reader is
+    -- confident enough to infer it from words.
+    scope TEXT NOT NULL DEFAULT 'all',         -- 'all' | 'marketing'
+    -- HOW it was captured. 'reply' = the contact messaged us; 'button' = a
+    -- template Stop tap; 'operator' = typed in from a call or a signed form;
+    -- 'meta' = Meta refused a send because the user had stopped us;
+    -- 'import' = a bulk legacy capture.
+    source TEXT DEFAULT 'operator',
+    basis TEXT DEFAULT '',                     -- the evidence, in words
+    note TEXT DEFAULT '',                      -- what they actually said
+    party_type TEXT DEFAULT '',                -- 'seller' | 'buyer' when known
+    party_id INTEGER,
+    -- First opt-in and LATEST opt-out are both kept. An auditor asks "since
+    -- when did you have permission" and "when did you stop"; one column
+    -- overwritten by the other loses whichever answer is needed.
+    opted_in_at TEXT,
+    opted_out_at TEXT,
+    updated_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+  wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_wa_consent_status ON wa_consent(status)`);
+  wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_wa_consent_party ON wa_consent(party_type, party_id)`);
+
+  // ── WHATSAPP POLICY LOG ────────────────────────────────────
+  // What the compliance gate DECIDED, as against what was sent. Deliberately
+  // a separate table from whatsapp_messages, for two reasons:
+  //
+  //   • The send log answers "where does this document stand?", and readers
+  //     resolve that by taking the NEWEST row per (ref_type, ref_id). In
+  //     `warn` mode a message is allowed out despite a verdict against it,
+  //     so writing that verdict to the send log would put a row newer than
+  //     the real send in front of every reader and make a delivered invoice
+  //     read as refused.
+  //   • "Which rule fires most often, and against whom?" is the question
+  //     this table exists to answer, and it wants a row per DECISION —
+  //     including the ones that allowed the message through.
+  //
+  // An ENFORCED refusal still writes its own row to whatsapp_messages with
+  // status 'blocked'; that one is the document's true latest state, because
+  // nothing was sent. Only the reasoning lives here.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS wa_policy_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone_key TEXT DEFAULT '',                 -- last 10 digits, as wa_consent
+    phone TEXT DEFAULT '',
+    cls TEXT DEFAULT '',                       -- 'marketing' | 'utility' | 'service'
+    code TEXT DEFAULT '',                      -- 'opted_out' | 'no_optin' | 'too_soon' | …
+    reason TEXT DEFAULT '',                    -- the sentence shown to the operator
+    -- 'enforce' = the send was refused; 'warn' = it went anyway and this row
+    -- is the only record that it should not have.
+    mode TEXT DEFAULT 'enforce',
+    msg_type TEXT DEFAULT '',
+    ref_type TEXT DEFAULT '',
+    ref_id TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+  wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_wa_policy_at ON wa_policy_log(created_at)`);
+  wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_wa_policy_code ON wa_policy_log(code, created_at)`);
 
   // ── BIRTHDAY GREETINGS (send-once ledger) ──────────────────
   // One row per greeting ATTEMPT, for sellers (`traders.id`) and buyers
@@ -1063,6 +1156,48 @@ async function initDb() {
     paid_at TEXT DEFAULT (datetime('now','localtime')),
     updated_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
+
+  // ── DELIVERY CHALLANS ISSUED ───────────────────────────────
+  // One row per challan PRINTED (flag_delivery_chalan). Until this existed a
+  // challan left no trace at all: the serial counter advanced and the PDF went
+  // to the printer, so the office had a paper book and the app knew nothing —
+  // there was no way to answer "which challans went out last week?" or to
+  // reconcile the book against the lots that actually moved.
+  //
+  // Keyed on the challan NUMBER, not an autoincrement: the number IS the
+  // document's identity, and re-printing a lost challan under its own number
+  // must update that row rather than add a second one claiming the same
+  // serial. (A typed-over number is a deliberate one-off — see
+  // leConfirmChalan — and lands here under the number actually printed.)
+  //
+  // The despatch fields (vehicle, mode, receiver, time) are facts about the
+  // consignment that are typed at print time and exist nowhere else, so they
+  // are stored rather than re-derived. `lots` is the lot-number list the
+  // challan covered, kept as text because a challan is a snapshot: the lots
+  // may later be re-priced, re-allocated or deleted, and the gate pass still
+  // said what it said.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS delivery_chalans (
+    chalan_no TEXT PRIMARY KEY,
+    serial INTEGER,
+    auction_id INTEGER,
+    date TEXT DEFAULT '',
+    time TEXT DEFAULT '',
+    branch TEXT DEFAULT '',
+    veh TEXT DEFAULT '',
+    mode TEXT DEFAULT '',
+    receiver TEXT DEFAULT '',
+    lot_count INTEGER DEFAULT 0,
+    bags REAL DEFAULT 0,
+    qty REAL DEFAULT 0,
+    value REAL DEFAULT 0,
+    lots TEXT DEFAULT '',
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+  // The register reads by date; a challan book is always consulted as a date
+  // range ("what went out in October?").
+  try { wrapped.exec(`CREATE INDEX IF NOT EXISTS idx_dc_date ON delivery_chalans(date)`); } catch (_) {}
 
   // ── GODOWN MOVEMENTS ───────────────────────────────────────
   // One row per release of stored stock into an auction (flag_godown). A
@@ -1262,6 +1397,28 @@ async function initDb() {
     "ALTER TABLE buyers ADD COLUMN dob TEXT DEFAULT ''",
     // Operator behind a manual birthday greeting; blank for the daily sweep.
     "ALTER TABLE birthday_greetings ADD COLUMN sent_by TEXT DEFAULT ''",
+    // ── Indexable recipient key on the send log ───────────────
+    // The compliance gate asks three questions per send — "when did this
+    // contact last get a marketing message", "how many have they had in 24h",
+    // "has Meta ever delivered to this number" — and all three key on the
+    // LAST TEN DIGITS, because the log stores 91 + ten while the masters hold
+    // the bare ten. Computing that with substr(replace(...)) in the WHERE
+    // clause cannot use an index, so a 250-row bulk run became 750 full scans
+    // of the log. Persisting the key at insert time (see _waLog) makes all
+    // three index lookups instead.
+    "ALTER TABLE whatsapp_messages ADD COLUMN phone_key TEXT DEFAULT ''",
+    // Backfill every row written before the column existed. Idempotent: the
+    // WHERE clause only touches rows whose key is still blank.
+    `UPDATE whatsapp_messages
+        SET phone_key = substr(replace(replace(replace(replace(replace(IFNULL(phone,''),' ',''),'-',''),'+',''),'(',''),')',''), -10)
+      WHERE (phone_key IS NULL OR phone_key = '') AND IFNULL(phone,'') <> ''`,
+    // Created here rather than in the `indexes` list above: that list runs
+    // BEFORE the migrations, so on an upgraded database the column does not
+    // exist yet and the CREATE INDEX silently fails into the try/catch.
+    'CREATE INDEX IF NOT EXISTS idx_wa_messages_key_at ON whatsapp_messages(phone_key, created_at)',
+    // Scope of an opt-out; see the wa_consent DDL. Existing rows default to
+    // 'all', which is the stricter reading and therefore the safe one.
+    "ALTER TABLE wa_consent ADD COLUMN scope TEXT NOT NULL DEFAULT 'all'",
     // Distance for e-way bill <DISTANCE> field on ISP sales vouchers.
     // Populated manually per-invoice from the To Tally → 🗺️ E-way Bill
     // Distance UI: user looks up the value on NIC's Pin-to-Pin Distance

@@ -16,7 +16,7 @@ const { initDb, getDb, DB_PATH, replaceFromBuffer } = require('./db');
 const { initCompanySettings, CATEGORIES, getSetting, getSettingBool, getAllSettings, updateSettings, getSettingHistory, getSettingsFlat, getGSTRates,
         SCREEN_FLAGS, SCREEN_FLAG_KEYS, screenFlagDefault } = require('./company-config');
 const grade2Alerts = require('./grade2-alerts');
-const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, planterDebitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, pinAuctionRates, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql, hydrateAltCodes } = require('./calculations');
+const { calculateLot, buildSalesInvoice, buildPurchaseInvoice, buildAgriBill, buildDebitNote, debitNoteTotal, planterDebitNoteTotal, listAgriSellers, getPaymentSummary, getBankPaymentData, getTDSReturnData, getSalesJournal, getSalesJournalSummary, getPurchaseJournal, getDeliveryChalanRegister, gstinStateCode, deriveSaleType, isDealerSeller, dealerSql, hasValidGstinSql, tdsByLot, pinAuctionRates, effectiveGradeCrSql, dummyPlanterCrSql, hasDummySellerSql, lotGradeLabelSql, hydrateAltCodes } = require('./calculations');
 const { generatePurchaseInvoicePDF, generateCropReceiptPDF, generateAgriBillPDF, generateSalesInvoicePDF, generateSalesInvoicesBatchPDF, generatePurchaseInvoicesBatchPDF, generateAgriBillsBatchPDF, generateCommissionBoSBatchPDF, effectiveCompany } = require('./invoice-pdf');
 // Faint company-logo watermark shared by BOTH PDF engines — the debit notes
 // and the Commission Bill (Format 2) draw their own PDFKit layouts here rather
@@ -3894,11 +3894,18 @@ async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], do
 //   not_attempted — the run was cut short before this row's turn (the
 //                   account-level breaker tripped, or the operator hit Stop)
 //   not_sent      — the row could not be built or had no number on file
-// Neither is a Meta verdict, so neither may count as a send: they spend no
+//   blocked       — the compliance gate refused it (no opt-in, an opt-out on
+//                   record, a cap, a degraded quality rating). Added
+//                   2026-11-04 with wa-compliance.js. It belongs in this
+//                   list for exactly the same reason as the other two —
+//                   nothing was handed to Meta — and it belongs in the send
+//                   log at all because an invoice the app refused to send is
+//                   something the operator has to deliver another way.
+// None is a Meta verdict, so none may count as a send: they spend no
 // 24h recipient headroom, add nothing to "sent today", and are invisible to
 // the billing-block scan (which reads Meta's own `failed` reasons). `failed`
 // stays what it has always been — Meta refused this message.
-const WA_UNSENT_STATUSES = ['not_attempted', 'not_sent'];
+const WA_UNSENT_STATUSES = ['not_attempted', 'not_sent', 'blocked'];
 const WA_UNSENT_SQL = `('${WA_UNSENT_STATUSES.join("','")}')`;
 
 // Shared with the client's twin in public/index.html. `phoneProblem` stops a
@@ -3906,23 +3913,122 @@ const WA_UNSENT_SQL = `('${WA_UNSENT_STATUSES.join("','")}')`;
 // module for why the test is deliberately narrow.
 const { phoneProblem: _waPhoneProblem } = require('./wa-errors');
 
+// ── The compliance gate ───────────────────────────────────────
+// Every send below passes through `_waGateSend` before it reaches Meta. The
+// rules, and why each exists, are in wa-compliance.js; the short version is
+// that this app was disabled by Meta on 2026-11-04 for messaging people who
+// had never opted in and ignoring the ones who asked us to stop, and this is
+// where that is now prevented. Enforcement is server-side on purpose: the
+// client greys rows out as a courtesy, but a caller that forgets the rules
+// still gets a refusal.
+const waPolicy = require('./wa-compliance');
+
 // Append a row to the send log. Best-effort — never throws into a handler.
 function _waLog(db, f) {
   try {
     db.run(
-      `INSERT INTO whatsapp_messages (wamid, direction, phone, msg_type, caption, status, error, ref_type, ref_id)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO whatsapp_messages (wamid, direction, phone, msg_type, caption, status, error, ref_type, ref_id, phone_key)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
       [f.wamid || '', f.direction || 'out', f.phone || '', f.msg_type || '',
-       f.caption || '', f.status || 'queued', f.error || '', f.ref_type || '', f.ref_id || '']
+       f.caption || '', f.status || 'queued', f.error || '', f.ref_type || '', f.ref_id || '',
+       // The compliance gate's per-contact counters all key on the last ten
+       // digits; persisting it here is what lets them be index lookups
+       // rather than three scans of this table per send.
+       waPolicy.consentKey(f.phone)]
     );
   } catch (_) { /* logging must not break sends */ }
+}
+
+// ── Account health, read synchronously, refreshed in the background ──
+// Meta's quality rating for the sending number is the only warning a sender
+// gets before enforcement, so the gate consults it — but a send must never
+// wait on a Graph round-trip, and a Meta outage must never stop the day's
+// invoices. So the rating is cached, the cache is refreshed lazily, and an
+// unknown rating is treated as GREEN (permissive). The stamp is written
+// BEFORE the fetch so a slow or failing call cannot trigger one refresh per
+// send.
+let _waHealthCache = { at: 0, rating: '' };
+const WA_HEALTH_CACHE_MS = 10 * 60 * 1000;
+function _waHealthNow(db, cfg) {
+  if (!cfg || !cfg.configured) return 'unknown';
+  if (Date.now() - _waHealthCache.at > WA_HEALTH_CACHE_MS) {
+    _waHealthCache.at = Date.now();
+    Promise.resolve()
+      .then(() => _waMessagingLimit(cfg))
+      .then((r) => { if (r && r.qualityRating) _waHealthCache.rating = r.qualityRating; })
+      .catch(() => {});
+  }
+  return waPolicy.healthFromRating(_waHealthCache.rating);
+}
+
+// Record a gate decision. Enforced refusals go to BOTH logs: wa_policy_log
+// keeps the reasoning, and whatsapp_messages gets a `blocked` row because a
+// document the app refused to send is part of that document's story and has
+// to show up on the send log and on "↻ Select unsent". A warn-mode advisory
+// goes ONLY to the policy log — the message did go out, and a second row in
+// the send log would be newer than the real send and make a delivered
+// invoice read as refused.
+function _waLogPolicy(db, v, f) {
+  try {
+    db.run(
+      `INSERT INTO wa_policy_log (phone_key, phone, cls, code, reason, mode, msg_type, ref_type, ref_id)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [waPolicy.consentKey(f.phone), String(f.phone || ''), v.cls || '', v.code || '',
+       String(v.reason || '').slice(0, 400), v.advisory ? 'warn' : 'enforce',
+       String(f.msg_type || ''), String(f.ref_type || ''), String(f.ref_id || '')]
+    );
+  } catch (_) { /* logging must not break sends */ }
+}
+
+// THE gate call. Every send path below funnels through this.
+//
+// → the verdict from wa-compliance.gate(). `allow:false` means do not send;
+// the caller returns `{ ok:false, error: v.reason, policy: v.code }` so the
+// operator is told which rule stopped it rather than "failed".
+//
+// A throw inside the gate ALLOWS the send. That is deliberate: a bug in the
+// policy code must not be able to stop a business from invoicing. The
+// failure is logged loudly instead.
+function _waGateSend(db, f) {
+  let v;
+  try {
+    v = waPolicy.gate(db, {
+      phone: f.phone,
+      msgType: f.msg_type,
+      refType: f.ref_type,
+      health: _waHealthNow(db, f.cfg || _waConfig(db)),
+    });
+  } catch (e) {
+    console.warn('[wa-policy] gate failed open:', e && e.message);
+    return { allow: true, code: 'gate_error', reason: '', cls: '', advisory: false };
+  }
+  if (!v.allow) {
+    _waLogPolicy(db, v, f);
+    _waLog(db, {
+      phone: _waNormalizePhone(f.phone), msg_type: f.msg_type || '',
+      caption: String(f.caption || '').slice(0, 200),
+      status: 'blocked', error: v.code,
+      ref_type: f.ref_type || '', ref_id: f.ref_id || '',
+    });
+    console.log('[wa-policy] REFUSED %s (%s/%s): %s', f.phone, v.cls, v.code, v.reason);
+  } else if (v.advisory) {
+    _waLogPolicy(db, v, f);
+    console.warn('[wa-policy] WARN MODE — sent anyway, but %s (%s/%s) breaks: %s',
+      f.phone, v.cls, v.code, v.reason);
+  }
+  return v;
 }
 
 // Send a plain WhatsApp text message, server-side. Shared by the
 // /api/whatsapp/send-text route AND internal callers (e.g. the grade-2
 // booking-alert engine). Resolves to { ok, id?, error? } and never throws,
 // so fire-and-forget callers can ignore the promise safely.
-async function _waSendText(db, rawPhone, message, ref = {}) {
+// `opts.gated` says the caller has ALREADY run the gate for this message.
+// The shared outreach sender does, and its free-text fallback then calls in
+// here — without this flag the same message is judged twice, which in warn
+// mode writes two advisory rows for one send and in every mode pays for the
+// gate's three counter queries twice over.
+async function _waSendText(db, rawPhone, message, ref = {}, opts = {}) {
   const cfg = _waConfig(db);
   if (!cfg.configured) return { ok: false, error: 'WhatsApp Cloud API not configured' };
   const phone = _waNormalizePhone(rawPhone);
@@ -3930,6 +4036,16 @@ async function _waSendText(db, rawPhone, message, ref = {}) {
   const badPhone = _waPhoneProblem(rawPhone);
   if (badPhone) return { ok: false, error: badPhone };
   if (!phone || !body) return { ok: false, error: 'phone and message required' };
+  // The compliance gate. A plain text send is a SERVICE reply by default
+  // (it only reaches a contact whose 24h window is open, i.e. one who
+  // messaged us), so most of the rules do not apply to it — but an opt-out
+  // and the install-wide pause do, and `ref.ref_type` is what reclassifies
+  // an outreach campaign's free-text fallback as marketing.
+  if (!opts.gated) {
+    const gate = _waGateSend(db, { cfg, phone: rawPhone, msg_type: 'text', caption: body.slice(0, 80),
+      ref_type: ref.ref_type || '', ref_id: ref.ref_id || '' });
+    if (!gate.allow) return { ok: false, error: gate.reason, policy: gate.code };
+  }
   try {
     const out = await _waGraphPost(cfg, '/messages', {
       messaging_product: 'whatsapp', to: phone, type: 'text', text: { body },
@@ -3976,6 +4092,16 @@ async function sendReassignRequestWhatsApp(db, reqRow) {
     ];
     for (const phone of phones) {
       try {
+        // Gated like every other template send. These go to the business's
+        // own admins rather than to customers, so in practice only two rules
+        // can ever fire — the install-wide pause, and an admin who has
+        // opted out — but both of those SHOULD stop it: "pause all WhatsApp
+        // sending" has to mean all of it, and an opt-out is an opt-out
+        // whoever made it.
+        const gate = _waGateSend(db, { cfg, phone, msg_type: 'template-reassign',
+          caption: bodyParams.join(' | ').slice(0, 80),
+          ref_type: 'lot_reassign_request', ref_id: String(reqRow.id) });
+        if (!gate.allow) { console.warn('[wa-policy] reassign alert to %s not sent: %s', phone, gate.code); continue; }
         const wamid = await _waSendTemplate(cfg, { phone, template, lang, bodyParams, buttons });
         _waLog(db, { wamid, phone, msg_type: 'template-reassign', caption: bodyParams.join(' | ').slice(0, 80),
           status: 'sent', ref_type: 'lot_reassign_request', ref_id: String(reqRow.id) });
@@ -4040,7 +4166,11 @@ app.post('/api/whatsapp/send-text', requireView, async (req, res) => {
   const result = await _waSendText(db, req.body.phone, req.body.message,
     { ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
   if (result.ok) return res.json({ ok: true, id: result.id });
-  return res.status(502).json({ error: result.error });
+  // NOTE no `fallback` flag on a policy refusal. The client reads
+  // `fallback:true` as "drop to WhatsApp Web", and routing a message the
+  // rules just refused through the operator's personal WhatsApp is the
+  // circumvention, not the workaround.
+  return res.status(result.policy ? 403 : 502).json({ error: result.error, policy: result.policy || '' });
 });
 
 // Send a document. Body: { phone, caption, doc_url } where doc_url is a
@@ -4056,6 +4186,10 @@ app.post('/api/whatsapp/send-document', requireView, async (req, res) => {
     const caption = String(req.body.caption || '');
     const docUrl = String(req.body.doc_url || '');
     if (!phone || !docUrl) return res.status(400).json({ error: 'phone and doc_url required' });
+    const gate = _waGateSend(db, { cfg, phone: req.body.phone, msg_type: 'document',
+      caption: caption || (req.body.filename || 'document.pdf'),
+      ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+    if (!gate.allow) return res.status(403).json({ error: gate.reason, policy: gate.code });
     const out = await _waGraphPost(cfg, '/messages', {
       messaging_product: 'whatsapp', to: phone, type: 'document',
       document: { link: docUrl, caption, filename: req.body.filename || 'document.pdf' },
@@ -4314,6 +4448,16 @@ app.get('/api/whatsapp/usage', requireView, async (req, res) => {
     },
     limit: { tier: '', cap: 0, used: num(win.n), remaining: null, source: 'unavailable', error: '' },
     free: { allowance, used: null, remaining: null, paid: null, cost: null, source: 'unavailable', error: '' },
+    // The two facts the Overview card has to carry, because they change what
+    // a bulk run will do and the operator is looking at this card BEFORE
+    // starting one: is sending paused, and are the rules being enforced.
+    // The detail lives on the Compliance tab; this is the headline.
+    policy: (() => {
+      try {
+        const p = waPolicy.configWithFallbacks(db);
+        return { mode: p.mode, paused: p.paused };
+      } catch (_) { return { mode: 'enforce', paused: false }; }
+    })(),
     billing: {
       blocked: !!billingBlock,
       blockError: billingBlock ? billingBlock.error : '',
@@ -4355,7 +4499,14 @@ app.get('/api/whatsapp/usage', requireView, async (req, res) => {
   out.limit.error = meta.limit.error || '';
   out.limit.unlimited = !!tier && !cap;
   out.limit.remaining = cap ? Math.max(0, cap - out.limit.used) : null;
-  if (meta.limit.qualityRating) out.qualityRating = meta.limit.qualityRating;
+  if (meta.limit.qualityRating) {
+    out.qualityRating = meta.limit.qualityRating;
+    // Prime the gate's own cache off this call. The usage card is opened far
+    // more often than ten minutes apart, so in practice the rating the gate
+    // acts on is as fresh as the one on screen — and a Graph call already
+    // paid for is not paid for twice.
+    _waHealthCache = { at: Date.now(), rating: meta.limit.qualityRating };
+  }
   if (meta.limit.displayPhone) out.displayPhone = meta.limit.displayPhone;
 
   out.free.source = meta.pricing.source;
@@ -4415,6 +4566,14 @@ app.post('/api/whatsapp/test', requireSettingsWrite, async (req, res) => {
   const params = _waParseParams(req.body.params);
   const bodyParams = params.length ? params
     : ['Test', 'this is a test message confirming your WhatsApp Cloud API setup works.', cfg.verifiedName || 'Spice'];
+  // Gated, even though this is a self-test the operator aims at their own
+  // phone. Two reasons: "pause all WhatsApp sending" must include the test
+  // button, or the one switch meant for the morning Meta writes has a hole
+  // in it; and if the test number is on the opt-out register, being told so
+  // here is more useful than a message that quietly goes out.
+  const gate = _waGateSend(db, { cfg, phone: req.body.phone, msg_type: 'template-text',
+    caption: '[test]', ref_type: 'test' });
+  if (!gate.allow) return res.status(403).json({ error: gate.reason, policy: gate.code });
   try {
     const wamid = await _waSendTemplate(cfg, { phone, template: cfg.tplText, lang: cfg.tplTextLang, bodyParams });
     _waLog(db, { wamid, phone, msg_type: 'template-text', caption: '[test]', status: 'sent', ref_type: 'test' });
@@ -4437,6 +4596,9 @@ app.post('/api/whatsapp/send-template-text', requireView, async (req, res) => {
   if (badPhone) return res.status(400).json({ error: badPhone });
   if (!phone) return res.status(400).json({ error: 'phone required' });
   const bodyParams = _waParseParams(req.body.params);
+  const gate = _waGateSend(db, { cfg, phone: req.body.phone, msg_type: 'template-text',
+    caption: bodyParams[1] || '', ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+  if (!gate.allow) return res.status(403).json({ error: gate.reason, policy: gate.code });
   try {
     const wamid = await _waSendTemplate(cfg, { phone, template: cfg.tplText, lang: cfg.tplTextLang, bodyParams });
     _waLog(db, { wamid, phone, msg_type: 'template-text', caption: bodyParams[1] || '', status: 'sent',
@@ -4465,6 +4627,9 @@ app.post('/api/whatsapp/send-template-document', requireView, upload.single('fil
   const badPhone = _waPhoneProblem(req.body.phone);
   if (badPhone) { cleanup(); return res.status(400).json({ error: badPhone }); }
   if (!phone) { cleanup(); return res.status(400).json({ error: 'phone required' }); }
+  const gate = _waGateSend(db, { cfg, phone: req.body.phone, msg_type: 'template-document',
+    caption: bodyParams[1] || filename, ref_type: req.body.ref_type || '', ref_id: req.body.ref_id || '' });
+  if (!gate.allow) { cleanup(); return res.status(403).json({ error: gate.reason, policy: gate.code }); }
   try {
     const buffer = fs.readFileSync(req.file.path);
     const mediaId = await _waUploadMedia(cfg, buffer, filename);
@@ -4714,6 +4879,20 @@ app.post('/api/whatsapp/webhook', (req, res) => {
               db.run("UPDATE whatsapp_messages SET status = ?, error = ?, updated_at = datetime('now','localtime') WHERE wamid = ?",
                 [status, err, wamid]);
             } catch (_) {}
+            // A failure Meta attributes to the RECIPIENT'S OWN PREFERENCE
+            // (131050 and its wording variants) is an opt-out expressed to
+            // Meta rather than to us, and it binds exactly the same. Record
+            // it, or the next run templates that number again — which is the
+            // single clearest way to breach the Acceptable Use terms.
+            if (err && (st.recipient_id || status === 'failed')) {
+              try {
+                const to = st.recipient_id || '';
+                const applied = waPolicy.noteMetaError(db, to, err);
+                if (applied && applied.applied) {
+                  console.log('[wa-policy] %s recorded as opted out — Meta refused with: %s', to, String(err).slice(0, 120));
+                }
+              } catch (e) { console.warn('[wa-policy] opt-out from receipt failed:', e && e.message); }
+            }
           }
         }
         for (const m of (v.messages || [])) {
@@ -4723,6 +4902,38 @@ app.post('/api/whatsapp/webhook', (req, res) => {
           // GET /api/whatsapp/inbound even without console access.
           try { db.run('INSERT INTO whatsapp_inbound (wamid, phone, body) VALUES (?,?,?)',
             [m.id || '', m.from || '', JSON.stringify(m).slice(0, 2000)]); } catch (_) {}
+
+          // ── STOP means stop ──────────────────────────────────
+          // This table used to be written here and read by nobody. A seller
+          // who replied "STOP", or "வேண்டாம்", or tapped a template's own
+          // Stop button, stayed on the birthday list and the dormant-seller
+          // list indefinitely — and Meta disabled the account on 2026-11-04
+          // for exactly that class of behaviour. Every inbound message now
+          // passes through the intent reader, and an opt-out takes effect on
+          // the very next send without anybody reading a log.
+          //
+          // An inbound message ALSO opens the contact's 24h service window,
+          // which is why this runs before the button-decision plumbing
+          // below: the reassign approval flow sends a free-text reply, and
+          // an admin who had somehow opted out must not be silently
+          // un-replied-to. (They can't be: a reply inside the window is a
+          // SERVICE message, and the gate never blocks those on consent.)
+          try {
+            const bodyText = (m.text && m.text.body)
+              || (m.button && m.button.text)
+              || (m.interactive && m.interactive.button_reply && m.interactive.button_reply.title) || '';
+            const intent = waPolicy.recordInbound(db, m.from || '', bodyText, {
+              buttonPayload: (m.button && m.button.payload)
+                || (m.interactive && m.interactive.button_reply && m.interactive.button_reply.id) || '',
+              buttonTitle: (m.button && m.button.text)
+                || (m.interactive && m.interactive.button_reply && m.interactive.button_reply.title) || '',
+            });
+            if (intent && intent.intent) {
+              console.log('[wa-policy] inbound from %s read as %s%s: %j',
+                m.from, intent.intent, intent.applied ? ' (applied)' : ' (already recorded)',
+                String(bodyText).slice(0, 80));
+            }
+          } catch (e) { console.warn('[wa-policy] inbound intent failed:', e && e.message); }
 
           // Resolve (action, requestId) from whatever the webhook carries —
           // Meta's payload shape for template quick-reply buttons varies:
@@ -4765,6 +4976,148 @@ app.post('/api/whatsapp/webhook', (req, res) => {
     }
   } catch (e) { console.warn('[wa-webhook] processing error', e && e.message); /* never 500 — Meta retries hard */ }
   res.sendStatus(200);
+});
+
+// ══════════════════════════════════════════════════════════════
+// WHATSAPP COMPLIANCE
+//
+// The surface behind Settings → Integrations → Compliance. Four questions:
+// who may we message, who has asked us to stop, what did the gate refuse,
+// and is anything waiting on a decision. The rules themselves live in
+// wa-compliance.js; see WHATSAPP-COMPLIANCE.md for why they exist.
+// ══════════════════════════════════════════════════════════════
+
+// Everything the Compliance tab paints in one call.
+app.get('/api/whatsapp/compliance', requireView, (req, res) => {
+  const db = getDb();
+  const cfg = _waConfig(db);
+  const policy = waPolicy.configWithFallbacks(db);
+  let cov = {};
+  try { cov = waPolicy.coverage(db); } catch (e) {
+    console.warn('[wa-compliance] coverage failed:', e.message);
+  }
+  // The opt-out list is the one an operator actually works with: who was
+  // silenced, when, and on what evidence. Opt-ins are counted rather than
+  // listed — there can be thousands and nobody reads them one by one.
+  let optedOut = [];
+  try {
+    optedOut = db.all(
+      `SELECT phone, status, scope, source, basis, note, party_type, party_id,
+              opted_in_at, opted_out_at, updated_by, updated_at
+         FROM wa_consent WHERE status = 'out'
+        ORDER BY datetime(COALESCE(opted_out_at, updated_at)) DESC LIMIT 500`) || [];
+  } catch (_) {}
+  let recent = [];
+  try {
+    recent = db.all(
+      `SELECT phone, cls, code, reason, mode, msg_type, ref_type, ref_id, created_at
+         FROM wa_policy_log ORDER BY id DESC LIMIT 100`) || [];
+  } catch (_) {}
+  res.json({
+    configured: cfg.configured,
+    policy: {
+      mode: policy.mode,
+      paused: policy.paused,
+      marketingGapDays: policy.marketingGapDays,
+      maxPerContactDay: policy.maxPerContactDay,
+      legacyOptIn: policy.legacyOptIn,
+      legacyBasis: policy.legacyBasis,
+      stopMarketingOnYellow: policy.stopMarketingOnYellow,
+      stopAllOnRed: policy.stopAllOnRed,
+      deadNumberFails: policy.deadNumberFails,
+    },
+    // The rating the gate is currently acting on, not a fresh Graph call —
+    // this panel must open instantly and must not add a Meta round-trip to
+    // every page view. 'unknown' means nothing has been fetched yet.
+    health: _waHealthNow(db, cfg),
+    coverage: cov,
+    optedOut,
+    recent,
+  });
+});
+
+// Record ONE consent decision, or a batch of them.
+//
+// Body: { phone, status:'in'|'out', basis?, note?, party_type?, party_id? }
+//   or: { rows: [ …the same… ] }
+//
+// `basis` is the evidence — "signed the 2026 registration form", "asked on
+// the phone, 4 Nov" — and it is deliberately not optional in spirit even
+// though the column accepts blank: an opt-in nobody can account for is the
+// thing that got this account disabled, and the tab says so above the box.
+//
+// requireSettingsWrite, not requireView: who may be messaged is a policy
+// decision, not a day-to-day one.
+app.post('/api/whatsapp/consent', requireSettingsWrite, (req, res) => {
+  const db = getDb();
+  const by = (req.user && req.user.username) || '';
+  const rows = Array.isArray(req.body && req.body.rows)
+    ? req.body.rows.slice(0, 2000)
+    : [req.body || {}];
+  const out = { written: 0, failed: [] };
+  for (const r of rows) {
+    const result = waPolicy.setConsent(db, {
+      phone: r.phone,
+      status: r.status,
+      // 'marketing' narrows an opt-out to greetings and reminders only;
+      // anything else (including absent) means ALL, which is what a bare
+      // "STOP" means and the safer default to land on.
+      scope: r.scope,
+      source: String(r.source || 'operator'),
+      basis: r.basis,
+      note: r.note,
+      by,
+      partyType: r.party_type,
+      partyId: r.party_id,
+    });
+    if (result.ok) out.written++;
+    else out.failed.push({ phone: r.phone, error: result.error });
+  }
+  res.json({ ok: true, ...out });
+});
+
+// Forget a consent decision — back to "never asked". Used to undo a
+// mistyped number, and to dismiss an ambiguous inbound reply that turned
+// out to be ordinary conversation.
+//
+// Deleting an OPT-OUT row is the one destructive thing on this screen, so
+// it is logged: a seller who asked to stop and then started receiving
+// messages again needs to be explainable to Meta.
+app.delete('/api/whatsapp/consent/:phone', requireSettingsWrite, (req, res) => {
+  const db = getDb();
+  const key = waPolicy.consentKey(req.params.phone);
+  if (!key) return res.status(400).json({ error: 'phone required' });
+  let existing = null;
+  try { existing = db.get('SELECT * FROM wa_consent WHERE phone_key = ?', [key]); } catch (_) {}
+  if (!existing) return res.status(404).json({ error: 'No consent record for that number' });
+  try { db.run('DELETE FROM wa_consent WHERE phone_key = ?', [key]); }
+  catch (e) { return res.status(500).json({ error: e.message }); }
+  if (existing.status === 'out') {
+    console.warn('[wa-policy] OPT-OUT CLEARED for %s by %s (was: %s)',
+      existing.phone, (req.user && req.user.username) || '?', existing.basis || existing.note || '');
+    try {
+      db.run(`INSERT INTO wa_policy_log (phone_key, phone, cls, code, reason, mode)
+              VALUES (?,?,?,?,?,?)`,
+        [key, existing.phone || '', '', 'optout_cleared',
+         `Opt-out removed by ${(req.user && req.user.username) || '?'} — was recorded as: ${String(existing.basis || existing.note || '').slice(0, 200)}`,
+         'enforce']);
+    } catch (_) {}
+  }
+  res.json({ ok: true });
+});
+
+// Apply the backlog: every unambiguous "stop" sitting unread in
+// whatsapp_inbound. This is the one-click fix for the specific failure that
+// disabled the account — replies were recorded and never acted on.
+app.post('/api/whatsapp/consent/apply-replies', requireSettingsWrite, (req, res) => {
+  const db = getDb();
+  let out;
+  try { out = waPolicy.applyHistoricOptOuts(db, { by: (req.user && req.user.username) || '' }); }
+  catch (e) { return res.status(500).json({ error: e.message }); }
+  if (out.applied) {
+    console.log('[wa-policy] applied %d historic opt-out(s) from %d inbound rows', out.applied, out.scanned);
+  }
+  res.json({ ok: true, ...out });
 });
 
 // Inspect the most recent inbound WhatsApp events (raw JSON) — used to see
@@ -4814,13 +5167,25 @@ function _waOutreachSender(kind, settingsPage) {
     if (!cfg.configured) return { ok: false, error: 'WhatsApp Cloud API not configured' };
     const to = _waNormalizePhone(phone);
     if (!to) return { ok: false, error: 'no usable phone number' };
+    // THE gate, on the path that caused the ban. A greeting and a dormant-
+    // seller nudge are both MARKETING: they need an opt-in on record for
+    // this contact, they are held to one per contact per month across both
+    // campaigns, and they stop by themselves when Meta rates the number
+    // below green. `ref_type` is passed through so a free-text fallback
+    // (which looks like an ordinary service reply) is still classified as
+    // marketing.
+    const msgTypeForGate = 'template-' + kind;
+    const gate = _waGateSend(db, { cfg, phone, msg_type: msgTypeForGate,
+      caption: String(text || '').slice(0, 80),
+      ref_type: (ref && ref.ref_type) || kind, ref_id: (ref && ref.ref_id) || '' });
+    if (!gate.allow) return { ok: false, error: gate.reason, policy: gate.code };
     if (freeText || !template) {
       if (!template && !freeText) {
         return { ok: false, error: `No WhatsApp template configured — set one in Settings → ${settingsPage}` };
       }
-      return _waSendText(db, to, text, ref);
+      return _waSendText(db, to, text, ref, { gated: true });
     }
-    const msgType = 'template-' + kind;
+    const msgType = msgTypeForGate;
     try {
       const wamid = await _waSendTemplate(cfg, { phone: to, template, lang, bodyParams });
       _waLog(db, { wamid, phone: to, msg_type: msgType, caption: String(text || '').slice(0, 80),
@@ -4848,10 +5213,17 @@ app.get('/api/birthdays', requireView, requireBirthdaysEnabled, (req, res) => {
   const year = birthdays.parseYmd(dateStr).getFullYear();
   const days = Math.max(1, Math.min(366, parseInt(req.query.days, 10) || 30));
   const greeted = birthdays.greetedYears(db, year);
+  // Consent, read once for the whole list. A greeting is MARKETING, so a
+  // party with no opt-in on record cannot be greeted at all — the screen has
+  // to say that next to their name rather than offer a Send button that
+  // comes back refused. See wa-compliance.js for why this rule exists.
+  const consent = waPolicy.consentMap(db);
+  const policy = waPolicy.configWithFallbacks(db);
   const stamp = (r) => {
     const g = greeted.get(`${r.party_type}:${r.party_id}`);
+    const hold = waPolicy.marketingConsentHold(r.phone, consent, policy);
     return { ...r, dob: r.dob_raw, greeted: !!g, greeted_on: g ? g.greet_date : '',
-      message: birthdays.composeMessage(db, r) };
+      consent_hold: hold, message: birthdays.composeMessage(db, r) };
   };
   const today = birthdays.birthdaysOn(db, dateStr, types).map(stamp);
   // Upcoming excludes day 0 — today has its own list, and showing a party in
@@ -4866,7 +5238,7 @@ app.get('/api/birthdays', requireView, requireBirthdaysEnabled, (req, res) => {
   } catch (_) { log = []; }
   // The two counts that explain an empty list: parties with no DOB at all,
   // and parties with a DOB the parser could not read.
-  const counts = { no_dob: 0, bad_dob: 0, no_phone: 0 };
+  const counts = { no_dob: 0, bad_dob: 0, no_phone: 0, no_consent: 0 };
   try {
     if (cfg.sellers) {
       counts.no_dob += (db.get(`SELECT COUNT(*) n FROM traders WHERE dob IS NULL OR TRIM(dob) = ''`) || {}).n || 0;
@@ -4880,6 +5252,11 @@ app.get('/api/birthdays', requireView, requireBirthdaysEnabled, (req, res) => {
     const parsed = birthdays.candidates(db, types);
     counts.bad_dob = Math.max(0, withDob - parsed.length);
     counts.no_phone = parsed.filter((c) => !c.phone).length;
+    // Parties who could be greeted but have no opt-in. On an install that
+    // has never collected one this is every party with a number, and that
+    // figure is the honest size of what the old behaviour was doing.
+    counts.no_consent = parsed.filter((c) => c.phone
+      && waPolicy.marketingConsentHold(c.phone, consent, policy)).length;
   } catch (_) {}
   const wa = _waConfig(db);
   res.json({
@@ -5044,6 +5421,14 @@ const OUTREACH_TICK_MS = 10 * 60 * 1000;
 let _outreachSweepRunning = false;
 async function _outreachTick() {
   if (_outreachSweepRunning) return;             // a slow Meta call must not overlap itself
+  // The emergency stop, checked HERE as well as in the gate. The gate would
+  // refuse every individual send anyway, but an unattended sweep that walks
+  // a 200-row list into 200 refusals writes 200 log rows and 200 policy rows
+  // for nothing — and on the morning after Meta writes about an account,
+  // "nothing happened at all" is the only acceptable behaviour.
+  try {
+    if (getSettingBool(getDb(), 'wa_sending_paused')) return;
+  } catch (_) { /* a DB hiccup must not wedge the sweeper */ }
   _outreachSweepRunning = true;
   try {
     const bd = await birthdays.runDailySweep(getDb(), { send: _birthdaySend });
@@ -9888,6 +10273,80 @@ app.post('/api/delivery-chalan/claim-no', requireLotWrite, (req, res) => {
     [String(n + 1)]
   );
   res.json({ serial: n, no: _chalanSerial(db, n), next: n + 1 });
+});
+
+// ── Record a challan that was PRINTED ────────────────────────────────
+// Claiming a serial and issuing a challan are two different events: the
+// operator can type over the previewed number (re-printing a lost challan, or
+// continuing a paper book by hand), in which case no serial is claimed at all.
+// So the register is fed from here instead — called once the number is settled
+// and the document is about to print, whichever way the number was arrived at.
+//
+// Upserts on the challan NUMBER: a re-print under the same number updates that
+// row rather than adding a second claiming the same serial. `created_at`
+// survives the update so the register can still say when the challan was first
+// issued, with `updated_at` recording the re-print.
+//
+// Deliberately forgiving about its body. A challan that printed must end up in
+// the book even if a field is missing — a register with a thin row in it beats
+// a register with a hole where a consignment was.
+app.post('/api/delivery-chalan/record', requireLotWrite, (req, res) => {
+  const db = getDb();
+  const b = req.body || {};
+  const no = String(b.chalanNo == null ? '' : b.chalanNo).trim();
+  if (!no) return res.status(400).json({ error: 'chalanNo is required — it is the challan\'s identity' });
+  const lots = Array.isArray(b.lots) ? b.lots : [];
+  const txt = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 120);
+  const num = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  // The lot-number list, as printed. Numerically sorted so the register reads
+  // the way the challan does.
+  const lotNos = lots
+    .map(l => txt(l && (l.lot_no != null ? l.lot_no : l), 20))
+    .filter(Boolean);
+  const allNum = lotNos.every(x => /^\d+$/.test(x));
+  const lotList = (allNum ? lotNos.slice().sort((a, c) => Number(a) - Number(c)) : lotNos.slice().sort())
+    .join(',');
+  const row = {
+    chalan_no: no,
+    serial: Number.isFinite(Number(b.serial)) ? Number(b.serial) : null,
+    auction_id: Number.isFinite(Number(b.auctionId)) ? Number(b.auctionId) : null,
+    date: txt(b.date, 20),
+    time: txt(b.time, 20),
+    branch: txt(b.branch, 60),
+    veh: txt(b.veh, 20).toUpperCase(),
+    mode: txt(b.mode, 30),
+    receiver: txt(b.receiver, 120),
+    lot_count: lotNos.length,
+    bags: num(b.bags),
+    qty: num(b.qty),
+    value: num(b.value),
+    lots: lotList.slice(0, 2000),
+    created_by: txt(req.user && (req.user.username || req.user.name), 60),
+  };
+  try {
+    db.run(
+      `INSERT INTO delivery_chalans
+         (chalan_no, serial, auction_id, date, time, branch, veh, mode, receiver,
+          lot_count, bags, qty, value, lots, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(chalan_no) DO UPDATE SET
+         serial = excluded.serial, auction_id = excluded.auction_id,
+         date = excluded.date, time = excluded.time, branch = excluded.branch,
+         veh = excluded.veh, mode = excluded.mode, receiver = excluded.receiver,
+         lot_count = excluded.lot_count, bags = excluded.bags, qty = excluded.qty,
+         value = excluded.value, lots = excluded.lots,
+         updated_at = datetime('now','localtime')`,
+      [row.chalan_no, row.serial, row.auction_id, row.date, row.time, row.branch,
+       row.veh, row.mode, row.receiver, row.lot_count, row.bags, row.qty,
+       row.value, row.lots, row.created_by]
+    );
+    res.json({ ok: true, chalanNo: row.chalan_no });
+  } catch (e) {
+    // Never let the book-keeping stop the printing — the operator is standing
+    // at a lorry. Report it and let the client carry on to the PDF.
+    console.error('delivery-chalan record error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Bulk-set the DUMMY SELLER IDENTITY on many lots at once ──────────
@@ -17952,6 +18411,50 @@ app.get('/api/exports/purchase-register', requireExport, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Delivery Challan Register ────────────────────────────────────────
+// The challan book as a sheet. Gated on flag_delivery_chalan: with the
+// feature off no challan is ever printed, so the register would always be
+// empty and saying why beats handing over a blank file.
+//
+// XLSX only, deliberately: this is a reconciliation sheet the office reads
+// against a numbered paper book, and no PDF layout exists for it. The catalog
+// declares only `xlsx` to match.
+// On-screen preview for the Registers screen. Same rows the xlsx carries —
+// the sheet and the table must never disagree about what is in the book.
+// requireView (not requireExport): looking at the challan book is reading,
+// and the export beside it keeps the stricter gate.
+app.get('/api/registers/delivery-chalan', requireView, (req, res) => {
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    if (String(cfg.flag_delivery_chalan || '').toLowerCase() !== 'true') {
+      return res.status(403).json({
+        error: 'Delivery Challan is disabled — enable "Delivery Challan (Lot Entry)" in Settings → Flags.',
+      });
+    }
+    res.json(getDeliveryChalanRegister(db, registerOpts(req, cfg)));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/exports/delivery-chalan-register', requireExport, async (req, res) => {
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    if (String(cfg.flag_delivery_chalan || '').toLowerCase() !== 'true') {
+      return res.status(403).json({
+        error: 'Delivery Challan is disabled — enable "Delivery Challan (Lot Entry)" in Settings → Flags.',
+      });
+    }
+    const opts = registerOpts(req, cfg);
+    const { exportDeliveryChalanRegister } = require('./exports');
+    const buffer = await exportDeliveryChalanRegister(db, opts);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${exportFileName('DeliveryChalanRegister', ...scopeParts(db, opts))}.xlsx"`);
+    res.send(Buffer.from(buffer));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/exports/sales-register', requireExport, async (req, res) => {
   try {
     const db = getDb();
@@ -18739,6 +19242,10 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       }
     } catch (_) { /* table missing on an old DB — no advances to net off */ }
 
+    // Per-lot TDS (194Q) shares — see calculations.tdsByLot(). The same map
+    // the bank export deducts from, so the screen and the file agree.
+    const tdsByLotId = tdsByLot(db, auctionId).byLot;
+
     // Every account of every seller in the result — the client renders one
     // dropdown per row from this, and re-renders after adding an account.
     const traderIds = [...new Set(lots.map(l => l.trader_id).filter(id => id != null))];
@@ -18796,15 +19303,26 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       const adv = advByLot[l.id] || null;
       const gross = Number(l.payable) || 0;
       const advance = adv ? Math.max(0, Number(adv.advance) || 0) : 0;
+      // TDS (194Q) withheld on this lot — its share of the seller's purchase
+      // invoice, or the whole figure when purchases are raised lot-wise. Comes
+      // off the payable because the money goes to the government, not to the
+      // seller; the bank export deducts the same per-lot shares, so the file
+      // pays what this row says. Always 0 for an agriculturist: TDS lives on
+      // RD purchase invoices and a Bill of Supply raises none.
+      const tds = Math.round((tdsByLotId[l.id] || 0) * 100) / 100;
       // Not priced yet: entered (and possibly advanced against) but with no
       // amount, so no payable and nothing a bank-payment file could carry.
       const unpriced = !(Number(l.amount) > 0);
       return {
         ...l,
         qty: Number(l.qty) || 0,
-        payable: Math.max(0, gross - advance),
+        payable: Math.max(0, gross - advance - tds),
         payable_gross: gross,
         advance,
+        // Reported alongside the net payable so a row can show what was
+        // withheld rather than just a payable that no longer matches the
+        // lot's balance.
+        tds,
         unpriced,
         // Advance handed over BEFORE the price was known, that the price then
         // came in under. The clamp above already floors the payable at 0, which

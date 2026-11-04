@@ -1831,7 +1831,9 @@ async function exportPaymentPartyWise(db, auctionId, cfg, state, extra) {
     discount:   Number(r.seller_discount) || 0,
   }));
   // Column order mirrors the Payments tab: Net → Advance → Payable → Discount.
-  // Payable = Net − Advance; Discount is display-only (never affects Payable).
+  // Payable = Net − Advance − TDS (194Q is withheld from the seller and
+  // remitted to the government, so it is not theirs to receive); Discount is
+  // display-only and never affects Payable.
   const cols = [
     { header: 'POOLERNAME', key: 'poolername', width: 30 },
     { header: 'LOTS', key: 'lots', width: 7 },
@@ -2081,6 +2083,39 @@ async function exportPurchaseRegister(db, opts = {}) {
   }};
   return createExcelBuffer('PurchaseRegister', cols, rows, {
     db, title: 'Purchase Register', metaLines: registerMeta(db, opts), grandTotal,
+  });
+}
+
+// ── Export: Delivery Challan Register ──────────────────────
+// The challan book. Not a money report — a challan is a gate pass, so what
+// matters is which number went out, on what lorry, to whom, carrying which
+// lots. VALUE is the consignment's declared value and is carried because the
+// challan prints it, but the totals that mean something here are BAGS and QTY:
+// those reconcile against what actually left the branch.
+async function exportDeliveryChalanRegister(db, opts = {}) {
+  const { getDeliveryChalanRegister } = require('./calculations');
+  const rows = getDeliveryChalanRegister(db, opts);
+  const cols = [
+    { header: 'CHALAN NO', key: 'chalan_no', width: 16 },
+    { header: 'DATE',      key: 'date',      width: 12 },
+    { header: 'TIME',      key: 'time',      width: 9  },
+    { header: 'TNO',       key: 'tno',       width: 6  },
+    { header: 'BRANCH',    key: 'branch',    width: 14 },
+    { header: 'VEHICLE',   key: 'veh',       width: 13 },
+    { header: 'MODE',      key: 'mode',      width: 11 },
+    { header: 'RECEIVER',  key: 'receiver',  width: 26 },
+    { header: 'LOTS',      key: 'lots',      width: 24 },
+    { header: 'NO OF LOTS', key: 'lot_count', width: 10 },
+    { header: 'BAGS',      key: 'bags',      width: 9,  numFmt: '#,##0' },
+    { header: 'QTY',       key: 'qty',       width: 12, numFmt: '#,##0.000' },
+    { header: 'VALUE',     key: 'value',     width: 14, numFmt: '#,##0.00' },
+  ];
+  const sum = (k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  const grandTotal = { label: 'TOTAL', values: {
+    lot_count: sum('lot_count'), bags: sum('bags'), qty: sum('qty'), value: sum('value'),
+  }};
+  return createExcelBuffer('DeliveryChalanRegister', cols, rows, {
+    db, title: 'Delivery Challan Register', metaLines: registerMeta(db, opts), grandTotal,
   });
 }
 
@@ -3150,6 +3185,7 @@ module.exports = {
   // Shared with the PDF twin — one column spec, two renderings.
   SALES_JOURNAL_COLS, SALES_JOURNAL_TOTAL_KEYS,
   exportPurchaseRegister, exportSalesRegister, exportPendingSalesRegister, exportGodownRegister, exportIndividualRegister,
+  exportDeliveryChalanRegister,
   exportSellersXlsx, exportBuyersXlsx,
   exportDealerInvoiceCsv,
   // Shared with the PDF twin (exports-pdf.js) so the two renderings cannot

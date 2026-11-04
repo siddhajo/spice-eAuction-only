@@ -267,13 +267,19 @@ const render = async (usage, err) => {
   vm.runInContext(extract('_waSetTab'), tabBox);
 
   const panes = tabBox._waPanesHtml();
-  check('one section now carries all three WhatsApp tabs',
-    (panes.match(/class="wa-tab["\s]/g) || []).length === 3 &&
-    /whatsapp-usage-host/.test(panes) && /whatsapp-config-host/.test(panes) && /whatsapp-log-host/.test(panes),
+  // Four since 2026-11-04: Compliance joined them when the WhatsApp account
+  // was disabled for a breach of the Acceptable Use terms (see
+  // WHATSAPP-COMPLIANCE.md and tests/wa-compliance.browser.js, which owns
+  // what that pane actually says).
+  check('one section now carries all four WhatsApp tabs',
+    (panes.match(/class="wa-tab["\s]/g) || []).length === 4 &&
+    /whatsapp-usage-host/.test(panes) && /whatsapp-config-host/.test(panes)
+    && /whatsapp-policy-host/.test(panes) && /whatsapp-log-host/.test(panes),
     panes.slice(0, 300));
   check('only the active pane is visible',
     /data-wapane="overview"><div id="whatsapp-usage-host"/.test(panes) &&
-    /data-wapane="setup" hidden/.test(panes) && /data-wapane="log" hidden/.test(panes),
+    /data-wapane="setup" hidden/.test(panes) && /data-wapane="policy" hidden/.test(panes)
+    && /data-wapane="log" hidden/.test(panes),
     panes);
   check('the active tab is the only one marked on',
     (panes.match(/class="wa-tab on"/g) || []).length === 1, panes.slice(0, 200));

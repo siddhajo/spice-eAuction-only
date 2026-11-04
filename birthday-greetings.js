@@ -25,6 +25,12 @@
 // state — so it survives restarts and works across processes.
 
 const { getSetting, getSettingBool, getSettingNum } = require('./company-config');
+// A birthday wish is MARKETING in Meta's own classification, and marketing
+// needs an opt-in on record for that contact. Before 2026-11-04 this swept
+// every party with a date of birth, on a master assembled from a bulk
+// import — nobody in it had agreed to be messaged. Meta disabled the
+// account. See wa-compliance.js.
+const waPolicy = require('./wa-compliance');
 const waErrors = require('./wa-errors');
 
 const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
@@ -301,6 +307,9 @@ async function sendGreetings(db, rows, opts = {}) {
   // the caller can say "stopped" instead of reporting 180 individual failures.
   let stopped = null;
   const cap = opts.cap == null ? cfg.maxPerDay : opts.cap;
+  // Read once for the run, not per row.
+  const consent = waPolicy.consentMap(db);
+  const policy = waPolicy.configWithFallbacks(db);
 
   for (const row of rows) {
     const year = (parseYmd(row.greet_date) || new Date()).getFullYear();
@@ -311,6 +320,15 @@ async function sendGreetings(db, rows, opts = {}) {
     if (!row.phone) { results.push({ ...base, status: 'skipped', reason: 'no phone number' }); continue; }
     if (alreadyGreeted(db, row, year)) {
       results.push({ ...base, status: 'skipped', reason: `already greeted in ${year}` }); continue;
+    }
+    // Consent. The sender's gate would refuse this anyway — it is the
+    // authority and it is enforced server-side — but checking here keeps a
+    // 50-row sweep from writing 50 refusals into two logs to learn what one
+    // lookup already knows, and gives the ledger a reason an operator can
+    // read instead of a Meta error string.
+    const consentHold = waPolicy.marketingConsentHold(row.phone, consent, policy);
+    if (consentHold) {
+      results.push({ ...base, status: 'skipped', reason: consentHold }); continue;
     }
     // The daily cap exists because a bad DOB import (every row 01-01-1980)
     // would otherwise spend the whole 24h recipient tier in one sweep and

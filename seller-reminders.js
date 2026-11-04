@@ -46,6 +46,12 @@
 
 const { getSetting, getSettingBool, getSettingNum } = require('./company-config');
 const waErrors = require('./wa-errors');
+// A reminder is MARKETING, and marketing needs an opt-in on record for that
+// contact. Before 2026-11-04 this campaign messaged anybody whose last
+// booking fell in the window — which, with a master built from a bulk
+// import, meant people who had never agreed to be messaged at all. Meta
+// disabled the account over it. See wa-compliance.js.
+const waPolicy = require('./wa-compliance');
 
 // Local yyyy-mm-dd. Never toISOString — east of UTC that returns
 // yesterday for most of the morning, which would shift every threshold.
@@ -196,8 +202,12 @@ function review(db, opts = {}) {
   const counts = {
     sellers_total: 0, ever_booked: 0, never_booked: 0,
     in_window: 0, too_recent: 0, too_long_ago: 0,
-    below_min_auctions: 0, no_phone: 0, in_cooldown: 0, due: 0,
+    below_min_auctions: 0, no_phone: 0, no_consent: 0, in_cooldown: 0, due: 0,
   };
+  // Read once for the whole pass, not per candidate — this list runs to
+  // hundreds of rows and the ledger is one small table.
+  const consent = waPolicy.consentMap(db);
+  const policy = waPolicy.configWithFallbacks(db);
   try {
     counts.sellers_total = (db.get('SELECT COUNT(*) n FROM traders') || {}).n || 0;
   } catch (_) {}
@@ -210,6 +220,16 @@ function review(db, opts = {}) {
     });
     row.reminded_days_ago = row.last_reminded ? daysBetween(row.last_reminded, today) : null;
     if (!row.phone) { counts.no_phone++; row.hold = 'no phone number'; held.push(row); return; }
+    // Consent, before the cooldown. A seller with no opt-in is not "due in
+    // 45 days", they are not sendable at all, and showing them as cooling
+    // off would read as a timing problem rather than a permission one.
+    const consentHold = waPolicy.marketingConsentHold(row.phone, consent, policy);
+    if (consentHold) {
+      counts.no_consent++;
+      row.hold = consentHold;
+      row.no_consent = true;
+      held.push(row); return;
+    }
     if (row.reminded_days_ago != null && row.reminded_days_ago < cfg.cooldownDays) {
       counts.in_cooldown++;
       row.hold = `reminded ${row.reminded_days_ago} day${row.reminded_days_ago === 1 ? '' : 's'} ago — cooling off for ${cfg.cooldownDays}`;
@@ -343,11 +363,22 @@ async function sendReminders(db, rows, opts = {}) {
   // Set when Meta stops the whole account mid-run (see the break below), so
   // the caller can say "stopped" instead of reporting a wall of failures.
   let stopped = null;
+  // Read once for the run, not per row.
+  const consent = waPolicy.consentMap(db);
+  const policy = waPolicy.configWithFallbacks(db);
 
   for (const row of rows) {
     const base = { trader_id: row.trader_id, name: row.label || row.name, phone: row.phone,
       last_booked: row.last_booked, days_since: row.days_since };
     if (!row.phone) { results.push({ ...base, status: 'skipped', reason: 'no phone number' }); continue; }
+    // Re-check consent per row for the same reason as the cooldown below: a
+    // stop reply can land in the middle of a long run, and the list the
+    // operator ticked was built before it. The sender's gate is still the
+    // authority — this spares a 50-row sweep 50 round trips to learn it.
+    const consentHold = waPolicy.marketingConsentHold(row.phone, consent, policy);
+    if (consentHold) {
+      results.push({ ...base, status: 'skipped', reason: consentHold }); continue;
+    }
     // Re-check the cooldown per row rather than trusting the caller's list:
     // a long run, or two operators at once, must not double-message anyone.
     const last = lastRemindedFor(db, row.trader_id);

@@ -2360,6 +2360,44 @@ tr:hover td{background:var(--spice-cream)}
 .paylw-scroll .paylw-table{margin:0}
 .paylw-scroll .paylw-table thead th{position:sticky;top:-1px;z-index:2}
 
+/* ── Expanded seller drawer (RD seller-wise view) ─────────────────────────
+   The lots of one seller, opened under their summary row. This started out as
+   a pale theme tint on a pale table and was unreadable as a NESTED thing —
+   it looked like more rows of the same table.
+   Three cues do the separating, none of them colour alone:
+     • a recessed grey ground (--spice-line, which flips in dark mode) that is
+       plainly not the white table around it;
+     • a thick accent rail down the left, tying the drawer to the row above;
+     • an inset top shadow, so it reads as having opened out of that row.
+   The inner table also drops the outer table's dark header band for a quiet
+   one — a second dark band reads as a second, equal table rather than as
+   detail belonging to the seller above. */
+.paylw-kids > td{
+  padding:0 !important;
+  background:var(--spice-line);
+  border-left:4px solid var(--spice-cardamom);
+  box-shadow:inset 0 7px 7px -7px rgba(0,0,0,.28)
+}
+.paylw-kids-inner{padding:9px 12px 11px 12px}
+.paylw-kids-cap{
+  font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+  color:var(--spice-cardamom-dk);margin:0 0 6px 2px
+}
+/* The nested table itself: its own white surface, so the grey drawer frames
+   it rather than tinting it. */
+.paylw-kids-inner .paylw-table{
+  background:var(--spice-paper);border-radius:7px;overflow:hidden;
+  box-shadow:0 1px 2px rgba(0,0,0,.07)
+}
+.paylw-kids-inner .paylw-table thead th{
+  position:static;background:var(--spice-cardamom-lt) !important;
+  color:var(--spice-cardamom-dk);font-size:10px;font-weight:700;
+  border-bottom:1px solid var(--spice-line)
+}
+body[data-dark="1"] .paylw-kids-inner .paylw-table thead th{
+  background:var(--spice-line) !important;color:var(--spice-text-main)
+}
+
 /* Seller Bank Account rows (Add/Edit Seller) — a 2×2 grid that always fits
    inside the modal, with larger, clearly legible inputs + labels. */
 .bank-row .fg label{font-size:12.5px;font-weight:600;color:var(--text2);margin-bottom:4px;display:block}
@@ -7861,9 +7899,19 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
 
         <div id="le-chalan-err" style="display:none;padding:8px 12px;background:#FEE2E2;color:#991B1B;border-radius:6px;font-size:12px;margin:12px 0 0"></div>
 
+        <!-- There is no separate Save: a challan is not a draft, it is issued
+             the moment it prints, and that is when it enters the book. Said
+             out loud because an operator looking for a Save button has no
+             other way to know the register is being kept. -->
+        <div style="margin:12px 0 0;padding:8px 12px;background:var(--spice-cardamom-lt);border-radius:6px;font-size:11.5px;color:var(--text2)">
+          Printing issues this challan and records it in
+          <strong>Reports &amp; Exports → Registers → Delivery Challan Register</strong>.
+          There is no separate save — the challan book is written as challans go out.
+        </div>
+
         <div class="actions">
           <button class="btn btn-o" onclick="hideModal('le-chalan-modal')">Cancel</button>
-          <button class="btn btn-g" id="le-chalan-print" onclick="leConfirmChalan()">🖨 Print Chalan</button>
+          <button class="btn btn-g" id="le-chalan-print" onclick="leConfirmChalan()" title="Print the challan, advance the book and record it in the Delivery Challan Register">🖨 Print &amp; Record</button>
         </div>
       </div></div>
     </div>
@@ -9264,6 +9312,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                    feature class so it disappears with the feature; onRegTypeChange
                    also pins a stale selection back to Purchase. -->
               <option class="feat-godown" value="godown">Godown Register (stored stock)</option>
+              <!-- Delivery Challan book (flag_delivery_chalan). Same pattern as
+                   Godown above: the option carries the feature class so it
+                   disappears with the feature, and onRegTypeChange pins a stale
+                   selection back to Purchase. Reads by date range across trades
+                   — a challan book runs continuously through the year whichever
+                   trade the goods came off. -->
+              <option class="feat-delivery-chalan" value="delivery_chalan">Delivery Challan Register</option>
             </select>
           </div>
           <div class="fg" style="margin:0;min-width:220px" id="reg-auction-wrap"><label>Auction</label>
@@ -9344,7 +9399,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                 <option value="gunny">Gunny</option>
               </select>
             </div>
-            <button class="btn btn-g" onclick="dcPrint()" style="height:38px;padding:0 16px;font-weight:600">🖨 Print Chalan</button>
+            <!-- No separate Save, by design — see the note in the Lot Entry
+                 challan dialog. Printing issues the challan and records it. -->
+            <button class="btn btn-g" onclick="dcPrint()" style="height:38px;padding:0 16px;font-weight:600" title="Print the challan, advance the book and record it in Reports &amp; Exports → Registers → Delivery Challan Register">🖨 Print &amp; Record</button>
             <span id="dc-summary" style="font-size:12px;color:var(--text3);margin-left:auto;max-width:46%;text-align:right"></span>
           </div>
         </div>
@@ -28033,11 +28090,20 @@ async function leConfirmChalan() {
   // Amount in words from the SERVER's amountToWords — the same wording every
   // invoice on this install carries. See GET /api/amount-words.
   o.words = '';
+  let chalanTotal = 0;
   try {
-    const total = leChalanLines(o).reduce((t, r) => t + r.value, 0);
-    const w = await j('/api/amount-words?n=' + encodeURIComponent(total.toFixed(2)));
+    chalanTotal = leChalanLines(o).reduce((t, r) => t + r.value, 0);
+    const w = await j('/api/amount-words?n=' + encodeURIComponent(chalanTotal.toFixed(2)));
     o.words = (w && w.words) ? w.words + ' Only' : '';
   } catch (_) {}
+
+  // Log the challan in the book, so the Delivery Challan Register can list it.
+  // Done here rather than in claim-no because the number may have been TYPED
+  // (a re-print, or a book continued by hand) and no serial claimed at all —
+  // what belongs in the register is the challan that printed, however its
+  // number was arrived at. Never allowed to stop the print: the operator is
+  // standing at a lorry, and a missing register row is the lesser failure.
+  await recordDeliveryChalan(o, chalanTotal);
 
   const win = window.open('', '_blank', 'width=900,height=1000');
   if (!win) { showErr('Popup blocked. Allow popups for this site and retry.'); return; }
@@ -28048,6 +28114,51 @@ async function leConfirmChalan() {
 
   hideModal('le-chalan-modal');
   _le_chalan = null;
+}
+
+// ── Log an issued challan ────────────────────────────────────────
+// Writes the challan to `delivery_chalans` (POST /api/delivery-chalan/record),
+// which is the only record there is of a despatch — until this existed a
+// challan advanced a counter, printed, and left no trace. Called from BOTH
+// print paths (Lot Entry and the Lots tab) once the number is settled.
+//
+// Never throws: the register is book-keeping, the print is the operation, and
+// a network blip must not cost the operator the document. But it does NOT fail
+// silently either — a challan that printed and did not reach the book is
+// exactly the gap the register exists to close, so the operator is told and
+// can write it into the paper book instead. Returns true when recorded.
+async function recordDeliveryChalan(o, total) {
+  try {
+    const lots = Array.isArray(o.lots) ? o.lots : [];
+    const bags = (o.bags !== '' && o.bags != null)
+      ? (parseInt(String(o.bags).replace(/[^0-9]/g, ''), 10) || 0)
+      : lots.reduce((t, l) => t + (Number(l.bags) || 0), 0);
+    const qty = (o.qty != null)
+      ? (Number(o.qty) || 0)
+      : lots.reduce((t, l) => t + (Number(l.qty) || 0), 0);
+    await j('/api/delivery-chalan/record', {
+      method: 'POST',
+      body: JSON.stringify({
+        chalanNo: o.chalanNo,
+        date: o.date, time: o.time,
+        veh: o.veh, mode: o.mode,
+        branch: (lots[0] && lots[0].branch) || '',
+        // Whichever end the paper names as the consignee — the pair can be
+        // turned round in the dialog, and the register should say who actually
+        // received the goods.
+        receiver: (o.receiver && (o.receiver.name || o.receiver.address)) || '',
+        auctionId: (lots[0] && (lots[0].auction_id != null ? lots[0].auction_id : null)) || null,
+        lots: lots.map(l => ({ lot_no: l.lot_no })),
+        bags, qty,
+        value: Number(total) || 0,
+      }),
+    });
+    toast(`Challan ${o.chalanNo} printed and recorded in the register`);
+    return true;
+  } catch (_) {
+    toast(`Challan ${o.chalanNo} printed, but it could NOT be recorded in the register — note it in the book by hand`);
+    return false;
+  }
 }
 
 // The address block that prints under the company name.
@@ -28714,11 +28825,14 @@ async function dcPrint() {
       if (r && r.no) { o.chalanNo = r.no; noEl.value = r.no; noEl.dataset.preview = r.no; }
     } catch (_) { toast('Could not advance the chalan book — printing with ' + o.chalanNo); }
   }
+  const dcTotal = leChalanLines(o).reduce((t, r) => t + r.value, 0);
   try {
-    const w = await j('/api/amount-words?n=' + encodeURIComponent(
-      leChalanLines(o).reduce((t, r) => t + r.value, 0).toFixed(2)));
+    const w = await j('/api/amount-words?n=' + encodeURIComponent(dcTotal.toFixed(2)));
     o.words = (w && w.words) ? w.words + ' Only' : '';
   } catch (_) { o.words = ''; }
+  // Log it in the book — see recordDeliveryChalan(). Both print paths record,
+  // so the register does not depend on which screen the operator used.
+  await recordDeliveryChalan(o, dcTotal);
   const win = window.open('', '_blank', 'width=900,height=1000');
   if (!win) { toast('Popup blocked. Allow popups for this site and retry.'); return; }
   win.document.open();
@@ -29481,7 +29595,7 @@ const SET_NAV_GROUPS = [
   { id:'trade',     title:'Trade & Rates',        cats:['season','rates','hsn','lot_entry'] },
   { id:'documents', title:'Documents & Printing', cats:['invoice','spice_board'] },
   { id:'behaviour', title:'Features & Access',    cats:['flags','alerts','security'] },
-  { id:'external',  title:'Integrations & Export',cats:['integrations','tally'] },
+  { id:'external',  title:'Integrations & Export',cats:['integrations','wa_policy','tally'] },
 ];
 
 // Which sidebar group is expanded — accordion, so at most one. Keeping
@@ -29955,9 +30069,10 @@ function _waPanesHtml(){
     `<button type="button" class="wa-tab${_waTab === id ? ' on' : ''}" data-watab="${id}" onclick="_waSetTab('${id}')">${label}</button>`;
   const pane = (id, inner) =>
     `<div class="wa-pane" data-wapane="${id}"${_waTab === id ? '' : ' hidden'}>${inner}</div>`;
-  return `<div class="wa-tabs">${tab('overview', 'Overview')}${tab('setup', 'Setup')}${tab('log', 'Send log')}</div>`
+  return `<div class="wa-tabs">${tab('overview', 'Overview')}${tab('setup', 'Setup')}${tab('policy', 'Compliance')}${tab('log', 'Send log')}</div>`
     + pane('overview', '<div id="whatsapp-usage-host"></div>')
     + pane('setup', '<div id="whatsapp-config-host"></div>')
+    + pane('policy', '<div id="whatsapp-policy-host"></div>')
     + pane('log', '<div id="whatsapp-bad-host"></div><div id="whatsapp-log-host"></div>');
 }
 function _waSetTab(id){
@@ -29971,6 +30086,11 @@ function _waSetTab(id){
     try { _renderWhatsappLog(); } catch(_){}
     try { _renderWhatsappBadNumbers(); } catch(_){}
   }
+  // Compliance is deferred for the same reason and re-fetched every time:
+  // unlike the log, what it shows CHANGES as a result of what is done on it
+  // (an opt-out recorded, a backlog applied), so a cached pane would show
+  // the operator their own work missing.
+  if (id === 'policy') { try { _renderWhatsappPolicy(); } catch(_){} }
 }
 
 function renderSettingsPanel(){
@@ -30821,6 +30941,318 @@ function _waFold(key, tone, title, count, inner){
       </button>
       <div class="wa-fold-bd">${inner}</div>
     </section>`;
+}
+// ══════════════════════════════════════════════════════════════
+// COMPLIANCE TAB
+//
+// Settings → Integrations → Compliance. Built 2026-11-04, the day Meta
+// disabled this business's WhatsApp account:
+//
+//   "...due to activity that does not comply with WhatsApp's Business Terms
+//    of Service: breach of Terms of Acceptable Use."
+//
+// The panel answers, top to bottom, the four questions in the order an
+// operator actually has them:
+//
+//   1. Is sending safe right now?        the state strip + the pause switch
+//   2. Who may we message?               consent coverage
+//   3. Is anybody waiting on us?         unheard stop replies, ambiguous ones
+//   4. What has the gate refused?        the rules that fired, and the
+//                                        opt-out register behind them
+//
+// The rules themselves are NOT editable here — they are settings, in
+// Settings → WhatsApp Compliance, so a change to them is version-stamped in
+// the settings history like every other policy change. This panel is for the
+// day-to-day work: recording a consent decision, clearing the backlog, and
+// stopping everything in a hurry.
+// ══════════════════════════════════════════════════════════════
+let _waPolicyData = null;
+async function _renderWhatsappPolicy(){
+  const host = document.getElementById('whatsapp-policy-host');
+  if (!host) return;
+  if (!_waPolicyData) host.innerHTML = '<div class="wa-note">Loading…</div>';
+  let d = null, err = '';
+  try { d = await j('/api/whatsapp/compliance'); } catch (e) { err = (e && e.message) || String(e); }
+  if (err || !d) {
+    host.innerHTML = `<div class="wa-banner bad">Could not load the compliance panel: ${_waEsc(err || 'no response')}</div>`;
+    return;
+  }
+  _waPolicyData = d;
+  const esc = _waEsc;
+  const n = (v) => Number(v || 0).toLocaleString('en-IN');
+  const P = d.policy || {};
+  const C = d.coverage || {};
+  const tile = (k, v, sub, cls) =>
+    `<div class="wa-tile${cls ? ' ' + cls : ''}"><div class="k">${esc(k)}</div>`
+    + `<div class="v">${esc(v)}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+
+  // ── 1. State ────────────────────────────────────────────────
+  // One line, and it has to be unmistakable: on the morning after Meta
+  // writes, this is the only thing on the screen that matters.
+  const HEALTH = {
+    green:   { dot: '#16a34a', word: 'Meta rates this number GREEN' },
+    yellow:  { dot: '#f59e0b', word: 'Meta rates this number YELLOW — outreach is held' },
+    red:     { dot: '#dc2626', word: 'Meta rates this number RED — only replies go out' },
+    unknown: { dot: '#9ca3af', word: 'Quality rating not read yet' },
+  };
+  const h = HEALTH[d.health] || HEALTH.unknown;
+  const MODE_WORD = {
+    enforce: 'Rules are enforced — a message the rules disallow is not sent.',
+    warn:    'WARN ONLY — messages the rules disallow are still being sent, and only recorded here. This is a look-before-you-switch setting, not a place to stay.',
+    off:     'RULES ARE OFF. Every message goes out unchecked, which is the behaviour Meta disabled this account for. Turn this back on in Settings → WhatsApp Compliance.',
+  };
+  const state = P.paused
+    ? `<div class="wa-banner bad"><strong>WhatsApp sending is PAUSED.</strong> Nothing goes out at all — no invoice, no notice, no greeting — and both unattended sweeps are stopped. Resume it in Settings → WhatsApp Compliance when sending is safe again.</div>`
+    : P.mode === 'off'
+      ? `<div class="wa-banner bad">${esc(MODE_WORD.off)}</div>`
+      : P.mode === 'warn'
+        ? `<div class="wa-banner warn">${esc(MODE_WORD.warn)}</div>`
+        : '';
+
+  // ── 2. Coverage ─────────────────────────────────────────────
+  // `unknown` is the headline number and it is deliberately not softened.
+  // On an install that has never collected an opt-in it is the entire
+  // master, and that figure IS the exposure.
+  const pct = C.contactable ? Math.round((C.optedIn / C.contactable) * 100) : 0;
+  const coverTiles = [
+    tile('Opted in', n(C.optedIn),
+      C.contactable ? `${pct}% of the ${n(C.contactable)} sellers and buyers with a number` : '', 'lead'),
+    tile('Opted out', n(C.optedOut),
+      C.optedOutMarketingOnly
+        ? `${n(C.optedOutMarketingOnly)} of them only asked us to stop greetings and reminders — their invoices still go out`
+        : 'Nothing is sent to these contacts at all'),
+    tile('Never asked', n(C.unknown),
+      'They can still be sent invoices and notices — that rests on the business relationship — but no greetings or reminders'),
+  ].join('');
+
+  const legacy = P.legacyOptIn
+    ? `<div class="wa-banner warn"><strong>Every existing seller and buyer is being treated as opted in.</strong>
+        ${P.legacyBasis ? `Recorded basis: “${esc(P.legacyBasis)}”.` : 'No basis has been recorded for that, which is the thing Meta asks a business to be able to produce.'}
+        Leave this on only while that consent genuinely exists on paper.</div>`
+    : '';
+
+  // ── 3. The backlog ──────────────────────────────────────────
+  // The specific failure that disabled the account: replies were written to
+  // the inbound log and read by nobody.
+  const unheard = Number(C.unheardOptOuts || 0);
+  const backlog = unheard
+    ? `<div class="wa-banner bad">
+        <strong>${n(unheard)} ${unheard === 1 ? 'contact has' : 'contacts have'} asked us to stop and ${unheard === 1 ? 'is' : 'are'} still being messaged.</strong>
+        These replies arrived before the app read them. Applying them is the single most important thing on this screen.
+        <div class="wa-row" style="margin-top:8px">
+          <button type="button" class="wa-btn sm" onclick="_waApplyReplies(this)">Apply all ${n(unheard)} now</button>
+        </div>
+      </div>`
+    : `<div class="wa-note">Every “stop” reply in the message history has been applied.</div>`;
+
+  const review = (C.needsReview || []);
+  const reviewBlock = review.length
+    ? `<div class="wa-sub">Replies that need a decision</div>
+       <div class="wa-cap">These might be asking us to stop, but each contains a word that turns up in ordinary auction talk — so the app will not act on them by itself. Wrongly silencing somebody cuts them off from their own invoices.</div>
+       <div class="wa-fold-scroll"><table class="wa-tbl">
+         <thead><tr><th>When</th><th>From</th><th>What they said</th><th></th></tr></thead>
+         <tbody>${review.map(r => `
+           <tr>
+             <td style="white-space:nowrap;color:var(--spice-text-mute)">${esc(String(r.at || '').slice(0, 16))}</td>
+             <td style="white-space:nowrap">${esc(maskPhone(r.phone) || '—')}</td>
+             <td>${esc(r.text)}</td>
+             <td style="white-space:nowrap">
+               <button type="button" class="wa-btn sm" onclick="_waConsentSet('${esc(r.phone)}','out','Reply read and confirmed by the operator',this)">Stop everything</button>
+               <button type="button" class="wa-btn sm" onclick="_waConsentSet('${esc(r.phone)}','out','Reply read by the operator — greetings and reminders only',this,'marketing')" title="They keep getting invoices and notices">Stop greetings only</button>
+               <button type="button" class="wa-btn sm" onclick="_waConsentSet('${esc(r.phone)}','in','Operator read the reply and confirmed it was not an opt-out',this)">Not an opt-out</button>
+             </td>
+           </tr>`).join('')}
+         </tbody>
+       </table></div>`
+    : '';
+
+  // ── 4. What the gate did ────────────────────────────────────
+  const RULE_WORDS = {
+    opted_out: 'Contact had asked us to stop',
+    opted_out_marketing: 'Contact had asked us to stop greetings and reminders',
+    no_optin: 'No opt-in on record (greeting or reminder)',
+    too_soon: 'Marketing too soon after the last one',
+    contact_cap: "Already had the day's messages",
+    quality_red: 'Held — Meta rated the number red',
+    quality_yellow: 'Outreach held — rating below green',
+    dead_number: 'Number has never worked',
+    paused: 'Sending paused',
+    optout_cleared: 'An opt-out was cleared by an operator',
+  };
+  const blocks = (C.blocks || []);
+  const blockBlock = blocks.length
+    ? `<table class="wa-tbl">
+         <thead><tr><th>Rule</th><th>Messages</th><th></th></tr></thead>
+         <tbody>${blocks.map(b => `
+           <tr>
+             <td>${esc(RULE_WORDS[b.code] || b.code)}</td>
+             <td style="white-space:nowrap">${n(b.n)}</td>
+             <td style="white-space:nowrap;color:var(--spice-text-mute);font-size:11px">${b.mode === 'warn' ? 'sent anyway (warn mode)' : 'not sent'}</td>
+           </tr>`).join('')}
+         </tbody>
+       </table>`
+    : `<div class="wa-note">The rules have refused nothing in the last 30 days.</div>`;
+
+  // ── The opt-out register ────────────────────────────────────
+  const outRows = (d.optedOut || []);
+  const register = outRows.length
+    ? `<div class="wa-fold-scroll"><table class="wa-tbl">
+         <thead><tr><th>Number</th><th>Since</th><th>Stopped</th><th>How we know</th><th></th></tr></thead>
+         <tbody>${outRows.map(r => `
+           <tr>
+             <td style="white-space:nowrap">${esc(maskPhone(r.phone) || '—')}</td>
+             <td style="white-space:nowrap;color:var(--spice-text-mute)">${esc(String(r.opted_out_at || r.updated_at || '').slice(0, 10))}</td>
+             <td style="white-space:nowrap;font-size:11.5px">${r.scope === 'marketing'
+               ? '<span style="color:#92400e">Greetings &amp; reminders</span>'
+               : '<span style="color:var(--spice-chili-dk)">Everything</span>'}</td>
+             <td style="max-width:360px">${esc(r.basis || r.note || '—')}
+               <div style="font-size:11px;color:var(--spice-text-mute)">${esc(_WA_SOURCE_WORD[r.source] || r.source || '')}</div></td>
+             <td style="white-space:nowrap">
+               <button type="button" class="wa-btn sm" onclick="_waConsentClear('${esc(r.phone)}',this)" title="Only if they have since asked to be messaged again">Remove</button>
+             </td>
+           </tr>`).join('')}
+         </tbody>
+       </table></div>`
+    : `<div class="wa-note">Nobody has opted out.</div>`;
+
+  host.innerHTML = `
+    ${state}
+    <div class="wa-status">
+      <span class="wa-dot" style="background:${h.dot}"></span><b>${esc(h.word)}</b>
+      <span class="wa-spacer"></span>
+      <span>${esc(MODE_WORD[P.mode] ? (P.mode === 'enforce' ? 'Rules enforced' : P.mode.toUpperCase()) : P.mode)}</span>
+      <button type="button" class="wa-btn sm" onclick="_renderWhatsappPolicy()">Refresh</button>
+    </div>
+    ${legacy}
+
+    <div class="wa-sub">Who we may message</div>
+    <div class="wa-cap">A greeting or a reminder needs an opt-in on record for that contact. Invoices, bills and payment notices do not — the business relationship is their basis — but an opt-out stops those too.</div>
+    <div class="wa-tiles">${coverTiles}</div>
+
+    <div class="wa-sub">Record a decision</div>
+    <div class="wa-cap">Use this when somebody agrees over the phone or at the counter, or asks to be taken off. Say where the permission comes from: if Meta ever reviews this account, that sentence is the answer.</div>
+    <div class="wa-box">
+      <div class="wa-fields">
+        <div><label class="wa-lab" for="wa-cs-phone">Phone number</label>
+          <input id="wa-cs-phone" class="wa-in" type="tel" placeholder="98765 43210"></div>
+        <div style="grid-column:span 2"><label class="wa-lab" for="wa-cs-basis">Where the permission (or the request to stop) came from</label>
+          <input id="wa-cs-basis" class="wa-in" type="text" placeholder="e.g. signed the 2026 registration form / asked on the phone, 4 Nov"></div>
+      </div>
+      <div class="wa-row" style="margin-top:9px">
+        <button type="button" class="wa-btn p" onclick="_waConsentForm('in',this)">They agreed — opt in</button>
+        <button type="button" class="wa-btn" onclick="_waConsentForm('out',this)">Stop everything</button>
+        <button type="button" class="wa-btn" onclick="_waConsentForm('out',this,'marketing')" title="They still get their invoices, bills and payment notices">Stop greetings only</button>
+        <span id="wa-cs-msg" class="wa-note"></span>
+      </div>
+    </div>
+
+    <div class="wa-sub">Has anybody asked us to stop?</div>
+    ${backlog}
+    ${reviewBlock}
+
+    <div class="wa-sub">What the rules refused — last 30 days</div>
+    ${blockBlock}
+
+    <div class="wa-sub">Opt-out register</div>
+    <div class="wa-cap">Everyone the app will not message. Removing somebody from this list starts messaging them again, so only do it when they have asked — the removal is recorded either way.</div>
+    ${register}`;
+}
+// How a consent decision reached us, in words. 'meta' matters most: that is
+// Meta telling us a recipient stopped our messages, which is the strongest
+// possible signal and the one nobody in the business will have seen.
+const _WA_SOURCE_WORD = {
+  reply: 'From their own reply on WhatsApp',
+  button: "They tapped the template's Stop button",
+  operator: 'Entered by an operator',
+  meta: 'Meta refused a message to them — they have stopped our messages',
+  import: 'Captured in bulk',
+};
+async function _waConsentPost(body, btn, okMsg){
+  const msg = document.getElementById('wa-cs-msg');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(B + '/api/whatsapp/consent', {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + T, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    if (d.failed && d.failed.length) throw new Error(d.failed[0].error || 'could not be recorded');
+    if (msg) msg.textContent = okMsg || 'Recorded.';
+    toast(okMsg || 'Recorded');
+    _waPolicyData = null;
+    await _renderWhatsappPolicy();
+  } catch (e) {
+    if (msg) msg.textContent = (e && e.message) || String(e);
+    toast((e && e.message) || 'Could not record that');
+    if (btn) btn.disabled = false;
+  }
+}
+// The form at the top. The basis is REQUIRED for an opt-in and not for an
+// opt-out, and the asymmetry is the point: "they asked us to stop" is
+// self-evidently its own justification, while "they agreed" is a claim this
+// business may have to stand behind.
+function _waConsentForm(status, btn, scope){
+  const phone = (document.getElementById('wa-cs-phone') || {}).value || '';
+  const basis = ((document.getElementById('wa-cs-basis') || {}).value || '').trim();
+  const msg = document.getElementById('wa-cs-msg');
+  if (!String(phone).replace(/\D/g, '')) {
+    if (msg) msg.textContent = 'Enter the phone number first.';
+    return;
+  }
+  if (status === 'in' && !basis) {
+    if (msg) msg.textContent = 'Say where the permission came from — an opt-in nobody can account for is exactly what the account was disabled over.';
+    return;
+  }
+  _waConsentPost({ phone, status, scope, basis: basis || 'Asked us to stop', source: 'operator' }, btn,
+    status === 'in' ? 'Opt-in recorded'
+      : scope === 'marketing' ? 'Greetings and reminders stopped — their invoices still go out'
+      : 'Opted out — nothing further will be sent to them');
+}
+function _waConsentSet(phone, status, basis, btn, scope){
+  _waConsentPost({ phone, status, scope, basis, source: 'operator' }, btn,
+    status === 'out'
+      ? (scope === 'marketing' ? 'Greetings and reminders stopped' : 'Opted out')
+      : 'Kept on the list');
+}
+async function _waConsentClear(phone, btn){
+  // Plain confirm(), as the other destructive actions on this page use. The
+  // wording carries the weight: this is the one button on the screen that
+  // starts messaging somebody who asked us not to.
+  if (!confirm('Start messaging this number again?\n\n'
+    + 'They are on the opt-out register because they asked us to stop. Remove them only if they have since '
+    + 'asked to be messaged again — the removal is recorded against your name either way.')) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(B + '/api/whatsapp/consent/' + encodeURIComponent(phone), {
+      method: 'DELETE', headers: { 'Authorization': 'Bearer ' + T },
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `HTTP ${r.status}`); }
+    toast('Removed from the opt-out register');
+    _waPolicyData = null;
+    await _renderWhatsappPolicy();
+  } catch (e) {
+    toast((e && e.message) || 'Could not remove that');
+    if (btn) btn.disabled = false;
+  }
+}
+async function _waApplyReplies(btn){
+  if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+  try {
+    const r = await fetch(B + '/api/whatsapp/consent/apply-replies', {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + T },
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    toast(d.applied
+      ? `${d.applied} contact${d.applied === 1 ? '' : 's'} opted out — nothing further will be sent to them`
+      : 'Nothing left to apply');
+    _waPolicyData = null;
+    await _renderWhatsappPolicy();
+  } catch (e) {
+    toast((e && e.message) || 'Could not apply those');
+    if (btn) { btn.disabled = false; btn.textContent = 'Apply now'; }
+  }
 }
 let _waBadDays = 90;
 async function _renderWhatsappBadNumbers(){
@@ -40949,7 +41381,11 @@ async function _waCloudSendText(phone, params, ref) {
     if (r.status === 501) return { ok:false, fallback:true, error:'WhatsApp Cloud API not configured' };
     const d = await r.json().catch(()=>({}));
     if (r.status === 400 && d.fallback) return { ok:false, fallback:true, error:d.error || 'No text template configured' };
-    if (!r.ok) return { ok:false, fallback:false, error:d.error || `Send failed (HTTP ${r.status})` };
+    // A 403 carrying `policy` is the compliance gate, not Meta: this message
+    // was never sent because a rule said it must not be. `fallback` stays
+    // FALSE — pushing a refused message through the operator's personal
+    // WhatsApp is the circumvention, not the workaround.
+    if (!r.ok) return { ok:false, fallback:false, policy:d.policy || '', error:d.error || `Send failed (HTTP ${r.status})` };
     // d.id is the wamid — the only handle on this message's later delivery
     // status. The bulk queue keeps it; single sends have no use for it.
     return { ok:true, id: d.id || '' };
@@ -40976,7 +41412,9 @@ async function _waCloudSendDocument(phone, params, blob, filename, ref) {
     if (r.status === 501) return { ok:false, fallback:true, error:'WhatsApp Cloud API not configured' };
     const d = await r.json().catch(()=>({}));
     if (r.status === 400 && d.fallback) return { ok:false, fallback:true, error:d.error || 'No document template configured' };
-    if (!r.ok) return { ok:false, fallback:false, error:d.error || `Send failed (HTTP ${r.status})` };
+    // See _waCloudSendText: `policy` means a rule refused it, and that is
+    // never a reason to open WhatsApp Web.
+    if (!r.ok) return { ok:false, fallback:false, policy:d.policy || '', error:d.error || `Send failed (HTTP ${r.status})` };
     return { ok:true, id: d.id || '' };
   } catch (e) {
     return { ok:false, fallback:true, error:(e && e.message) || String(e) };
@@ -41007,12 +41445,54 @@ function _waBlockKind(msg) {
       detail: 'A payment method or billing problem on the Meta account blocks every template send. Settings → Integrations → Recharge opens the Meta billing hub; nothing in this app can clear it.' },
     { re: /access token|session has expired|oauthexception|invalid.*token|token.*expire/i, code: '190', short: 'The WhatsApp access token is no longer valid',
       detail: 'The token in Settings → Integrations has expired or been revoked, so no send can succeed until it is replaced.' },
-    { re: /account.*(restricted|disabled|banned|suspend)|restricted.*(account|number)/i, code: '', short: 'Meta has restricted this WhatsApp account',
-      detail: 'Sending is blocked at the account level. Check the account status in WhatsApp Manager — nothing can go out through the Cloud API until it is lifted.' },
+    { re: /account.*(restricted|disabled|banned|suspend)|restricted.*(account|number)|\b368\b|temporarily\s+blocked.*polic/i, code: '', short: 'Meta has restricted this WhatsApp account',
+      detail: 'Sending is blocked at the account level. Check the account status in WhatsApp Manager — nothing can go out through the Cloud API until it is lifted. If the reason given is a policy or Acceptable Use breach, stop sending entirely (Settings → WhatsApp Compliance → Pause) before anything else: another run during a review is what turns a restriction into a disablement.' },
+    // The two POLICY refusals, added 2026-11-04 after Meta disabled this
+    // account for a breach of the Terms of Acceptable Use. Both say "this
+    // recipient did not want this", and both were previously read as ordinary
+    // bad luck — so a 200-row run carried straight on through them.
+    { re: /131050|user\s+(has\s+)?(stopped|opted)|not\s+opted\s+in|user\s+preference/i, code: '131050', short: 'This contact has stopped messages from this business',
+      detail: 'Meta error 131050 — the recipient has opted out of messages from this number. They are now recorded as opted out and nothing further will be sent to them. Continuing to template numbers that have opted out is the clearest breach of the Acceptable Use terms there is, so the run stops here.' },
+    { re: /131049|per[\s-]?no?r?\s?user\s+marketing|frequency\s+cap|healthy\s+ecosystem/i, code: '131049', short: 'Meta dropped this message to protect the recipient',
+      detail: 'Meta error 131049 — this recipient has had too many marketing messages recently (from everyone, not only us) and Meta did not deliver ours. It is a warning rather than a fault, but a run that hits it should be cut back, not pushed through.' },
   ];
   for (const t of TABLE) if (t.re.test(m)) return { code: t.code, short: t.short, detail: t.detail, raw: m };
   return null;
 }
+
+// ── A policy refusal: this row's, or the whole install's? ─────
+// The compliance gate (wa-compliance.js, enforced server-side) returns a
+// code naming the rule that refused a send. Most are about ONE contact —
+// they opted out, they have had their month's marketing, their number is
+// dead — and the run must carry on to the next row.
+//
+// Three are about the WHOLE install and every remaining row would be refused
+// identically, so the run has to stop: sending is paused, or Meta has rated
+// the number below green. Firing two hundred rows at those is pointless and,
+// in the quality cases, actively harmful.
+//
+// → { code, short, detail } for a run-stopping rule, null for a per-row one.
+const _WA_POLICY_STOPS = {
+  paused: { short: 'WhatsApp sending is paused for this install',
+    detail: 'Settings → WhatsApp Compliance has the emergency stop on, so nothing goes out over WhatsApp at all. Turn it off there when sending is safe to resume.' },
+  quality_red: { short: 'Meta rates this number RED — sending is held',
+    detail: 'A red quality rating means recipients have been blocking or reporting our messages. The app holds everything except replies until it recovers; sending through it is how a number goes from throttled to disabled.' },
+  quality_yellow: { short: 'Meta rates this number below green — outreach is held',
+    detail: 'Greetings and reminders are paused while the quality rating is below green. Invoices and notices still go out.' },
+};
+function _waPolicyStop(code) {
+  const t = _WA_POLICY_STOPS[String(code || '')];
+  return t ? { code: String(code), short: t.short, detail: t.detail, raw: '' } : null;
+}
+// The per-contact rules, phrased as a short chip for the run's ledger.
+const _WA_POLICY_ROW = {
+  opted_out: 'Opted out — asked us not to message them',
+  opted_out_marketing: 'Asked us to stop greetings and reminders',
+  no_optin: 'No WhatsApp opt-in on record for this contact',
+  too_soon: 'Had a greeting or reminder too recently',
+  contact_cap: 'Already had the day\'s messages',
+  dead_number: 'Number has never worked — fix it on the master',
+};
 // Twin of wa-errors.js `phoneProblem` — same no-module-loader reason as
 // _waBlockKind above, and the same obligation to keep the two in step.
 // Rejects only what can never be delivered to: nothing, fewer than 10 digits,
@@ -41094,7 +41574,14 @@ async function _waPreflight(items) {
   if (need.max <= remaining) return 'go';
   // A DOM failure here must not take the run down with it — no prompt shown
   // means no answer to honour, so the operator keeps control.
-  try { return await _waPreflightAsk(need, remaining, L); } catch (_) { return 'go'; }
+  let answer;
+  try { answer = await _waPreflightAsk(need, remaining, L); } catch (_) { return 'go'; }
+  // "Send what fits" comes back as the NUMBER of rows the 24h window has
+  // room for, so the caller can run that many and defer the rest. Returned
+  // as an object rather than a bare number so a caller comparing against
+  // the string answers cannot mistake it for one of them.
+  if (answer === 'fit') return { fit: Math.max(1, remaining) };
+  return answer;
 }
 let _waGateResolve = null;
 function _waGateAnswer(a) {
@@ -41118,11 +41605,19 @@ function _ensureWaGateModal() {
         </div>
       </div>
       <div id="wa-gate-nums" style="display:flex;gap:10px;margin-bottom:14px"></div>
-      <div style="font-size:12px;color:var(--text3);margin-bottom:12px">WhatsApp Web sends from your own phone's account and is not subject to this limit — it just needs one click per message.</div>
+      <!-- This used to read "WhatsApp Web sends from your own phone's account
+           and is not subject to this limit", with a button to do exactly
+           that. Meta's 24-hour ceiling is not an inconvenience to be routed
+           around: it is how Meta rates a sender it is not yet sure about, and
+           deliberately evading it through the consumer app is itself a breach
+           of the terms — on 2026-11-04 this business's WhatsApp account was
+           disabled for Acceptable Use. So the honest third option is to send
+           the part that fits and finish the rest when the window clears. -->
+      <div style="font-size:12px;color:var(--text3);margin-bottom:12px" id="wa-gate-note"></div>
       <div class="actions">
         <button class="btn" onclick="_waGateAnswer('cancel')" style="background:#eee">Cancel</button>
-        <button class="btn" onclick="_waGateAnswer('go')" style="background:var(--spice-turmeric);color:#fff">Send anyway</button>
-        <button class="btn" onclick="_waGateAnswer('web')" style="background:#25D366;color:#fff">Use WhatsApp Web</button>
+        <button class="btn" onclick="_waGateAnswer('go')" style="background:#eee">Send anyway</button>
+        <button class="btn" onclick="_waGateAnswer('fit')" style="background:var(--spice-turmeric);color:#fff" id="wa-gate-fit">Send what fits</button>
       </div>
     </div>`;
   // Same reason as the queue modal: built after installModalCloseButtons()
@@ -41154,6 +41649,18 @@ function _waPreflightAsk(need, remaining, L) {
     body.textContent = remaining === 0
       ? `Meta rates this number ${tier || 'at its current tier'}: ${n(L.cap)} unique recipients per rolling 24 hours, and ${n(L.used)} have been used. Sending now will come back "Spam Rate limit hit" on every row, and each refusal counts against the number's standing.`
       : `This run needs ${upto}${n(need.max)} recipients and only ${n(remaining)} of ${n(L.cap)} are left in the current 24-hour window${tier ? ` (${tier})` : ''}. About the last ${n(over)} will be refused by Meta.`;
+  }
+  const note = document.getElementById('wa-gate-note');
+  if (note) {
+    note.textContent = remaining === 0
+      ? 'Headroom returns gradually as the oldest sends age past 24 hours, not all at once at midnight — so the rest of this run can go out later today.'
+      : `"Send what fits" sends the first ${n(remaining)} and leaves the rest for when the window clears. "Send anyway" will have the last ${n(over)} refused by Meta, and each refusal counts against this number's standing.`;
+  }
+  const fit = document.getElementById('wa-gate-fit');
+  if (fit) {
+    // Nothing fits, so there is no partial run to offer.
+    fit.style.display = remaining === 0 ? 'none' : '';
+    fit.textContent = `Send the first ${n(remaining)}`;
   }
   if (nums) {
     const tile = (k, v, tint) =>
@@ -41333,6 +41840,13 @@ const _WA_CHIP = {
   opened:    { label: 'Opened',     bg: '#d8f0f5', fg: '#0d5f7a' },
   skipped:   { label: 'Skipped',    bg: '#eee',    fg: '#666' },
   failed:    { label: 'Failed',     bg: '#fde2e2', fg: '#b02525' },
+  // Refused by the compliance rules (no opt-in, an opt-out on record, a
+  // cap). Amber rather than red, and worded as a decision rather than a
+  // fault: nothing went wrong, the app declined to send. Deliberately NOT
+  // retryable — a retry would be refused identically, and "open it in
+  // WhatsApp Web instead" for a contact who asked us to stop is the
+  // circumvention this whole mechanism exists to prevent.
+  blocked:   { label: 'Not sent',   bg: '#FEF3C7', fg: '#92400E' },
 };
 
 // "The message left the building" — everything from Meta accepting it to the
@@ -41361,8 +41875,11 @@ function _waQueueRender(activeIdx, status) {
   const rows = _waQ.rows;
   const done = rows.filter(_waRowSent).length;
   const failed = rows.filter(r => r.status === 'failed').length;
+  const refused = rows.filter(r => r.status === 'blocked').length;
   const cnt = document.getElementById('wa-q-count');
-  if (cnt) cnt.textContent = `(${done} of ${rows.length}${failed ? ` · ${failed} failed` : ''})`;
+  if (cnt) cnt.textContent = `(${done} of ${rows.length}`
+    + (failed ? ` · ${failed} failed` : '')
+    + (refused ? ` · ${refused} not allowed` : '') + ')';
   const ban = document.getElementById('wa-q-banner');
   if (ban) {
     const b = _waQ.blocked;
@@ -41579,9 +42096,15 @@ async function _waAutoPass() {
     // is another spam signal against the number, which is what keeps it from
     // ever being rated for a higher tier. So the pass ENDS here, and the
     // rows it never tried say exactly that instead of claiming to have failed.
-    const block = res.fallback ? null : _waBlockKind(res.error);
-    row.status = 'failed';
+    // Three kinds of "no", and they need different answers:
+    //   a policy rule about the whole install  → stop the run (below)
+    //   a policy rule about THIS contact       → this row only, carry on
+    //   a Meta error                           → the existing account/row split
+    const policyStop = res.policy ? _waPolicyStop(res.policy) : null;
+    const block = policyStop || (res.fallback ? null : _waBlockKind(res.error));
+    row.status = res.policy ? 'blocked' : 'failed';
     row.reason = block ? block.short
+      : res.policy ? (_WA_POLICY_ROW[res.policy] || res.error || 'Not allowed by the WhatsApp rules')
       : res.error ? ((h) => h ? `${res.error} — ${h}` : res.error)(_waRowHint(res.error))
       : 'Send failed';
     _waQueueRender(i);
@@ -41728,6 +42251,10 @@ function _waSummaryLine() {
   if (n('failed') - deadN > 0) parts.push(`${n('failed') - deadN} failed`);
   if (deadN) parts.push(`${deadN} not on WhatsApp`);
   if (n('skipped')) parts.push(`${n('skipped')} skipped`);
+  // Named separately from "failed" because it is not a failure and the
+  // answer is different: a refused row needs a consent decision or another
+  // delivery route, not a retry.
+  if (n('blocked')) parts.push(`${n('blocked')} not sent — not allowed by the WhatsApp rules`);
   // A run Meta cut short did not "finish". Leading with the tally would bury
   // the one fact that decides what the operator does next.
   let line = _waQ.blocked
@@ -41738,7 +42265,7 @@ function _waSummaryLine() {
   // six messages is exactly the confusion this panel exists to end.
   const arrived = n('delivered') + n('read');
   if (arrived) line += ` ${arrived} delivered${n('read') ? `, ${n('read')} read` : ''}.`;
-  if (n('failed') || n('skipped')) line += ' Rows below show why.';
+  if (n('failed') || n('skipped') || n('blocked')) line += ' Rows below show why.';
   // Only claim to be waiting on receipts when there is something to wait for
   // — an account with no webhook configured never advances past "sent".
   if (!_waQ.pollDone && _waPollables().length) line += ' Watching for delivery receipts…';
@@ -41801,13 +42328,32 @@ async function _runWaQueue(items, opts) {
   // gate only ever appears when the run genuinely does not fit; everything
   // unknown waves it through.
   let gateWhy = '';
+  let deferred = 0;
   if (useApi) {
     const decision = await _waPreflight(items);
     if (decision === 'cancel') return;
+    // 'fit' — send the part the 24h window has room for and leave the rest.
+    // The deferred rows are NOT dropped silently: they go into the ledger as
+    // skipped with a reason, so they are logged as unsent and "↻ Select
+    // unsent" finds them again tomorrow.
+    if (decision && decision.fit) { deferred = items.length - decision.fit; }
+    // 'web' is still reachable on an install where the Cloud API is not set
+    // up at all — see _waCloudApiAvailable above. It is no longer offered as
+    // a way past a spent ceiling.
     if (decision === 'web') { useApi = false; gateWhy = "The Cloud API's 24-hour recipient limit is used up"; }
   }
   _ensureWaQueueModal();
   _waQ = { rows: items.map(it => ({ item: it, name: it.name || '—', phone: it.phone || '', status: 'waiting', reason: '' })) };
+  // The tail the operator chose to leave for tomorrow. Marked before the run
+  // starts so the ledger shows them as deferred rather than as rows that
+  // quietly never happened — and _waLogUnsent records them, so "↻ Select
+  // unsent" finds them again on the next working day.
+  if (deferred > 0) {
+    _waQ.rows.slice(-deferred).forEach(r => {
+      r.status = 'skipped';
+      r.reason = "Left for later — today's 24-hour recipient limit has no room for it";
+    });
+  }
   _waQueueStopped = false;
   _waQueueState = null;
   showModal('wa-queue-modal');
@@ -44076,6 +44622,11 @@ function _payLwGroupRows(canWrite) {
     const over = lots.reduce((s, l) => s + (Number(l.over_advance) || 0), 0);
     const payable = lots.reduce((s, l) => s + (Number(l.payable) || 0), 0);
     const gross = lots.reduce((s, l) => s + _payLwGross(l), 0);
+    // TDS summed over the seller's lots. Each lot's payable is already net of
+    // its own share, so this total is exactly the gap between the gross above
+    // and the payable — which is what lets the expanded rows add up to this
+    // row instead of disagreeing with it.
+    const tds = lots.reduce((s, l) => s + (Number(l.tds) || 0), 0);
 
     // One value or "mixed" — said in words rather than shown as the first
     // lot's value, which would read as a fact about the whole seller.
@@ -44135,6 +44686,9 @@ function _payLwGroupRows(canWrite) {
     if (unpricedLots.length) {
       badges += badge('#f1f5f9', '#475569', `${unpricedLots.length} lot(s) have no price yet, so they count nothing toward the Payable. Pay Advance still works on them.`, `⏳ ${unpricedLots.length} not priced`);
     }
+    if (tds > 0) {
+      badges += badge('#FEF2F2', '#B91C1C', `TDS u/s 194Q of ₹${fmtI(tds, 2)} withheld across this seller's lots and deducted from the Payable beside. It is remitted to the government, not paid to the seller — and the bank-payment export withholds the same amount.`, `TDS ₹${fmtI(tds, 2)}`);
+    }
     if (advance > 0) {
       badges += badge('#FFFBEB', '#B45309', `Advances totalling ₹${fmtI(advance, 2)} are already paid against this seller's lots and are deducted from the Payable beside.`, `💰 ₹${fmtI(advance, 2)} advance`);
     }
@@ -44167,7 +44721,7 @@ function _payLwGroupRows(canWrite) {
 
     const payableCell = (!selectable.length && !payable)
       ? `<span style="font-weight:400;font-size:11px;color:var(--text3)">${allPaid ? 'settled' : 'awaiting price'}</span>`
-      : advance > 0
+      : (advance > 0 || tds > 0)
         ? `${fmtI(payable, 2)}<div style="font-weight:400;font-size:10.5px;color:var(--text3)">of ₹${fmtI(gross, 2)}</div>`
         : fmtI(payable, 2);
 
@@ -44185,16 +44739,22 @@ function _payLwGroupRows(canWrite) {
 
     // Expanded: the ordinary per-lot rows, tinted to read as children of the
     // seller above rather than as peers of the other group rows.
+    // Expanded: the ordinary per-lot rows, in a recessed drawer so they read
+    // as this seller's detail rather than as more rows of the outer table.
+    // See the .paylw-kids CSS for the three separating cues.
     const children = open
-      ? `<tr class="paylw-grp-kids"><td colspan="8" style="padding:0;background:var(--spice-cardamom-lt)">
-           <table class="paylw-table" style="width:100%;margin:0">
-             <thead><tr>
-               <th style="width:36px"></th><th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th>
-               <th>Branch</th><th style="min-width:320px">Bank</th>
-               <th style="text-align:right">Advance</th><th style="text-align:right">Payable</th>
-             </tr></thead>
-             <tbody>${lots.map(l => _payLwLotRow(l, canWrite)).join('')}</tbody>
-           </table></td></tr>`
+      ? `<tr class="paylw-grp-kids paylw-kids"><td colspan="8">
+           <div class="paylw-kids-inner">
+             <div class="paylw-kids-cap">${esc(g.name)} — ${lots.length} lot${lots.length === 1 ? '' : 's'}</div>
+             <table class="paylw-table" style="width:100%;margin:0">
+               <thead><tr>
+                 <th style="width:36px"></th><th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th>
+                 <th>Branch</th><th style="min-width:320px">Bank</th>
+                 <th style="text-align:right">Advance</th><th style="text-align:right">Payable</th>
+               </tr></thead>
+               <tbody>${lots.map(l => _payLwLotRow(l, canWrite)).join('')}</tbody>
+             </table>
+           </div></td></tr>`
       : '';
     return groupRow + children;
   }).join('');
@@ -44255,6 +44815,13 @@ function _payLwLotRow(l, canWrite) {
   // This lot's payable BEFORE its advance — what the advance was measured
   // against, and what the badges and the Payable cell both quote.
   const gross = _payLwGross(l);
+  // TDS (194Q) withheld on this lot — already off the Payable beside it. Said
+  // out loud because a Payable that no longer matches the lot's balance reads
+  // as an error otherwise, exactly as an advance does.
+  const tds = Number(l.tds) || 0;
+  const tdsBadge = (tds > 0 && !isPaid)
+    ? ` <span style="font-size:9.5px;font-weight:700;background:#FEF2F2;color:#B91C1C;padding:1px 6px;border-radius:8px;vertical-align:middle" title="TDS u/s 194Q of ₹${esc(fmtI(tds, 2))} withheld on this lot's purchase invoice. Already deducted from the Payable beside it and from this lot's line in the bank-payment export — it is remitted to the government, not paid to the seller.">TDS ₹${esc(fmtI(tds, 2))}</span>`
+    : '';
   const advBadge = advance > 0
     ? ` <span class="paylw-adv-badge" title="Advance of ₹${esc(fmtI(advance, 2))} paid on ${esc(fmtD(l.advance_at))}. It is already deducted from this lot's Payable and from its line in the bank-payment export.">💰 Advance ₹${esc(fmtI(advance, 2))} on ${esc(fmtD(l.advance_at))}</span>`
     : '';
@@ -44314,13 +44881,13 @@ function _payLwLotRow(l, canWrite) {
   // "settled" rather than "not known yet", so it says so in words.
   const payableCell = unpriced
     ? `<span style="font-weight:400;font-size:11px;color:var(--text3)">awaiting price</span>`
-    : advance > 0
+    : (advance > 0 || tds > 0)
       ? `${fmtI(Number(l.payable) || 0, 2)}`
         + `<div style="font-weight:400;font-size:10.5px;color:var(--text3)">of ₹${fmtI(gross, 2)}</div>`
       : fmtI(Number(l.payable) || 0, 2);
   return `<tr${rowCls}${rowStyle}>
     <td style="text-align:center">${cb}</td>
-    <td>${esc(l.name || '')}${godownBadge}${paidBadge}${unpricedBadge}${advBadge}${overBadge}${undoBtn}${undoAdvBtn}</td>
+    <td>${esc(l.name || '')}${godownBadge}${paidBadge}${unpricedBadge}${tdsBadge}${advBadge}${overBadge}${undoBtn}${undoAdvBtn}</td>
     <td style="font-family:monospace;font-weight:600;${Number(l.godown) ? 'color:#0f766e' : ''}">${esc(String(l.lot_no || ''))}</td>
     <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
     <td>${esc(l.branch || '')}</td>
@@ -45873,17 +46440,21 @@ async function loadPayments(){
               : `<span style="color:var(--text3)">0.00</span>`;
           } },
         // TDS (u/s 194Q) — taken from the seller's purchase invoice
-        // (calculations.getPaymentSummary joins purchases.tds by seller name).
-        // Display-only; does not change Net/Payable.
+        // (calculations.getPaymentSummary, via tdsByLot). DEDUCTED from
+        // Payable: the money is withheld and paid to the government, not to
+        // the seller, so paying the gross would pay it out twice. The bank
+        // export deducts the same figure, so the file matches this screen.
+        // Always 0 for a planter — TDS lives on RD purchase invoices.
         { key:'tds', label:'TDS', sort:'number', numeric:true,
           fmt:(n)=>fmtI(n,2),
           render:(p)=>{
             const v = Number(p.tds)||0;
             return v>0
-              ? `<span style="color:#B91C1C;font-weight:600">${fmtI(v,2)}</span>`
+              ? `<span style="color:#B91C1C;font-weight:600" title="TDS u/s 194Q withheld on this seller's purchase invoice — deducted from Payable and remitted to the government, not paid to the seller.">${fmtI(v,2)}</span>`
               : `<span style="color:var(--text3)">0.00</span>`;
           } },
-        // Net Amount — the value previously labelled "Payable" (balance:
+        // Net Amount — before advances and TDS come off it. (Previously
+        // labelled "Payable"; balance:
         // amount + refund − commission − handling − GST), BEFORE the
         // days-based settlement discount.
         { key:'net_amount', label:'Net Amount', sort:'number', numeric:true,
@@ -48923,12 +49494,17 @@ function onRegTypeChange(){
   // So it reads by date range with no auction picker, the way the per-party
   // registers do. It keeps the sale-type filter, which still narrows it.
   const pendingReg = (type === 'pending_sales');
+  // The challan book is a continuous series, not a per-trade document: it runs
+  // through the year whichever trade the goods came off, so it reads by date
+  // range with no auction picker — the same shape as Godown and Pending Sales.
+  // (The endpoint still accepts an auctionId for a caller that wants one.)
+  const chalanReg = (type === 'delivery_chalan');
   // Sale type does not narrow a chase list in any useful way — every pending
   // draft matters whoever it is for. The question actually asked of this
   // sheet is "what is outstanding for THIS buyer", so the party picker takes
   // its place.
   if (saleWrap) saleWrap.style.display = (type === 'sales') ? '' : 'none';
-  if (auctionWrap) auctionWrap.style.display = (indiv || godownReg || pendingReg) ? 'none' : '';
+  if (auctionWrap) auctionWrap.style.display = (indiv || godownReg || pendingReg || chalanReg) ? 'none' : '';
   if (partyWrap) partyWrap.style.display = (indiv || pendingReg) ? '' : 'none';
   const certBtn = document.getElementById('reg-certificate-btn');
   if (certBtn) certBtn.style.display = (type === 'pooler') ? '' : 'none';
@@ -48939,7 +49515,7 @@ function onRegTypeChange(){
   // into the godown request and narrow the sheet to one trade's legacy rows.
   // Clear any trade left selected by a previous register, or it would travel
   // into the request and narrow a sheet that is meant to span trades.
-  if (godownReg || pendingReg) { const a = document.getElementById('reg-auction'); if (a) a.value = ''; }
+  if (godownReg || pendingReg || chalanReg) { const a = document.getElementById('reg-auction'); if (a) a.value = ''; }
   if (godownReg) populateRegBranches();
   if (indiv || pendingReg) populateRegParties();
 }
@@ -49215,6 +49791,27 @@ function poolerSummaryRows(rows){
   ];
 }
 function regColumns(type){
+  // Delivery Challan book. A challan is a GATE PASS, not a money document:
+  // what matters is which number went out, on what lorry, to whom, carrying
+  // which lots. Value is carried because the challan prints it, but the
+  // totals that reconcile are bags and weight. Kept in step with the xlsx
+  // column list in exports.exportDeliveryChalanRegister.
+  if (type === 'delivery_chalan') return [
+    { key:'chalan_no', label:'Challan No', sort:'text', totalKind:'count', totalLabel:'Total' },
+    { key:'date', label:'Date', sort:'text' },
+    { key:'time', label:'Time', sort:'text' },
+    { key:'tno', label:'TNo', sort:'text' },
+    { key:'branch', label:'Branch', sort:'text' },
+    { key:'veh', label:'Vehicle', sort:'text' },
+    { key:'mode', label:'Mode', sort:'text' },
+    { key:'receiver', label:'Receiver', sort:'text' },
+    { key:'lots', label:'Lots', sort:'text',
+      render:(r)=> r.lots ? esc(String(r.lots)) : '<span style="color:var(--text3)">—</span>' },
+    { key:'lot_count', label:'No of Lots', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'bags', label:'Bags', sort:'number', numeric:true, fmt:regFmtNum(0) },
+    { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },
+    { key:'value', label:'Value', sort:'number', numeric:true, fmt:regFmtNum(2) },
+  ];
   // Godown Register — stored stock. No price/buyer/tax: a godown entry was
   // never put up for sale, so the sheet counts bags and weights only.
   if (type === 'godown') return [
@@ -49403,6 +50000,7 @@ async function loadRegister(){
   }
   const ep = (type === 'sales') ? 'sales'
            : (type === 'pending_sales') ? 'pending-sales'
+           : (type === 'delivery_chalan') ? 'delivery-chalan'
            : (type === 'godown') ? 'godown' : 'purchase';
   const url = `/api/registers/${ep}?` + regParams().toString();
   let d = [];
@@ -49424,11 +50022,19 @@ async function exportRegister(format){
   } else {
     ep = (type === 'sales') ? 'sales-register'
        : (type === 'pending_sales') ? 'pending-sales-register'
+       : (type === 'delivery_chalan') ? 'delivery-chalan-register'
        : (type === 'godown') ? 'godown-register' : 'purchase-register';
     p = regParams();
     base = (type === 'sales') ? 'SalesRegister'
          : (type === 'pending_sales') ? 'PendingSalesRegister'
+         : (type === 'delivery_chalan') ? 'DeliveryChalanRegister'
          : (type === 'godown') ? 'GodownRegister' : 'PurchaseRegister';
+  }
+  // The challan book has no PDF layout — it is a reconciliation sheet read
+  // against a numbered paper book. Say so rather than downloading an error.
+  if (format === 'pdf' && type === 'delivery_chalan') {
+    toast('The Delivery Challan Register is XLSX only — it is a reconciliation sheet, not a printed document.');
+    return;
   }
   if (format) p.set('format', format);
   const name = base + '.' + (format === 'pdf' ? 'pdf' : 'xlsx');

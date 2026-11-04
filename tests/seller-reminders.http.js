@@ -69,7 +69,16 @@ const daysAhead = (n) => { const d = new Date(); d.setDate(d.getDate() + n); ret
     (await api('POST', '/api/seller-reminders/run-sweep', {})).status === 403);
   check('unauthenticated → 401', (await api('GET', '/api/seller-reminders', null, true)).status === 401);
 
-  await setFlags({ flag_seller_reminders: 'true', trade_name: 'RNS SPICES' });
+  await setFlags({
+    flag_seller_reminders: 'true', trade_name: 'RNS SPICES',
+    // A reminder is MARKETING and, since 2026-11-04, marketing needs an
+    // opt-in on record for the contact (wa-compliance.js — Meta disabled
+    // this account for sending it without one). This file tests the HTTP
+    // surface, so the install is told it has written consent on file; the
+    // route-level gate gets its own check at the end.
+    wa_assume_legacy_optin: 'true',
+    wa_legacy_optin_basis: 'test fixture',
+  });
 
   // [B] The fixture: auctions on a ~10-day cadence, plus one in the future.
   const AUCTIONS = [daysAgo(160), daysAgo(120), daysAgo(80), daysAgo(40), daysAgo(2), daysAhead(8)];
@@ -199,6 +208,19 @@ const daysAhead = (n) => { const d = new Date(); d.setDate(d.getDate() + n); ret
   //     the other, and one ledger must not feed the other's screen.
   const bd = await api('GET', '/api/birthdays');
   check('the birthday feature is still independently OFF', bd.status === 403, JSON.stringify(bd.d));
+
+  // ── The consent gate, on the route ──────────────────────────
+  console.log('\nthe consent gate on the send route');
+  await setFlags({ wa_assume_legacy_optin: 'false' });
+  const gatedList = await api('GET', '/api/seller-reminders');
+  check('with no opt-in on record nobody is due',
+    (gatedList.d.due || []).length === 0, JSON.stringify((gatedList.d.due || []).map(x => x.label)));
+  check('...they are held, with the reason',
+    (gatedList.d.held || []).some(x => /opt-in/.test(x.hold || '')),
+    JSON.stringify((gatedList.d.held || []).map(x => x.hold)));
+  check('...and the funnel counts them',
+    gatedList.d.counts && gatedList.d.counts.no_consent > 0, JSON.stringify(gatedList.d.counts));
+  await setFlags({ wa_assume_legacy_optin: 'true' });
 
   console.log(`\n${pass} passed, ${fail} failed`);
   done(fail ? 1 : 0);

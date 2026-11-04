@@ -660,6 +660,20 @@ const DOCUMENTS = [
     href: (ctx, format) => `/api/exports/sales-register${q({
       format, auctionId: ctx.auctionId, from: ctx.from, to: ctx.to, saleType: ctx.saleType })}` },
 
+  // The challan book. Fed by POST /api/delivery-chalan/record, which is
+  // written when a challan PRINTS — so it lists challans issued from that
+  // point on, and cannot reconstruct ones printed before the recording
+  // existed. XLSX only: it is read against a numbered paper book, and there
+  // is no PDF layout for it.
+  { id: 'delivery_chalan_register', label: 'Delivery Challan Register', group: 'books',
+    sub: 'Registers', family: 'registers',
+    kind: 'export', scope: 'dateRange', formats: ['xlsx'], minStage: 1, perm: 'export',
+    flag: 'flag_delivery_chalan',
+    route: '/api/exports/delivery-chalan-register',
+    href: (ctx, format) => `/api/exports/delivery-chalan-register${q({
+      format, auctionId: ctx.auctionId, from: ctx.from, to: ctx.to })}`,
+    note: 'Lists challans printed since recording began — a challan is logged when it prints' },
+
   { id: 'register_pooler', label: 'Pooler Register (individual)', group: 'books', sub: 'Individual registers',
     family: 'registers', kind: 'export', scope: 'dateRange', formats: ['xlsx', 'pdf'],
     minStage: 4, perm: 'export',

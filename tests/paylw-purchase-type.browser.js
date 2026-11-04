@@ -269,6 +269,47 @@ function cleanup() {
       (await topRows()).length === 2, String((await topRows()).length));
     check('the disclosure arrow flips to open',
       /▾/.test((await topRows()).find(r => /MURUGANANDAM/.test(r.seller)).lotCell));
+    // The drawer must LOOK nested. It first shipped as a pale theme tint on a
+    // pale table and was indistinguishable from the rows around it, so the
+    // separation is asserted rather than eyeballed: a different ground from
+    // the outer row, an accent rail, and a quiet inner header instead of the
+    // outer table's dark band.
+    const look = await page.evaluate(() => {
+      const kid = document.querySelector('#paylw-body tr.paylw-kids > td');
+      const outer = document.querySelector('#paylw-body > .paylw-scroll > table > tbody > tr:not(.paylw-grp-kids)');
+      const innerTh = document.querySelector('#paylw-body .paylw-kids-inner thead th:nth-child(2)');
+      const outerTh = document.querySelector('#paylw-body > .paylw-scroll > table > thead th:nth-child(2)');
+      const bg = (el) => el ? getComputedStyle(el).backgroundColor : '';
+      const rowBg = (() => {
+        let e = outer && outer.children[1];
+        while (e) {
+          const c = getComputedStyle(e).backgroundColor;
+          const m = String(c).match(/[\d.]+/g);
+          if (m && (m.length < 4 || parseFloat(m[3]) > 0) && c !== 'transparent') return c;
+          e = e.parentElement;
+        }
+        return 'rgb(255, 255, 255)';
+      })();
+      const cs = kid ? getComputedStyle(kid) : null;
+      return {
+        kidBg: bg(kid), rowBg,
+        railWidth: cs ? parseFloat(cs.borderLeftWidth) : 0,
+        shadow: cs ? cs.boxShadow : '',
+        innerThBg: bg(innerTh), outerThBg: bg(outerTh),
+        hasCaption: !!document.querySelector('#paylw-body .paylw-kids-cap'),
+      };
+    });
+    check('the drawer has a different ground from the rows around it',
+      look.kidBg && look.rowBg && look.kidBg !== look.rowBg,
+      `drawer ${look.kidBg} vs row ${look.rowBg}`);
+    check('…an accent rail down its left', look.railWidth >= 3, String(look.railWidth));
+    check('…and an inset shadow so it reads as opened',
+      /inset/.test(look.shadow), look.shadow);
+    check('the inner header is NOT the outer table\'s dark band',
+      look.innerThBg && look.outerThBg && look.innerThBg !== look.outerThBg,
+      `inner ${look.innerThBg} vs outer ${look.outerThBg}`);
+    check('the drawer names the seller it belongs to', look.hasCaption);
+
     await page.evaluate(k => payLwToggleGroup(k), key);
     const stillThere = await page.evaluate(() => !!document.querySelector('#paylw-body tr.paylw-grp-kids'));
     check('clicking again closes it', !stillThere);

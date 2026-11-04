@@ -35,9 +35,28 @@ const WA_BLOCKS = [
   { re: /access token|session has expired|oauthexception|invalid.*token|token.*expire/i, code: '190',
     short: 'The WhatsApp access token is no longer valid',
     detail: 'The token in Settings → Integrations has expired or been revoked, so no send can succeed until it is replaced.' },
-  { re: /account.*(restricted|disabled|banned|suspend)|restricted.*(account|number)/i, code: '',
+  { re: /account.*(restricted|disabled|banned|suspend)|restricted.*(account|number)|\b368\b|temporarily\s+blocked.*polic/i, code: '',
     short: 'Meta has restricted this WhatsApp account',
-    detail: 'Sending is blocked at the account level. Check the account status in WhatsApp Manager — nothing can go out through the Cloud API until it is lifted.' },
+    detail: 'Sending is blocked at the account level. Check the account status in WhatsApp Manager — nothing can go out through the Cloud API until it is lifted. If the reason given is a policy or Acceptable Use breach, read WHATSAPP-COMPLIANCE.md before sending anything again: another run while a review is open is what turns a restriction into a disablement.' },
+  // ── The two POLICY refusals ─────────────────────────────────────
+  // Added 2026-11-04, after Meta disabled this account for a breach of the
+  // Terms of Acceptable Use. Both of these are Meta saying "this recipient
+  // did not want this", and before today both were classed as ordinary
+  // per-message failures — so a bulk run read them as bad luck and carried
+  // on down the list, which is the precise behaviour that was being
+  // penalised.
+  //
+  // They are account-level stops NOT because the next message would be
+  // refused — it might well be accepted — but because they are the only
+  // feedback Meta gives before enforcement, and a run that keeps going
+  // through them is a run nobody is reading. The send that triggered one
+  // also writes an opt-out for that contact (wa-compliance.noteMetaError).
+  { re: /131050|user\s+(has\s+)?(stopped|opted)|not\s+opted\s+in|user\s+preference/i, code: '131050',
+    short: 'This contact has stopped messages from this business',
+    detail: 'Meta error 131050. The recipient has opted out of messages from this number — either by replying stop, by tapping a template\'s Stop button, or by blocking the business in WhatsApp. They are now recorded as opted out and nothing further will be sent to them. Repeatedly templating numbers that have opted out is the clearest breach of the Terms of Acceptable Use there is.' },
+  { re: /131049|per[\s-]?user\s+marketing|frequency\s+cap|healthy\s+ecosystem/i, code: '131049',
+    short: 'Meta dropped this message to protect the recipient',
+    detail: 'Meta error 131049 — the recipient has had too many marketing messages recently (from everyone, not only us), so Meta did not deliver this one. It is a warning sign rather than a fault: the app now holds marketing to one message per contact per month, and a run that still hits this should be cut back further.' },
 ];
 
 // → { code, short, detail, raw } for an account-level stop, null otherwise.

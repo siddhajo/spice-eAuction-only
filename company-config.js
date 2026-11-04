@@ -1122,6 +1122,54 @@ const DEFAULTS = [
   // a SETTING, not a constant, because Meta has changed it before and nothing in
   // the API reports it. `wa_billing_url` overrides the Meta billing-hub deep link
   // the Recharge button opens (e.g. a reseller's own top-up page).
+  // ── WHATSAPP COMPLIANCE ────────────────────────────────────
+  // Added 2026-11-04 after Meta disabled this account for a breach of the
+  // WhatsApp Business Terms of Acceptable Use. Every knob here is a RULE the
+  // app had no concept of before — the guards that existed all concerned
+  // Meta's throughput limits, which the app obeyed, rather than Meta's
+  // permission rules, which it did not. See wa-compliance.js and
+  // WHATSAPP-COMPLIANCE.md.
+  //
+  // `enforce` refuses a message the rules disallow. `warn` lets it go and
+  // records what would have been refused, which is how an install sees its
+  // own exposure before switching over — it is NOT a place to sit. `off`
+  // restores the pre-ban behaviour and exists only for a support call.
+  { key: 'wa_compliance_mode', value: 'enforce', category: 'wa_policy', label: 'WhatsApp policy rules', type: 'select' },
+  // The panic switch. ON = nothing leaves over WhatsApp at all: no document,
+  // no notice, no greeting, and both unattended sweeps return without
+  // reading a party. This is what to turn on the moment Meta writes about
+  // the account — a run started during a review is what turns a warning
+  // into a disablement.
+  { key: 'wa_sending_paused', value: 'false', category: 'wa_policy', label: 'PAUSE all WhatsApp sending (emergency stop)', type: 'boolean' },
+  // One marketing message per contact per this many days, counted across
+  // BOTH campaigns together. 30 is deliberate: a birthday is annual and a
+  // dormant-seller reminder has a 45-day cooldown of its own, so a correctly
+  // configured install never meets this ceiling — it is here to catch the
+  // combination nobody checked, which is a seller getting a birthday wish
+  // and a "we miss you" nudge in the same week.
+  { key: 'wa_marketing_gap_days', value: '30', category: 'wa_policy', label: 'Minimum days between marketing messages to the same contact', type: 'number' },
+  // Across ALL classes. A bulk run that sends one party their invoice, their
+  // debit note and their payment notice in one morning is three messages,
+  // and three is where a recipient starts reporting.
+  { key: 'wa_max_per_contact_day', value: '3', category: 'wa_policy', label: 'Maximum WhatsApp messages to one contact per 24 hours', type: 'number' },
+  // OFF, and it must stay off unless the consent genuinely exists on paper.
+  // Turning it on treats every party already on the masters as having opted
+  // in, which is precisely the assumption the account was disabled over. It
+  // exists because an install that HAS collected written consent (a signed
+  // registration form carrying a WhatsApp permission line) needs a way to
+  // say so — and the basis box below is what makes that claim auditable.
+  { key: 'wa_assume_legacy_optin', value: 'false', category: 'wa_policy', label: 'Treat existing sellers and buyers as already opted in (only with written consent on file)', type: 'boolean' },
+  { key: 'wa_legacy_optin_basis', value: '', category: 'wa_policy', label: 'Where that consent is recorded (shown to Meta if the account is reviewed)', type: 'text' },
+  // Meta's quality rating is the only warning a sender gets before
+  // enforcement, and the whole lesson of the ban is that reading it late
+  // costs the account. Both ON by default.
+  { key: 'wa_stop_marketing_on_yellow', value: 'true', category: 'wa_policy', label: 'Pause greetings and reminders when Meta rates the number below green', type: 'boolean' },
+  { key: 'wa_stop_all_on_red', value: 'true', category: 'wa_policy', label: 'Pause everything except replies when Meta rates the number RED', type: 'boolean' },
+  // A number Meta has refused this many times in 90 days and never once
+  // delivered to is wrong on the master, not unlucky. Each further attempt
+  // is another mark against the sender.
+  { key: 'wa_dead_number_fails', value: '3', category: 'wa_policy', label: 'Stop trying a number after this many refusals with no delivery ever', type: 'number' },
+
   { key: 'wa_free_allowance', value: '1000', category: 'integrations', label: 'WhatsApp Free Messages / Month', type: 'text' },
   { key: 'wa_billing_url',    value: '',     category: 'integrations', label: 'WhatsApp Recharge URL (override)', type: 'text' },
 
@@ -1320,6 +1368,7 @@ const CATEGORIES = {
   alerts:       { order: 11.7, title: 'Booking Alerts',          icon: '🚨', description: 'Soft alerts when grade-2 bookings dominate an auction. When grade-2 weight exceeds the threshold percentage of the total weight booked so far, the depot manager is notified (in-app + WhatsApp); any further grade-2 booking after that escalates to the immediate superior. Each level fires once per auction.' },
   birthdays:    { order: 11.75, title: 'Birthday Greetings',       icon: '\u{1F382}', description: 'Wishes sellers and buyers a happy birthday over WhatsApp, read from the Date of Birth on each master record. Anybody without a date of birth, or without a phone number, is simply never greeted. Each party is greeted at most once per calendar year \u2014 a restart or a second operator cannot double-greet. Auto-send is off by default: with it off the Birthdays screen is a worklist the operator sends from. Turn the whole feature on or off with "Birthday Greetings (WhatsApp)" in Feature Flags.' },
   reminders:    { order: 11.77, title: 'Seller Reminders',        icon: '\u{1F514}', description: 'Nudges sellers who have not booked a lot in a while, over WhatsApp. A seller qualifies when their last booking falls inside the window below AND they have booked at least the minimum number of auctions \u2014 that second test is what separates a lapsed regular from somebody who came once and never returned, and on a typical master three quarters of the "dormant" list is the latter. Sellers already booked into a coming auction are never included. Auto-send is off by default: with it off the Seller Reminders screen is a worklist the operator sends from. Turn the whole feature on or off with "Seller Booking Reminders (WhatsApp)" in Feature Flags.' },
+  wa_policy:    { order: 11.78, title: 'WhatsApp Compliance',    icon: '\u{1F6E1}', description: 'The rules that decide whether a WhatsApp message is allowed to leave, and the switch that stops every one of them at once. On 2026-11-04 Meta disabled this business\u2019s WhatsApp account for a breach of its Terms of Acceptable Use: messages had been going to numbers that arrived in a bulk master import, nobody had ever recorded an opt-in, and replies asking us to stop were logged and never read. These settings close that. A greeting or a reminder now needs an opt-in on record for that contact; an opt-out silences every kind of message to them including invoices; one marketing message per contact per month is the ceiling, counted across both campaigns; and when Meta rates the sending number below green, outreach pauses by itself. Who has opted in or out, and on what evidence, is kept in Settings \u2192 Integrations \u2192 Compliance \u2014 that tab is also where an opt-out taken over the phone is entered.' },
   security:     { order: 11.8, title: 'Logins & Sessions',       icon: '🔐', description: 'Controls concurrent sign-ins. With the block on, a username that is already active anywhere cannot be signed in again — the second person is told who holds the session. A session counts as active only while it has made a request within the idle window, so a browser closed without logging out frees the username by itself. Admins can also clear a stuck session at once from Users → Sign out.' },
   integrations: { order: 12,   title: 'Integrations',            icon: '🔌', description: 'Optional third-party services. A GST lookup key enables auto-fetching trade name and address when you enter a GSTIN — pick the provider (gstincheck.co.in or gstinapi.in) and paste its own key. The status card above the fields shows that provider’s credit balance and links straight to its recharge page, so a spent plan can be topped up without leaving the screen. The WhatsApp Business card lets you send invoices/notices straight from the app via Meta’s Cloud API.' },
   tally:        { order: 13,   title: 'To Tally',                icon: '📤' },

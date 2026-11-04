@@ -22,6 +22,7 @@ process.env.SPICE_DATA_DIR = TMP;   // MUST precede require('../db')
 
 const { initDb } = require('../db');
 const { initCompanySettings, updateSettings } = require('../company-config');
+const waPolicy = require('../wa-compliance');
 const r = require('../seller-reminders');
 
 let pass = 0, fail = 0;
@@ -77,6 +78,14 @@ function sender(outcome) {
     reminder_min_auctions: '2', reminder_cooldown_days: '45',
     reminder_include_never_booked: 'false', reminder_max_per_day: '50',
     reminder_tpl: 'seller_booking_reminder',
+    // A reminder is MARKETING, and since 2026-11-04 marketing needs an
+    // opt-in on record for the contact (wa-compliance.js — Meta disabled
+    // this account for sending it without one). Everything below this line
+    // is about the DORMANCY logic, so the install is told it has written
+    // consent on file; the consent rule itself gets its own section at the
+    // end of this file, and wa-compliance.unit.js proves the rule.
+    wa_assume_legacy_optin: 'true',
+    wa_legacy_optin_basis: 'test fixture — see wa-compliance.unit.js for the real rule',
   });
 
   console.log('Who is due');
@@ -180,6 +189,12 @@ function sender(outcome) {
   check('the ledger keeps the dormancy it acted on',
     (db.get(`SELECT days_since FROM seller_reminders WHERE trader_id = ? LIMIT 1`, [LAPSED]) || {}).days_since === 119);
 
+  // Stamp the ledger rows back to the fixture's TODAY. `_log` dates a row
+  // with the wall clock, and every assertion below measures a cooldown FROM
+  // the fixture's date — so without this the whole block drifts: it passed
+  // in October 2026 and read "already reminded -35 days ago" a month later.
+  db.run("UPDATE seller_reminders SET created_at = ?", [TODAY + ' 10:00:00']);
+
   rv = r.review(db, { date: TODAY });
   check('a reminded seller leaves the due list', !rv.due.some(x => x.trader_id === LAPSED));
   check('...and appears under held, with the reason',
@@ -263,6 +278,59 @@ function sender(outcome) {
   // The backlog is the point: unlike a birthday, a dormant seller is still
   // dormant tomorrow, so the sweep drains rather than blasting.
   check('...and reports the backlog it did not reach', sw.remaining > 0, JSON.stringify(sw));
+
+  // ── THE CONSENT GATE ────────────────────────────────────────
+  // Added 2026-11-04. Meta disabled this business's WhatsApp account for a
+  // breach of the Terms of Acceptable Use, and this campaign was one of the
+  // two that caused it: it messaged any seller whose last booking fell in
+  // the window, on a master assembled from a bulk import, where nobody had
+  // agreed to be messaged. The fixture's blanket assumption is switched off
+  // here so the real rule is the thing under test.
+  //
+  // NOTE every seller in this fixture shares one phone number, and consent
+  // is a property of the NUMBER, not of the party — that is deliberate (a
+  // household or an agent's line reaches the same person however many
+  // master records point at it), so these assertions are about the list
+  // changing shape, not about one named seller.
+  console.log('\nThe consent gate');
+  updateSettings(db, { wa_assume_legacy_optin: 'false' });
+  const gated = r.review(db, { date: TODAY });
+  check('with no opt-in on record, nobody is due',
+    gated.due.length === 0, JSON.stringify(gated.due.map(x => x.label)));
+  check('...and they are HELD, not silently dropped',
+    gated.held.some(x => x.no_consent), JSON.stringify(gated.held.map(x => x.hold)));
+  check('...with a reason that names the missing permission',
+    gated.held.some(x => /opt-in/.test(x.hold || '')), JSON.stringify(gated.held.map(x => x.hold)));
+  check('...and counted, so the screen can explain the empty list',
+    gated.counts.no_consent > 0, String(gated.counts.no_consent));
+
+  // The sweep must not spend a send learning what the ledger already knows.
+  const gatedSend = sender({ ok: true, id: 'wamid.NOPE' });
+  const gatedOut = await r.sendReminders(db,
+    [{ trader_id: LAPSED, name: 'LAPSED REGULAR', phone: '9800000000' }],
+    { send: gatedSend, date: TODAY, cap: 0 });
+  check('a send to a seller with no opt-in never reaches the sender',
+    gatedSend.calls.length === 0, JSON.stringify(gatedSend.calls));
+  check('...and is reported as skipped, with the reason',
+    gatedOut.results[0] && gatedOut.results[0].status === 'skipped'
+      && /opt-in/.test(gatedOut.results[0].reason || ''), JSON.stringify(gatedOut.results));
+
+  // Record the opt-in and the worklist comes back.
+  waPolicy.setConsent(db, { phone: '9800000000', status: 'in', basis: 'signed registration form' });
+  const oneIn = r.review(db, { date: TODAY });
+  check('recording an opt-in puts the dormant sellers back on the list',
+    oneIn.due.length > 0, JSON.stringify(oneIn.due.map(x => x.label)));
+  check('...and none of them is held for consent any more',
+    !oneIn.held.some(x => x.no_consent), JSON.stringify(oneIn.held.map(x => x.hold)));
+
+  // An opt-out beats everything, including a perfect dormancy profile.
+  waPolicy.setConsent(db, { phone: '9800000000', status: 'out', basis: 'replied STOP' });
+  const optedOut = r.review(db, { date: TODAY });
+  check('an opt-out empties the list again',
+    optedOut.due.length === 0, JSON.stringify(optedOut.due.map(x => x.label)));
+  check('...saying they asked us to stop, not that they are cooling off',
+    optedOut.held.some(x => /opted out/.test(x.hold || '')),
+    JSON.stringify(optedOut.held.map(x => x.hold)));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   done(fail ? 1 : 0);

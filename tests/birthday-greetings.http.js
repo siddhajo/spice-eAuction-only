@@ -80,7 +80,18 @@ const ymd = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())
   const anon = await api('GET', '/api/birthdays', null, true);
   check('unauthenticated → 401', anon.status === 401, JSON.stringify(anon));
 
-  await setFlags({ flag_birthday_greetings: 'true' });
+  await setFlags({
+    flag_birthday_greetings: 'true',
+    // A greeting is MARKETING and, since 2026-11-04, marketing needs an
+    // opt-in on record for the contact (wa-compliance.js — Meta disabled
+    // this account for sending it without one). This file tests the HTTP
+    // surface and the ledger, not the consent rule, so the install is told
+    // it has written consent on file. The rule itself is proved by
+    // wa-compliance.unit.js and birthday-send-once.unit.js; the route-level
+    // gate gets its own check at the end of this file.
+    wa_assume_legacy_optin: 'true',
+    wa_legacy_optin_basis: 'test fixture',
+  });
 
   // [C] The worklist, read the way the screen reads it.
   await api('POST', '/api/traders', { name: 'BIRTHDAY PLANTER', cr: 'CR.1', tel: '9876543210', dob: `1980-${TODAY.slice(5)}` });
@@ -223,6 +234,27 @@ const ymd = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())
   check('and it persists', brow2 && brow2.dob === '1971-12-25', JSON.stringify(brow2 && brow2.dob));
   check('...which takes that buyer off today\'s list',
     !((await api('GET', '/api/birthdays')).d.today || []).some(r => r.party_id === brow.id && r.party_type === 'buyer'));
+
+  // ── The consent gate, on the route ──────────────────────────
+  // Switch the fixture's assumption off and the same list that sent a
+  // moment ago must now refuse — proving the gate is in the send path and
+  // not only in the engine's own unit test.
+  console.log('\nthe consent gate on the send route');
+  await setFlags({ wa_assume_legacy_optin: 'false' });
+  const gated = await api('POST', '/api/birthdays/send',
+    { items: [{ party_type: 'seller', party_id: 1 }] });
+  check('a party with no opt-in is skipped, not sent',
+    gated.status === 200 && gated.d.sent === 0
+      && (gated.d.results || []).some(x => x.status === 'skipped' && /opt-in/.test(x.reason || '')),
+    `${gated.status} ${JSON.stringify(gated.d)}`);
+  const gatedList = await api('GET', '/api/birthdays');
+  check('the worklist labels the hold so the screen can grey the row',
+    (gatedList.d.today || []).some(x => /opt-in/.test(x.consent_hold || '')),
+    JSON.stringify((gatedList.d.today || []).map(x => x.consent_hold)));
+  check('...and counts them, so an empty list explains itself',
+    gatedList.d.counts && gatedList.d.counts.no_consent > 0,
+    JSON.stringify(gatedList.d.counts));
+  await setFlags({ wa_assume_legacy_optin: 'true' });
 
   console.log(`\n${pass} passed, ${fail} failed`);
   done(fail ? 1 : 0);

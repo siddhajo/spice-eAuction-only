@@ -980,6 +980,107 @@ function lotAdvancesBySeller(db, auctionId, opts) {
   return out;
 }
 
+// ── TDS (194Q) per LOT ───────────────────────────────────────────────────
+// TDS on purchase is withheld by US from what we pay the seller, so it comes
+// off the payable — and the figure lives on the PURCHASE INVOICE
+// (`purchases.tds`), not on the lots. Every payable surface needs it at lot
+// granularity: the lot-wise Payments screen pays per lot, its seller-wise (RD)
+// view sums a seller's lots, and the bank export can be handed any subset of
+// them. One share per lot makes all of those add up to the same money.
+//
+// Two shapes of purchase row, because the office can raise either:
+//   • LOT-WISE (purchases.lot_no / lot_id set — flag_lotwise_purchase) — the
+//     row already IS one lot's invoice, so its TDS is attributed directly.
+//     Nothing is estimated.
+//   • SELLER-WISE (no lot_no) — one invoice covers the seller's whole trade,
+//     so its TDS is spread across that seller's priced lots in proportion to
+//     lot amount, with the remainder on the last lot so the shares sum EXACTLY
+//     to the invoice's TDS. This is the same allocation the Payments lot-
+//     selection modal has always used (see _payLotsState in index.html), kept
+//     identical on purpose: two screens quoting different TDS for one lot is
+//     how an operator loses trust in both.
+//
+// A share is fixed per lot, so any subset's TDS is just the sum of its lots'
+// shares — which is what lets a part-paid seller's bank line carry the right
+// portion instead of the whole invoice's.
+//
+// Returns { byLot: {lotId: tds}, bySellerKey: {seller_key: tds} }. Empty maps
+// when nothing is withheld (flag_tds_purchase off ⇒ every purchases.tds is 0),
+// so callers need no flag check of their own.
+function tdsByLot(db, auctionId) {
+  const byLot = {}, bySellerKey = {};
+  let rows = [];
+  try {
+    rows = db.all(
+      `SELECT name, trader_id, TRIM(COALESCE(lot_no,'')) AS lot_no, lot_id,
+              COALESCE(tds,0) AS tds
+         FROM purchases
+        WHERE auction_id = ? AND COALESCE(tds,0) <> 0`,
+      [auctionId]) || [];
+  } catch (_) { return { byLot, bySellerKey }; }
+  if (!rows.length) return { byLot, bySellerKey };
+
+  // Every priced lot in the trade, with the identity the rest of the payment
+  // code groups on. Read once — the allocation below needs the whole set.
+  const lots = db.all(
+    `SELECT id, TRIM(COALESCE(lot_no,'')) AS lot_no, name, trader_id,
+            COALESCE(amount,0) AS amount, ${SELLER_KEY_SQL('lots')} AS seller_key
+       FROM lots
+      WHERE auction_id = ? AND amount > 0
+      ORDER BY CAST(lot_no AS INTEGER), lot_no`,
+    [auctionId]) || [];
+  const add = (lotId, key, v) => {
+    if (!v) return;
+    if (lotId != null) byLot[lotId] = (byLot[lotId] || 0) + v;
+    if (key) bySellerKey[key] = (bySellerKey[key] || 0) + v;
+  };
+
+  // Index the lots by the two things a purchase row can name them by.
+  const byLotNo = new Map();
+  for (const l of lots) if (l.lot_no) byLotNo.set(l.lot_no, l);
+  const byId = new Map(lots.map(l => [l.id, l]));
+  // Seller buckets, keyed the way a purchase row identifies its seller:
+  // trader_id when it carries one (two same-named dealers stay apart — see
+  // namesake parties), else the upper-cased name for rows raised before
+  // purchases.trader_id existed.
+  const byTrader = new Map(), byName = new Map();
+  for (const l of lots) {
+    if (l.trader_id != null) {
+      if (!byTrader.has(l.trader_id)) byTrader.set(l.trader_id, []);
+      byTrader.get(l.trader_id).push(l);
+    }
+    const n = String(l.name || '').trim().toUpperCase();
+    if (!byName.has(n)) byName.set(n, []);
+    byName.get(n).push(l);
+  }
+
+  for (const r of rows) {
+    const tds = Number(r.tds) || 0;
+    if (!tds) continue;
+    // LOT-WISE row: attribute to the one lot it invoices. lot_id first (it
+    // pins the row even if the lot was renumbered), lot_no as the fallback.
+    const direct = (r.lot_id != null && byId.get(r.lot_id)) || (r.lot_no && byLotNo.get(r.lot_no));
+    if (direct) { add(direct.id, direct.seller_key, tds); continue; }
+    // SELLER-WISE row: spread across that seller's priced lots.
+    const mine = (r.trader_id != null && byTrader.get(r.trader_id))
+      || byName.get(String(r.name || '').trim().toUpperCase())
+      || [];
+    if (!mine.length) continue;
+    const sum = mine.reduce((a, l) => a + (Number(l.amount) || 0), 0);
+    let alloc = 0;
+    mine.forEach((l, i) => {
+      // Remainder on the LAST lot, so the shares sum to the invoice's TDS to
+      // the paisa however the proportions round.
+      const v = (i === mine.length - 1)
+        ? Math.round((tds - alloc) * 100) / 100
+        : (sum > 0 ? Math.round((tds * (Number(l.amount) || 0) / sum) * 100) / 100 : 0);
+      alloc += (i === mine.length - 1) ? 0 : v;
+      add(l.id, l.seller_key, v);
+    });
+  }
+  return { byLot, bySellerKey };
+}
+
 function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // Per-seller, per-auction payment roll-up for the Payments tab (and the
   // lot-selection modal + payment statement, which must agree with it).
@@ -1110,6 +1211,10 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
   // screen would ask for money that has already gone out.
   const lotAdvBySellerKey = lotAdvancesBySeller(db, auctionId, { state, includeUnpriced });
 
+  // Per-lot TDS shares, rolled up per seller — see tdsByLot(). Used both to
+  // report the TDS column and to deduct it from the payable.
+  const tdsShareBySellerKey = tdsByLot(db, auctionId).bySellerKey;
+
   // Settlement discount is display-only and opt-in per auction: it stays 0
   // until the operator clicks "Calculate All Discounts" (auctions.discount_applied
   // = 1). When off, every seller's Discount reads 0 on-screen and in exports.
@@ -1164,6 +1269,16 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
     // i.e. price import hasn't run. Only possible when includeUnpriced is set.
     // The UI shows "—" for the money columns and keeps just Advance editable.
     const unpriced = (Number(s.total_amount) || 0) <= 0;
+    // TDS withheld on this seller's purchase invoice(s). Prefer the per-lot
+    // shares — they are scoped to the lots this roll-up actually covers, so a
+    // state-filtered or priced-only view does not deduct TDS for lots it is
+    // not showing. Falls back to the whole-invoice figure keyed by identity
+    // then name, for a seller whose lots the share map could not reach.
+    const tdsDeduct = (tdsShareBySellerKey[String(s.seller_key || '')] != null)
+      ? tdsShareBySellerKey[String(s.seller_key || '')]
+      : ((s.trader_id != null && tdsByTrader[s.trader_id] != null)
+          ? tdsByTrader[s.trader_id]
+          : (tdsByName[String(s.name || '').trim().toUpperCase()] || 0));
     return {
       ...s,
       unpriced,
@@ -1171,11 +1286,9 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
       // column. Independent of discount; does not affect payable.
       total_commission: Number(s.total_commission) || 0,
       total_tax: cgst + sgst + igst,
-      // TDS deducted on this seller's purchase invoice (194Q). Display-only —
-      // does not alter net/payable here.
-      tds: (s.trader_id != null && tdsByTrader[s.trader_id] != null)
-        ? tdsByTrader[s.trader_id]
-        : (tdsByName[String(s.name || '').trim().toUpperCase()] || 0),
+      // TDS deducted on this seller's purchase invoice (194Q). Subtracted
+      // from total_payable below — see the note there.
+      tds: tdsDeduct,
       // Purchase = sale amount + sample-bag refund (the base commission is
       // charged on), summed per seller.
       purchase_value: (Number(s.total_amount) || 0) + lotDisc,
@@ -1202,9 +1315,22 @@ function getPaymentSummary(db, auctionId, state, cfg, includeUnpriced) {
       // lots separately via the per-seller lot picker.
       multipleBanks: Number(s.bank_dest_count || 0) > 1,
       // Final payable = net amount − every advance already paid, per-seller
-      // and per-lot alike. The settlement discount is display-only and
-      // intentionally NOT subtracted here.
-      total_payable: netAmount - advance - lotAdvance,
+      // and per-lot alike — and less the TDS we withhold under 194Q, which is
+      // money that goes to the government rather than to the seller. The
+      // Purchases screen has always shown Payable = Total − TDS; this screen
+      // used to show TDS as a column and not deduct it, so the two disagreed
+      // about what the seller is owed. The bank export deducts the same
+      // figure (getBankPaymentData), so the file pays what this says.
+      //
+      // `tdsDeduct` is 0 for every planter — TDS lives on RD purchase
+      // invoices, and a Bill of Supply raises none — so this needs no
+      // dealer/planter test of its own, and no flag check: with
+      // flag_tds_purchase off every purchases.tds is 0.
+      //
+      // Clamped at 0 so advances plus TDS exceeding the net can never emit a
+      // negative payable. The settlement discount stays display-only and is
+      // intentionally NOT subtracted.
+      total_payable: Math.max(0, netAmount - advance - lotAdvance - tdsDeduct),
     };
   });
 }
@@ -1508,6 +1634,18 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
   const lotAdvBySellerKey = lotAdvancesBySeller(db, auctionId, { onlyUnpaid: true });
   const useLotAdv = hasLotAdvances(db);
 
+  // TDS (194Q) withheld from what we pay the seller. It comes off the bank
+  // payout for the same reason it comes off the on-screen Payable: the money
+  // goes to the government, not to the seller, and a file that pays the gross
+  // would pay out the TDS as well. Held per LOT so a lot-picked export carries
+  // only the picked lots' share — see tdsByLot().
+  //
+  // Unlike the per-seller advance there is no same-name guard to apply: a
+  // share is attached to a specific lot, so it can only ever be counted once.
+  const _tds = tdsByLot(db, auctionId);
+  const tdsByLotId = _tds.byLot;
+  const tdsBySellerKey = _tds.bySellerKey;
+
   const auction = db.get('SELECT * FROM auctions WHERE id = ?', [auctionId]);
   const roundAmounts = cfg.flag_round;
 
@@ -1568,7 +1706,11 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
       // Lot advances are attributable to exactly one seller, so unlike the
       // legacy name-keyed row above there is no same-name guard to apply.
       const lotAdv = lotAdvBySellerKey[String(p.seller_key || '')] || 0;
-      const base = Math.max(0, (useBefore ? (p.puramt || 0) : (p.payable || 0)) - adv - lotAdv);
+      // Whole-seller row ⇒ the seller's whole TDS. 'before' mode pays the
+      // pre-discount purchase amount, but the TDS was still withheld, so it
+      // comes off both modes — as the advance does.
+      const tds = tdsBySellerKey[String(p.seller_key || '')] || 0;
+      const base = Math.max(0, (useBefore ? (p.puramt || 0) : (p.payable || 0)) - adv - lotAdv - tds);
       return [buildRow(p, base, '', null)];
     }
     // Re-sum balance/puramt over ONLY the picked (and not-excluded) lots
@@ -1591,19 +1733,32 @@ function getBankPaymentData(db, auctionId, cfg, opts) {
       `SELECT l.bank_id AS bank_id,
               COALESCE(SUM(l.balance),0) AS payable, COALESCE(SUM(l.puramt),0) AS puramt,
               ${useLotAdv ? 'COALESCE(SUM(la.advance),0)' : '0'} AS lot_advance,
-              GROUP_CONCAT(l.lot_no) AS lot_nos
+              GROUP_CONCAT(l.lot_no) AS lot_nos,
+              -- Lot ids of this group, so the TDS shares of exactly these
+              -- lots can be summed below. Summing the seller's whole TDS here
+              -- would withhold the entire invoice's TDS from a part payment.
+              GROUP_CONCAT(l.id) AS lot_ids
          FROM lots l${useLotAdv ? ' LEFT JOIN lot_advances la ON la.lot_id = l.id' : ''}
         WHERE l.auction_id = ? AND l.amount > 0
           AND (l.paid IS NULL OR l.paid = '') AND ${sellerKeySql} = ?${extra}
         GROUP BY l.bank_id`,
       params
     ) || [];
+    // This group's TDS = the shares of the lots it covers. Additive by
+    // construction, so the groups of a seller sum to that seller's TDS when
+    // every lot is picked, and to less when only some are.
+    const tdsOf = (g) => String(g.lot_ids || '')
+      .split(',')
+      .map(s => Number(String(s).trim()))
+      .filter(n => Number.isFinite(n))
+      .reduce((a, id) => a + (tdsByLotId[id] || 0), 0);
     // Net of the advance in both modes: the money is out of the door either
     // way, so paying the full figure again would pay it twice. Clamped per
     // group so an advance larger than its own group's total never eats into
     // another bank account's line.
     const amtOf = g => Math.max(0,
-      (useBefore ? (Number(g.puramt) || 0) : (Number(g.payable) || 0)) - (Number(g.lot_advance) || 0));
+      (useBefore ? (Number(g.puramt) || 0) : (Number(g.payable) || 0))
+        - (Number(g.lot_advance) || 0) - tdsOf(g));
 
     // Bucket the covered lots by the account they will ACTUALLY be paid into,
     // not by the raw bank_id they carry. Several distinct bank_ids routinely
@@ -2485,6 +2640,51 @@ function getPurchaseRegister(db, opts = {}) {
 }
 
 /**
+ * Delivery Challan Register
+ * ───────────────────────────────────────────────────────────────
+ * The challan book, as a report: one row per challan ISSUED, newest serial
+ * last, so it reads like the paper book it reconciles against.
+ *
+ * Read from `delivery_chalans`, which is written when a challan prints
+ * (POST /api/delivery-chalan/record). A challan is a snapshot of a despatch —
+ * the vehicle, the receiver and the lots as they were at the gate — so the
+ * row is reported as stored and nothing is re-derived from the lots, which
+ * may since have been re-priced, re-allocated or deleted.
+ *
+ * Scope: a specific trade (opts.auctionId) OR a date range over the CHALLAN's
+ * own date (opts.from/opts.to), auction winning when both are given — the
+ * same rule every other register here follows. The date is stored as the
+ * operator entered it at print time; rows whose date does not parse are kept
+ * and sort last rather than being dropped, because a challan that went out is
+ * part of the book whatever its date cell says.
+ */
+function getDeliveryChalanRegister(db, opts = {}) {
+  let q = `SELECT chalan_no, serial, auction_id, date, time, branch, veh, mode,
+                  receiver, lot_count, bags, qty, value, lots, created_at,
+                  (SELECT a.ano FROM auctions a WHERE a.id = delivery_chalans.auction_id) AS tno
+             FROM delivery_chalans`;
+  const where = [], params = [];
+  if (opts.auctionId) { where.push('auction_id = ?'); params.push(Number(opts.auctionId)); }
+  else if (opts.from && opts.to) { where.push('date BETWEEN ? AND ?'); params.push(opts.from, opts.to); }
+  if (where.length) q += ` WHERE ${where.join(' AND ')}`;
+  // Serial order, not date order: the book is numbered, and a gap in the
+  // numbers is the thing an auditor looks for. Challans typed in by hand carry
+  // no serial, so they fall to the end on their number instead.
+  q += ` ORDER BY CASE WHEN serial IS NULL THEN 1 ELSE 0 END, serial, chalan_no`;
+  let rows = [];
+  try { rows = db.all(q, params) || []; } catch (_) { return []; }
+  return rows.map(r => ({
+    ...r,
+    tno: r.tno == null ? '' : r.tno,
+    date: _ddmmyyyy(r.date),
+    bags: Number(r.bags) || 0,
+    qty: Number(r.qty) || 0,
+    value: Number(r.value) || 0,
+    lot_count: Number(r.lot_count) || 0,
+  }));
+}
+
+/**
  * Godown Register (stored stock)
  * ───────────────────────────────────────────────────────────────
  * The one reader that looks FOR godown rows (lots.godown = 1) instead of
@@ -2984,6 +3184,7 @@ module.exports = {
 
   calculateLot,
   calculateTDS,
+  tdsByLot,
   calculateTCS,
   buildSalesInvoice,
   buildPurchaseInvoice,
@@ -3001,6 +3202,7 @@ module.exports = {
   getSalesJournalSummary,
   getPurchaseJournal,
   getPurchaseRegister,
+  getDeliveryChalanRegister,
   getSalesRegister,
   getGodownRegister,
   getPoolerRegister,

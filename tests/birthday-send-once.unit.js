@@ -21,6 +21,7 @@ process.env.SPICE_DATA_DIR = TMP;   // MUST precede require('../db') — db.js
 
 const { initDb } = require('../db');
 const { initCompanySettings, updateSettings } = require('../company-config');
+const waPolicy = require('../wa-compliance');
 const b = require('../birthday-greetings');
 
 let pass = 0, fail = 0;
@@ -44,6 +45,17 @@ function sender(outcome) {
 
   const TODAY = '2026-09-29';   // fixed so the test never depends on the clock
   const YEAR = 2026;
+  // A greeting is MARKETING in Meta's own classification, and since
+  // 2026-11-04 marketing needs an opt-in on record for the contact
+  // (wa-compliance.js — Meta disabled this account for sending it without
+  // one). Everything in this file is about the send-once ledger and the
+  // sweep's gates, so the install is told it has written consent on file.
+  // The consent rule gets its own section at the end; wa-compliance.unit.js
+  // proves the rule itself.
+  updateSettings(db, {
+    wa_assume_legacy_optin: 'true',
+    wa_legacy_optin_basis: 'test fixture — see wa-compliance.unit.js for the real rule',
+  });
   db.run(`INSERT INTO traders (name, cr, dob, tel) VALUES (?,?,?,?)`, ['MURUGAN', 'CR.1', '1980-09-29', '9876543210']);
   db.run(`INSERT INTO traders (name, cr, dob, tel) VALUES (?,?,?,?)`, ['SELVAM', 'CR.2', '29/09/1975', '9000000002']);
   db.run(`INSERT INTO traders (name, cr, dob, tel) VALUES (?,?,?,?)`, ['NO PHONE', 'CR.3', '1990-09-29', '']);
@@ -191,6 +203,46 @@ function sender(outcome) {
   r = await b.runDailySweep(db, { send, now: new Date(new Date().setHours(11, 0, 0, 0)) });
   check('the next tick the same day is a no-op', r.ran === true && r.sent === 0 && send.calls.length === before,
     JSON.stringify(r));
+
+  // ── THE CONSENT GATE ────────────────────────────────────────
+  // Added 2026-11-04. Meta disabled this business's WhatsApp account for a
+  // breach of the Terms of Acceptable Use, and this campaign was one of the
+  // two that caused it: it greeted every party carrying a date of birth, on
+  // masters assembled from a bulk import where nobody had agreed to be
+  // messaged. The fixture's blanket assumption comes off here, so the real
+  // rule is what is under test.
+  console.log('\nThe consent gate');
+  updateSettings(db, { wa_assume_legacy_optin: 'false' });
+  db.run(`INSERT INTO traders (name, cr, dob, tel) VALUES (?,?,?,?)`,
+    ['CONSENT TEST', 'CR.CT', '1980-11-11', '9444444444']);
+  const ctRows = () => b.birthdaysOn(db, '2026-11-11');
+  send = sender({ ok: true, id: 'wamid.CT' });
+  r = await b.sendGreetings(db, ctRows(), { send, cap: 0 });
+  check('a party with no opt-in is never greeted',
+    send.calls.length === 0, JSON.stringify(send.calls));
+  check('...and the skip names the missing permission',
+    r.results.some(x => x.status === 'skipped' && /opt-in/.test(x.reason || '')),
+    JSON.stringify(r.results));
+  check('...and the send-once ledger is NOT burned, so it can be greeted once consent exists',
+    !db.get(`SELECT 1 x FROM birthday_greetings
+              WHERE party_type='seller' AND status='sent'
+                AND party_id = (SELECT id FROM traders WHERE name='CONSENT TEST')`));
+
+  waPolicy.setConsent(db, { phone: '9444444444', status: 'in', basis: 'signed registration form' });
+  send = sender({ ok: true, id: 'wamid.CT2' });
+  r = await b.sendGreetings(db, ctRows(), { send, cap: 0 });
+  check('recording the opt-in lets the greeting go', r.sent === 1, JSON.stringify(r.results));
+
+  // An opt-out beats a birthday. It is the one day of the year the business
+  // most wants to message somebody, and it is still not permission.
+  db.run(`INSERT INTO traders (name, cr, dob, tel) VALUES (?,?,?,?)`,
+    ['SAID STOP', 'CR.ST', '1980-11-12', '9555555555']);
+  waPolicy.setConsent(db, { phone: '9555555555', status: 'out', basis: 'replied STOP' });
+  send = sender({ ok: true, id: 'wamid.CT3' });
+  r = await b.sendGreetings(db, b.birthdaysOn(db, '2026-11-12'), { send, cap: 0 });
+  check('an opted-out party is not greeted either',
+    send.calls.length === 0 && r.results.some(x => /opted out/.test(x.reason || '')),
+    JSON.stringify(r.results));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   done(fail ? 1 : 0);
