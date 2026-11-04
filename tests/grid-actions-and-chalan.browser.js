@@ -890,6 +890,66 @@ function cleanup() {
   check('…and each new challan starts pointing outwards again',
         swDlg.reopened === swDlg.before, swDlg.reopened);
 
+  console.log('\n[12] A challan the Spices Board SENDS');
+  // Turned round, a Board consignment is the Board's own document: its name
+  // heads the form and its own mark sits beside it. The company's logo there
+  // would claim the goods came from this firm.
+  const sbSend = await page.evaluate(async () => {
+    const el = document.getElementById('dc-branch');
+    el.value = '__SB_TN__'; el.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 300));
+    const out = {};
+    out.outward = document.getElementById('dc-preview').contentDocument.body.innerHTML;
+    dcToggleSwap();
+    await new Promise(r => setTimeout(r, 400));
+    out.sending = document.getElementById('dc-preview').contentDocument.body.innerHTML;
+    dcToggleSwap();
+    await new Promise(r => setTimeout(r, 300));
+    return out;
+  });
+  const coname = (h) => (h.match(/class="coname">([^<]*)</) || [])[1] || '';
+  const logo   = (h) => (h.match(/class="logo"><img src="([^"]+)"/) || [])[1] || '';
+  check('sending TO the Board, the masthead is still the company',
+        coname(sbSend.outward) === 'RNS SPICES', coname(sbSend.outward));
+  check('…under the company logo', logo(sbSend.outward) === '/logo-ispl.png', logo(sbSend.outward));
+  check('turned round, the masthead becomes SPICES BOARD',
+        coname(sbSend.sending) === 'SPICES BOARD', coname(sbSend.sending));
+  check('…under the Board\'s own logo, not the company\'s',
+        logo(sbSend.sending) === '/logo-sb.png', logo(sbSend.sending));
+  // The heading LINE would only repeat the masthead there, so it is dropped —
+  // the block starts straight at the address. (Its first line legitimately
+  // reads "SPICES BOARD E-AUCTION CENTRE": that is the centre's name, not the
+  // heading.)
+  check('…and the address block does not repeat the masthead', (() => {
+    const mast = (sbSend.sending.match(/class="coaddr">([\s\S]*?)<\/div>/) || [])[1] || '';
+    return mast.split('<br>')[0].trim() !== 'SPICES BOARD';
+  })(), (sbSend.sending.match(/class="coaddr">([\s\S]*?)<\/div>/) || [])[1]);
+  check('the signatory follows the sender too', /For SPICES BOARD/.test(sbSend.sending),
+        'expected "For SPICES BOARD"');
+  // An ordinary branch challan is untouched by any of this.
+  const plain = await page.evaluate(async () => {
+    const el = document.getElementById('dc-branch');
+    el.value = 'BODI'; el.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 350));
+    return document.getElementById('dc-preview').contentDocument.body.innerHTML;
+  });
+  check('a branch challan keeps the company name and logo',
+        coname(plain) === 'RNS SPICES' && logo(plain) === '/logo-ispl.png',
+        JSON.stringify({ name: coname(plain), logo: logo(plain) }));
+
+  console.log('\n[13] Qty is asked for before Rate');
+  // What is going, then what it is worth — the order the goods table prints
+  // them in and the order they come off the weighbridge slip.
+  const order = await page.evaluate(() => {
+    const seq = (sel) => [...document.querySelectorAll(sel)]
+      .map(el => el.id).filter(id => /(^|-)(qty|rate)$/.test(id) && !/sample/.test(id));
+    return { screen: seq('#tc-delivery-chalan input'), dialog: seq('#le-chalan-modal input') };
+  });
+  check('on the screen, Qty comes first',
+        order.screen.join(',') === 'dc-qty,dc-rate', JSON.stringify(order.screen));
+  check('…and in the dialog too',
+        order.dialog.join(',') === 'le-chalan-qty,le-chalan-rate', JSON.stringify(order.dialog));
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log('--- server log tail ---\n' + srvLog.split('\n').slice(-15).join('\n'));
   cleanup();

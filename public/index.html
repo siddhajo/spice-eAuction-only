@@ -8318,6 +8318,24 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             </select>
           </div>
 
+          <!-- Which purchase type's sellers to list — and, for URD, how.
+               A registered dealer is invoiced and settled LOT BY LOT, so the
+               lot is the unit of work. An agriculturist is covered by one Bill
+               of Supply and paid as a party, so URD folds the table one row
+               per seller (expandable to the lots). "Both" is the default and
+               leaves the screen exactly as it has always been: every seller,
+               lot-wise. The split uses the same GSTIN-on-`cr` rule the
+               purchase invoices and bills of supply are generated on, so this
+               screen can never disagree with those documents. -->
+          <div>
+            <label style="display:block;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Purchase type</label>
+            <select id="paylw-ptype" onchange="payLwSearch()" title="RD Purchase lists registered dealers' lots one row per LOT. URD Purchase lists agriculturists one row per SELLER — click the lot count to open it. Both lists everyone, lot-wise." style="padding:0 14px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;font-weight:500;min-width:190px">
+              <option value="all" selected>Both — lot-wise</option>
+              <option value="rd">RD Purchase — lot-wise</option>
+              <option value="urd">URD Purchase — seller-wise</option>
+            </select>
+          </div>
+
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <!-- Clears the ticks only — the search results stay on screen.
                  (The ✕ Clear button above wipes the filters and the results.) -->
@@ -43658,6 +43676,16 @@ const _payLwState = {
   // has run, which is what tells the labels to stay plain.
   statusCounts: null,
   status: 'all',         // the payment-status filter the results were fetched under
+  // Purchase type the results were fetched under: 'all' | 'rd' | 'urd'.
+  // 'urd' is the one that changes the LAYOUT as well as the filter — see
+  // _payLwGrouped(). Held here rather than read off the select at render time
+  // so the rows always describe the data actually on screen, even if the
+  // operator changes the dropdown before pressing Search.
+  ptype: 'all',
+  // Group keys (see _payLwGroups) whose member lots are showing. Survives a
+  // re-render so adding a bank account doesn't collapse the seller the
+  // operator is working through.
+  expanded: new Set(),
   // Ticked lot ids — what Export Bank Payment actually pays. Held in state
   // rather than read off the DOM so a re-render (adding an account, say)
   // doesn't silently throw the operator's selection away. A fresh search
@@ -43690,6 +43718,7 @@ function payLwOnAuctionChange() {
   _payLwState.selected = new Set();
   _payLwState.selectedPaid = new Set();
   _payLwState.missing = [];
+  _payLwState.expanded = new Set();
   // The previous trade's counts say nothing about this one — drop them so the
   // status options go back to plain labels until a search fills them again.
   _payLwState.statusCounts = null;
@@ -43714,8 +43743,11 @@ function payLwClear() {
   // "Clear" means every filter, this one included — a status left armed behind
   // an apparently-clean screen is how an operator concludes lots are missing.
   const st = document.getElementById('paylw-status'); if (st) st.value = 'all';
+  const pt = document.getElementById('paylw-ptype'); if (pt) pt.value = 'all';
   _payLwState.statusCounts = null;
   _payLwState.status = 'all';
+  _payLwState.ptype = 'all';
+  _payLwState.expanded = new Set();
   _payLwState.sort = null;
   _payLwState.lots = [];
   _payLwState.selected = new Set();
@@ -43752,7 +43784,10 @@ async function payLwSearch() {
   const link = document.getElementById('paylw-link')?.value || 'linked';
   // all (default) · unpaid · advance · paid — the payment-run filter.
   const status = document.getElementById('paylw-status')?.value || 'all';
-  const qs = new URLSearchParams({ link, status });
+  // all (default) · rd · urd — which purchase type's sellers to list. 'urd'
+  // also folds the table one row per seller; the server only filters.
+  const ptype = document.getElementById('paylw-ptype')?.value || 'all';
+  const qs = new URLSearchParams({ link, status, ptype });
   if (seller) qs.set('seller', seller);
   if (lots)   qs.set('lots', lots);
   const body = document.getElementById('paylw-body');
@@ -43768,6 +43803,12 @@ async function payLwSearch() {
     // can say what each one would show even while one of them is selected.
     _payLwState.statusCounts = d.statusCounts || null;
     _payLwState.status = d.status || 'all';
+    // Record what the rows on screen actually are. A stale 'urd' here would
+    // fold an RD result set by seller and label lot counts that nothing in the
+    // data supports.
+    _payLwState.ptype = ptype;
+    // Groups from the previous search mean nothing to this one.
+    _payLwState.expanded = new Set();
     _payLwState.missing = d.missing || [];
     _payLwState.searched = true;
     // A new result set starts fully ticked — the common case is "export what
@@ -43863,6 +43904,13 @@ function _payLwMissingHtml() {
         return ['Hidden by the Payment status filter',
                 `This lot ${is} — set Payment status to “Any status” to see it.`, '#0e7490'];
       }
+      case 'ptype_filter': {
+        const is = m.ptype === 'rd'
+          ? 'belongs to a REGISTERED DEALER (RD Purchase)'
+          : 'belongs to an AGRICULTURIST (URD Purchase)';
+        return ['Hidden by the Purchase type filter',
+                `This lot ${is} — set Purchase type to “Both” to see it.`, '#0e7490'];
+      }
       default:              return ['Not in the results', '', 'var(--text3)'];
     }
   };
@@ -43926,6 +43974,358 @@ function _payLwTh(col, label, extraStyle) {
     // Arrow sits on the dark header band, so it is white rather than the
     // accent green the light DataTable header uses.
     + `<span style="color:#fff;font-weight:700">${arrow}</span></th>`;
+}
+
+// ── Seller-wise (URD) view ───────────────────────────────────────────────
+// RD and URD sellers are not paid the same way. A registered dealer is
+// invoiced and settled lot by lot, so the lot is the unit of work. An
+// agriculturist is covered by one Bill of Supply and paid as a party, so a
+// screen that makes the operator tick eight lots to pay one planter is making
+// them do arithmetic the screen should be doing.
+//
+// So on ?ptype=urd the SAME result set is folded one row per seller. Nothing
+// about the data changes: the ticks, the advances, the paid stamps and the
+// bank export all stay keyed on LOT ids, and a group's checkbox simply ticks
+// its own lots. Expanding a group renders the ordinary per-lot rows.
+function _payLwGrouped() {
+  return _payLwState.ptype === 'urd';
+}
+
+// Fold the sorted result set into one entry per seller.
+//
+// Keyed on trader_id and NEVER on the name: party names repeat across the
+// master (two different MURUGANANDAM K rows is normal), and merging two
+// sellers who share one would pay the wrong person. A lot whose seller is not
+// linked to a master record has no identity to merge on, so it stays a group
+// of one and renders as a plain lot row.
+//
+// Order follows first appearance in _payLwSortedLots(), so the Seller and
+// Branch column sorts still drive the order of the groups.
+function _payLwGroups() {
+  const out = [];
+  const byTrader = new Map();
+  for (const l of _payLwSortedLots()) {
+    if (l.trader_id == null) {
+      out.push({ key: `lot:${l.id}`, solo: true, trader_id: null, name: l.name || '', lots: [l] });
+      continue;
+    }
+    const k = `t:${l.trader_id}`;
+    let g = byTrader.get(k);
+    if (!g) {
+      g = { key: k, solo: false, trader_id: l.trader_id, name: l.name || '', lots: [] };
+      byTrader.set(k, g);
+      out.push(g);
+    }
+    g.lots.push(l);
+  }
+  return out;
+}
+
+// What a group's checkbox may tick: its lots that are still owed for AND
+// priced. Same test the per-lot box uses, so the header box's tri-state, the
+// export count and a group box can never disagree.
+function _payLwGroupSelectable(g) {
+  return g.lots.filter(l => !l.paid_at && !_payLwUnpriced(l));
+}
+
+// Tick / untick every selectable lot in one group.
+function payLwTickGroup(key, checked) {
+  const g = _payLwGroups().find(x => x.key === key);
+  if (!g) return;
+  for (const l of _payLwGroupSelectable(g)) {
+    if (checked) _payLwState.selected.add(l.id); else _payLwState.selected.delete(l.id);
+  }
+  _payLwRender();
+}
+
+// Tick / untick every PAID lot in one group, for "Undo selected". Admin only,
+// mirroring the per-lot paid box.
+function payLwTickGroupPaid(key, checked) {
+  const g = _payLwGroups().find(x => x.key === key);
+  if (!g) return;
+  for (const l of g.lots.filter(l => l.paid_at)) {
+    if (checked) _payLwState.selectedPaid.add(l.id); else _payLwState.selectedPaid.delete(l.id);
+  }
+  _payLwRender();
+}
+
+// Show / hide one group's member lots.
+function payLwToggleGroup(key) {
+  if (_payLwState.expanded.has(key)) _payLwState.expanded.delete(key);
+  else _payLwState.expanded.add(key);
+  _payLwRender();
+}
+
+// One summary row per seller, plus that seller's lot rows when expanded.
+function _payLwGroupRows(canWrite) {
+  const groups = _payLwGroups();
+  return groups.map(g => {
+    // A lot with no seller master record can't be summarised against a party —
+    // render it exactly as the lot-wise view would.
+    if (g.solo) return _payLwLotRow(g.lots[0], canWrite);
+
+    const lots = g.lots;
+    const paidLots = lots.filter(l => l.paid_at);
+    const allPaid = paidLots.length === lots.length;
+    const unpricedLots = lots.filter(l => _payLwUnpriced(l) && !l.paid_at);
+    const selectable = _payLwGroupSelectable(g);
+    const qty = lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+    const advance = lots.reduce((s, l) => s + (Number(l.advance) || 0), 0);
+    const over = lots.reduce((s, l) => s + (Number(l.over_advance) || 0), 0);
+    const payable = lots.reduce((s, l) => s + (Number(l.payable) || 0), 0);
+    const gross = lots.reduce((s, l) => s + _payLwGross(l), 0);
+
+    // One value or "mixed" — said in words rather than shown as the first
+    // lot's value, which would read as a fact about the whole seller.
+    const oneOf = (vals) => {
+      const set = new Set(vals.map(v => String(v == null ? '' : v).trim()).filter(Boolean));
+      if (!set.size) return null;
+      return set.size === 1 ? [...set][0] : null;
+    };
+    const branch = oneOf(lots.map(l => l.branch));
+    const branchCell = branch != null
+      ? esc(branch)
+      : `<span style="color:var(--text3);font-style:italic;font-size:11.5px" title="These lots sit in more than one branch — expand the seller to see which.">mixed</span>`;
+
+    // The account each lot would actually be paid into. Agreement across the
+    // group is the normal case (lots ride the seller's default), so say so
+    // when they differ instead of picking one.
+    const banks = _payLwState.banksByTrader[g.trader_id] || [];
+    const legacy = _payLwState.legacyByTrader[g.trader_id];
+    const effOf = (l) => {
+      const b = banks.find(x => x.id === l.bank_id) || banks.find(x => x.is_default) || banks[0];
+      return b ? b.id : null;
+    };
+    let bankCell;
+    if (allPaid) {
+      bankCell = `<span style="color:var(--text3);font-size:11.5px">—</span>`;
+    } else if (banks.length) {
+      const agreed = oneOf(lots.filter(l => !l.paid_at).map(effOf));
+      if (agreed != null) {
+        const b = banks.find(x => String(x.id) === String(agreed));
+        const txt = b ? [b.acctnum, b.holder_name, b.ifsc].filter(Boolean).join(' · ') : '';
+        bankCell = `<span style="font-family:monospace;font-size:11px">${esc(txt)}</span>`;
+      } else {
+        bankCell = `<span style="color:#B45309;font-size:11.5px;font-weight:600" title="This seller's lots are routed to different accounts. Expand the seller to see and change them lot by lot.">⚠ mixed accounts</span>`;
+      }
+    } else if (legacy) {
+      const txt = [legacy.acctnum, legacy.holder_name, legacy.ifsc].filter(Boolean).join(' · ');
+      bankCell = `<span style="font-family:monospace;font-size:11px;color:var(--text3);font-style:italic" title="Legacy account held on the seller record itself.">${esc(txt)} (legacy)</span>`;
+    } else {
+      bankCell = `<span style="color:var(--spice-chili);font-size:11.5px;font-weight:600">⚠ no account</span>`;
+    }
+    const addBtn = (!allPaid && !banks.length)
+      ? `<button class="btn btn-o needs-lot-write" style="padding:3px 8px;font-size:11px;font-weight:600;white-space:nowrap"
+           onclick="payLwOpenBankAdd(${g.trader_id}, ${esc(JSON.stringify(String(g.name || '')))})"
+           title="Add a bank account to this seller">+ Add</button>`
+      : '';
+
+    // Badges summarise the group rather than repeating per lot. A count beats
+    // eight identical badges, and the expanded rows carry the detail.
+    const badge = (bg, fg, title, text) =>
+      ` <span style="font-size:9.5px;font-weight:700;background:${bg};color:${fg};padding:1px 6px;border-radius:8px;vertical-align:middle" title="${esc(title)}">${esc(text)}</span>`;
+    let badges = '';
+    if (allPaid) {
+      badges += badge('#dcfce7', '#166534', 'Every lot of this seller has been paid out.', `✓ All ${lots.length} paid`);
+    } else if (paidLots.length) {
+      badges += badge('#dcfce7', '#166534', `${paidLots.length} of this seller's ${lots.length} lots are already paid out and are not part of the payable below.`, `✓ ${paidLots.length} paid`);
+    }
+    if (unpricedLots.length) {
+      badges += badge('#f1f5f9', '#475569', `${unpricedLots.length} lot(s) have no price yet, so they count nothing toward the Payable. Pay Advance still works on them.`, `⏳ ${unpricedLots.length} not priced`);
+    }
+    if (advance > 0) {
+      badges += badge('#FFFBEB', '#B45309', `Advances totalling ₹${fmtI(advance, 2)} are already paid against this seller's lots and are deducted from the Payable beside.`, `💰 ₹${fmtI(advance, 2)} advance`);
+    }
+    if (over > 0) {
+      badges += badge('#FEF2F2', '#B91C1C', `₹${fmtI(over, 2)} more was advanced than these lots finally came to — it has to be recovered from the seller.`, `⚠ over ₹${fmtI(over, 2)}`);
+    }
+
+    const open = _payLwState.expanded.has(g.key);
+    // The lot count is the disclosure control: this row stands for N lots, and
+    // clicking the count is the obvious way to ask which.
+    const lotsCell = `<button type="button" onclick="payLwToggleGroup('${esc(g.key)}')"
+        style="background:none;border:none;padding:0;cursor:pointer;font:inherit;font-weight:600;color:var(--spice-cardamom-dk);display:inline-flex;gap:4px;align-items:center"
+        title="${open ? 'Hide' : 'Show'} this seller's ${lots.length} lot${lots.length === 1 ? '' : 's'}">
+        <span style="font-size:10px">${open ? '▾' : '▸'}</span>${lots.length} lot${lots.length === 1 ? '' : 's'}</button>`;
+
+    // Group box. Unpaid groups tick their payable lots for the export; a
+    // fully-paid group offers the admin undo instead, exactly as a paid lot row
+    // does. Mixed groups tick only the payable part — the badge says how many
+    // are already out, so the number in the toolbar still reconciles.
+    const allSel = selectable.length > 0 && selectable.every(l => _payLwState.selected.has(l.id));
+    const paidSel = paidLots.length > 0 && paidLots.every(l => _payLwState.selectedPaid.has(l.id));
+    let cb;
+    if (!selectable.length) {
+      cb = (allPaid && window._userRole === 'admin')
+        ? `<input type="checkbox" class="paylw-cb-gpaid" data-key="${esc(g.key)}"${paidSel ? ' checked' : ''} onchange="payLwTickGroupPaid('${esc(g.key)}', this.checked)" title="Admin: tick this seller's paid lots for &quot;Undo selected&quot;" style="cursor:pointer;width:15px;height:15px;accent-color:var(--spice-chili)">`
+        : `<input type="checkbox" disabled title="${allPaid ? 'Every lot of this seller is already paid' : 'None of this seller’s lots are priced yet — use Pay Advance'}" style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`;
+    } else {
+      cb = `<input type="checkbox" class="paylw-cb-group" data-key="${esc(g.key)}"${allSel ? ' checked' : ''} onchange="payLwTickGroup('${esc(g.key)}', this.checked)" title="Select this seller's ${selectable.length} payable lot${selectable.length === 1 ? '' : 's'}" style="cursor:pointer;width:15px;height:15px">`;
+    }
+
+    const payableCell = (!selectable.length && !payable)
+      ? `<span style="font-weight:400;font-size:11px;color:var(--text3)">${allPaid ? 'settled' : 'awaiting price'}</span>`
+      : advance > 0
+        ? `${fmtI(payable, 2)}<div style="font-weight:400;font-size:10.5px;color:var(--text3)">of ₹${fmtI(gross, 2)}</div>`
+        : fmtI(payable, 2);
+
+    const rowCls = allPaid ? ' class="paylw-row-paid"' : '';
+    const groupRow = `<tr${rowCls} data-paylw-group="${esc(g.key)}">
+      <td style="text-align:center">${cb}</td>
+      <td style="font-weight:600">${esc(g.name)}${badges}</td>
+      <td>${lotsCell}</td>
+      <td style="text-align:right">${fmtI(qty, 3)}</td>
+      <td>${branchCell}</td>
+      <td><div style="display:flex;gap:6px;align-items:center">${bankCell}${addBtn}</div></td>
+      <td style="text-align:right;font-weight:600;color:#B45309">${advance > 0 ? fmtI(advance, 2) : '<span style="color:var(--text3);font-weight:400">—</span>'}</td>
+      <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${payableCell}</td>
+    </tr>`;
+
+    // Expanded: the ordinary per-lot rows, tinted to read as children of the
+    // seller above rather than as peers of the other group rows.
+    const children = open
+      ? `<tr class="paylw-grp-kids"><td colspan="8" style="padding:0;background:var(--spice-cardamom-lt)">
+           <table class="paylw-table" style="width:100%;margin:0">
+             <thead><tr>
+               <th style="width:36px"></th><th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th>
+               <th>Branch</th><th style="min-width:320px">Bank</th>
+               <th style="text-align:right">Advance</th><th style="text-align:right">Payable</th>
+             </tr></thead>
+             <tbody>${lots.map(l => _payLwLotRow(l, canWrite)).join('')}</tbody>
+           </table></td></tr>`
+      : '';
+    return groupRow + children;
+  }).join('');
+}
+
+// One table row for ONE lot — the lot-wise view's whole output, and what a
+// seller-wise (URD) group expands into. Extracted from _payLwRender so the
+// two views can never drift: every badge, the bank picker, the checkbox
+// semantics and the net-of-advance Payable are defined once, here.
+//
+// `canWrite` is lot_write, read once by the caller rather than per row.
+function _payLwLotRow(l, canWrite) {
+  const banks = _payLwState.banksByTrader[l.trader_id] || [];
+  const legacy = _payLwState.legacyByTrader[l.trader_id];
+  let bankCell;
+  if (!l.trader_id) {
+    // Lot has no seller master record — nothing to hang an account off.
+    bankCell = `<span style="color:var(--spice-chili);font-size:11.5px" title="This lot's seller isn't linked to a seller master record, so no account can be attached. Fix the lot's seller in Lot Entry first.">⚠ no seller record</span>`;
+  } else if (banks.length && !canWrite) {
+    const eff = banks.find(b => b.id === l.bank_id) || banks.find(b => b.is_default) || banks[0];
+    bankCell = `<span style="font-family:monospace;font-size:11px;color:var(--text2)">${esc(_payLwBankLabel(eff))}`
+      + (l.bank_id == null ? ` <span style="font-style:italic;color:var(--text3)">(seller default)</span>` : '') + `</span>`;
+  } else if (banks.length) {
+    bankCell = `<select class="paylw-bank" onchange="payLwBankChange(this, ${l.id})"`
+      + ` title="Bank account this lot is paid into. Blank = follow the seller's default."`
+      + ` style="width:100%;max-width:340px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:#fff${l.bank_id == null ? ';color:var(--text3);font-style:italic' : ''}">`
+      + _payLwBankOptions(l) + `</select>`;
+  } else if (legacy) {
+    // Legacy account on the traders row: the export routes to it, but there
+    // is no trader_banks row for a lot's bank_id to point at.
+    const txt = [legacy.acctnum, legacy.holder_name, legacy.ifsc].filter(Boolean).join(' · ');
+    bankCell = `<span style="font-family:monospace;font-size:11px;color:var(--text3);font-style:italic" title="Legacy account held on the seller record itself. Add a proper account to route individual lots.">${esc(txt)} (legacy)</span>`;
+  } else {
+    bankCell = `<span style="color:var(--spice-chili);font-size:11.5px;font-weight:600">⚠ no account</span>`;
+  }
+  // JSON.stringify quotes/escapes the name for the JS call; esc() then makes
+  // it safe as an HTML attribute value (a seller name is master data, but it
+  // is still user-entered text).
+  const addBtn = l.trader_id
+    ? `<button class="btn btn-o needs-lot-write" style="padding:3px 8px;font-size:11px;font-weight:600;white-space:nowrap"
+         onclick="payLwOpenBankAdd(${l.trader_id}, ${esc(JSON.stringify(String(l.name || '')))})"
+         title="Add a bank account to this seller">+ Add</button>`
+    : '';
+  // A PAID lot (already exported): green row, disabled checkbox, "Paid on …"
+  // badge, and it never counts toward the selection. The paid tint wins over
+  // the red "no account" tint — a paid lot needs no account any more.
+  const isPaid = !!(l.paid_at && String(l.paid_at).trim());
+  const unpriced = _payLwUnpriced(l);
+  const rowCls = isPaid ? ' class="paylw-row-paid"' : '';
+  const rowStyle = (!isPaid && !l.linked) ? ' style="background:#FEF2F2"' : '';
+  const paidBadge = isPaid
+    ? ` <span class="paylw-paid-badge" title="Paid out via bank export on ${esc(fmtD(l.paid_at))}. Kept for the record — it can't be selected or re-exported.">✓ Paid on ${esc(fmtD(l.paid_at))}</span>`
+    : '';
+  // An advance already paid against this lot. Unlike the paid stamp it does
+  // NOT lock the row: the remainder is still owed, still selectable and
+  // still exportable — the Payable column simply already shows it net.
+  const advance = Number(l.advance) || 0;
+  // This lot's payable BEFORE its advance — what the advance was measured
+  // against, and what the badges and the Payable cell both quote.
+  const gross = _payLwGross(l);
+  const advBadge = advance > 0
+    ? ` <span class="paylw-adv-badge" title="Advance of ₹${esc(fmtI(advance, 2))} paid on ${esc(fmtD(l.advance_at))}. It is already deducted from this lot's Payable and from its line in the bank-payment export.">💰 Advance ₹${esc(fmtI(advance, 2))} on ${esc(fmtD(l.advance_at))}</span>`
+    : '';
+  // Entered, not priced yet. Listed so the advance paid right after lot entry
+  // can be recorded against it; it has no payable, so it cannot be exported
+  // or marked paid until the price arrives.
+  const unpricedBadge = (unpriced && !isPaid)
+    ? ` <span class="paylw-unpriced-badge" title="This lot has no price yet, so there is nothing to pay out and it cannot be selected for a bank-payment export. An advance CAN be recorded against it — use Pay Advance. It becomes payable once the price import runs.">⏳ Not priced yet</span>`
+    : '';
+  // An advance that the price then came in UNDER. The payable is floored at
+  // 0, so without this the overpayment would be invisible — and it is money
+  // the office has to get back from the seller.
+  const over = Number(l.over_advance) || 0;
+  const overBadge = (over > 0 && !isPaid)
+    ? ` <span class="paylw-over-badge" title="The advance of ₹${esc(fmtI(advance, 2))} is more than this lot's final payable of ₹${esc(fmtI(gross, 2))} — ₹${esc(fmtI(over, 2))} was overpaid and has to be recovered from the seller.">⚠ Over-advanced ₹${esc(fmtI(over, 2))}</span>`
+    : '';
+  // Admin-only escape hatch: clear the paid stamp so the lot becomes
+  // selectable and exportable again (e.g. an export that had to be redone).
+  const undoBtn = (isPaid && window._userRole === 'admin')
+    ? ` <button class="btn btn-o" style="padding:1px 7px;font-size:10.5px;font-weight:600;margin-left:4px" onclick="payLwUnmarkPaid(${l.id}, ${esc(JSON.stringify(String(l.name || '')))})" title="Admin: undo the paid stamp so this lot can be selected and exported again">↩ Undo</button>`
+    : '';
+  // Remove this lot's advance in one click, rather than opening Pay Advance
+  // and blanking the box. Only on UNPAID rows: a settled lot has already had
+  // its advance netted off the payment that went out, so the server refuses
+  // to clear it until the paid stamp is undone — offering the button there
+  // would only produce that error.
+  const undoAdvBtn = (advance > 0 && !isPaid)
+    ? ` <button class="btn btn-o needs-lot-write" style="padding:1px 7px;font-size:10.5px;font-weight:600;margin-left:4px;color:#B45309;border-color:#FDE68A" onclick="payLwUndoAdvance(${l.id}, ${esc(JSON.stringify(String(l.name || '')))})" title="Remove this lot's advance. Its Payable goes back up by ₹${esc(fmtI(advance, 2))}.">↩ Undo advance</button>`
+    : '';
+  // Stored stock, not a lot awaiting a price. Without the badge an operator
+  // reads "awaiting price" on goods that were never put up for sale and goes
+  // looking for the missing price. The Godown screen is where it is managed.
+  const godownBadge = Number(l.godown)
+    ? ' <span style="font-size:9px;font-weight:800;background:#14b8a6;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="Godown storage — not auctioned. Manage it on the Godown screen.">GODOWN</span>'
+    : '';
+  const ticked = (!isPaid && _payLwState.selected.has(l.id)) ? ' checked' : '';
+  // A paid row's box means something different from an unpaid one's: it picks
+  // the lot for "↩ Undo selected", not for the export. It feeds its own set
+  // (selectedPaid) and only admins get it, matching the per-row Undo button
+  // and the server's requireAdmin on unmark-paid. For everyone else the box
+  // stays the disabled "already paid" lock it has always been.
+  const paidTicked = _payLwState.selectedPaid.has(l.id) ? ' checked' : '';
+  const cb = isPaid
+    ? (window._userRole === 'admin'
+        ? `<input type="checkbox" class="paylw-cb-paid" data-id="${l.id}"${paidTicked} onchange="payLwTickPaid(${l.id}, this.checked)" title="Admin: tick to undo this lot's paid stamp with &quot;Undo selected&quot;" style="cursor:pointer;width:15px;height:15px;accent-color:var(--spice-chili)">`
+        : `<input type="checkbox" disabled title="Already paid — locked out of selection" style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`)
+    // An unpriced lot has no payable, so the box would arm an export line of
+    // ₹0.00 and a paid stamp on an unsettled lot. Locked, and it says why —
+    // Pay Advance is the one thing this row IS for.
+    : unpriced
+      ? `<input type="checkbox" disabled title="Not priced yet — there is nothing to export or mark paid. Use Pay Advance to record an advance against it." style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`
+      : `<input type="checkbox" class="paylw-cb" data-id="${l.id}"${ticked} onchange="payLwTick(${l.id}, this.checked)" style="cursor:pointer;width:15px;height:15px">`;
+  // Payable is reported NET of the advance. When there is one, the gross it
+  // was taken off is shown underneath — a bare net figure that no longer
+  // matches the lot's amount reads as an error rather than as a part payment.
+  // An unpriced lot has no payable at all, and a 0.00 there would read as
+  // "settled" rather than "not known yet", so it says so in words.
+  const payableCell = unpriced
+    ? `<span style="font-weight:400;font-size:11px;color:var(--text3)">awaiting price</span>`
+    : advance > 0
+      ? `${fmtI(Number(l.payable) || 0, 2)}`
+        + `<div style="font-weight:400;font-size:10.5px;color:var(--text3)">of ₹${fmtI(gross, 2)}</div>`
+      : fmtI(Number(l.payable) || 0, 2);
+  return `<tr${rowCls}${rowStyle}>
+    <td style="text-align:center">${cb}</td>
+    <td>${esc(l.name || '')}${godownBadge}${paidBadge}${unpricedBadge}${advBadge}${overBadge}${undoBtn}${undoAdvBtn}</td>
+    <td style="font-family:monospace;font-weight:600;${Number(l.godown) ? 'color:#0f766e' : ''}">${esc(String(l.lot_no || ''))}</td>
+    <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
+    <td>${esc(l.branch || '')}</td>
+    <td><div style="display:flex;gap:6px;align-items:center">${isPaid ? '<span style="color:var(--text3);font-size:11.5px">—</span>' : (bankCell + addBtn)}</div></td>
+    <td style="text-align:right;font-weight:600;color:#B45309">${advance > 0 ? fmtI(advance, 2) : '<span style="color:var(--text3);font-weight:400">—</span>'}</td>
+    <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${payableCell}</td>
+  </tr>`;
 }
 
 function _payLwRender() {
@@ -44061,135 +44461,19 @@ function _payLwRender() {
   // the picker renders as plain text rather than a control that 403s on use.
   const canWrite = document.body.getAttribute('data-perm-lot-write') === '1';
   // Sorting is display-only — `lots` (and the ticked ids) stay as they came.
-  const rows = _payLwSortedLots().map(l => {
-    const banks = _payLwState.banksByTrader[l.trader_id] || [];
-    const legacy = _payLwState.legacyByTrader[l.trader_id];
-    let bankCell;
-    if (!l.trader_id) {
-      // Lot has no seller master record — nothing to hang an account off.
-      bankCell = `<span style="color:var(--spice-chili);font-size:11.5px" title="This lot's seller isn't linked to a seller master record, so no account can be attached. Fix the lot's seller in Lot Entry first.">⚠ no seller record</span>`;
-    } else if (banks.length && !canWrite) {
-      const eff = banks.find(b => b.id === l.bank_id) || banks.find(b => b.is_default) || banks[0];
-      bankCell = `<span style="font-family:monospace;font-size:11px;color:var(--text2)">${esc(_payLwBankLabel(eff))}`
-        + (l.bank_id == null ? ` <span style="font-style:italic;color:var(--text3)">(seller default)</span>` : '') + `</span>`;
-    } else if (banks.length) {
-      bankCell = `<select class="paylw-bank" onchange="payLwBankChange(this, ${l.id})"`
-        + ` title="Bank account this lot is paid into. Blank = follow the seller's default."`
-        + ` style="width:100%;max-width:340px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;font-size:11.5px;background:#fff${l.bank_id == null ? ';color:var(--text3);font-style:italic' : ''}">`
-        + _payLwBankOptions(l) + `</select>`;
-    } else if (legacy) {
-      // Legacy account on the traders row: the export routes to it, but there
-      // is no trader_banks row for a lot's bank_id to point at.
-      const txt = [legacy.acctnum, legacy.holder_name, legacy.ifsc].filter(Boolean).join(' · ');
-      bankCell = `<span style="font-family:monospace;font-size:11px;color:var(--text3);font-style:italic" title="Legacy account held on the seller record itself. Add a proper account to route individual lots.">${esc(txt)} (legacy)</span>`;
-    } else {
-      bankCell = `<span style="color:var(--spice-chili);font-size:11.5px;font-weight:600">⚠ no account</span>`;
-    }
-    // JSON.stringify quotes/escapes the name for the JS call; esc() then makes
-    // it safe as an HTML attribute value (a seller name is master data, but it
-    // is still user-entered text).
-    const addBtn = l.trader_id
-      ? `<button class="btn btn-o needs-lot-write" style="padding:3px 8px;font-size:11px;font-weight:600;white-space:nowrap"
-           onclick="payLwOpenBankAdd(${l.trader_id}, ${esc(JSON.stringify(String(l.name || '')))})"
-           title="Add a bank account to this seller">+ Add</button>`
-      : '';
-    // A PAID lot (already exported): green row, disabled checkbox, "Paid on …"
-    // badge, and it never counts toward the selection. The paid tint wins over
-    // the red "no account" tint — a paid lot needs no account any more.
-    const isPaid = !!(l.paid_at && String(l.paid_at).trim());
-    const unpriced = _payLwUnpriced(l);
-    const rowCls = isPaid ? ' class="paylw-row-paid"' : '';
-    const rowStyle = (!isPaid && !l.linked) ? ' style="background:#FEF2F2"' : '';
-    const paidBadge = isPaid
-      ? ` <span class="paylw-paid-badge" title="Paid out via bank export on ${esc(fmtD(l.paid_at))}. Kept for the record — it can't be selected or re-exported.">✓ Paid on ${esc(fmtD(l.paid_at))}</span>`
-      : '';
-    // An advance already paid against this lot. Unlike the paid stamp it does
-    // NOT lock the row: the remainder is still owed, still selectable and
-    // still exportable — the Payable column simply already shows it net.
-    const advance = Number(l.advance) || 0;
-    // This lot's payable BEFORE its advance — what the advance was measured
-    // against, and what the badges and the Payable cell both quote.
-    const gross = _payLwGross(l);
-    const advBadge = advance > 0
-      ? ` <span class="paylw-adv-badge" title="Advance of ₹${esc(fmtI(advance, 2))} paid on ${esc(fmtD(l.advance_at))}. It is already deducted from this lot's Payable and from its line in the bank-payment export.">💰 Advance ₹${esc(fmtI(advance, 2))} on ${esc(fmtD(l.advance_at))}</span>`
-      : '';
-    // Entered, not priced yet. Listed so the advance paid right after lot entry
-    // can be recorded against it; it has no payable, so it cannot be exported
-    // or marked paid until the price arrives.
-    const unpricedBadge = (unpriced && !isPaid)
-      ? ` <span class="paylw-unpriced-badge" title="This lot has no price yet, so there is nothing to pay out and it cannot be selected for a bank-payment export. An advance CAN be recorded against it — use Pay Advance. It becomes payable once the price import runs.">⏳ Not priced yet</span>`
-      : '';
-    // An advance that the price then came in UNDER. The payable is floored at
-    // 0, so without this the overpayment would be invisible — and it is money
-    // the office has to get back from the seller.
-    const over = Number(l.over_advance) || 0;
-    const overBadge = (over > 0 && !isPaid)
-      ? ` <span class="paylw-over-badge" title="The advance of ₹${esc(fmtI(advance, 2))} is more than this lot's final payable of ₹${esc(fmtI(gross, 2))} — ₹${esc(fmtI(over, 2))} was overpaid and has to be recovered from the seller.">⚠ Over-advanced ₹${esc(fmtI(over, 2))}</span>`
-      : '';
-    // Admin-only escape hatch: clear the paid stamp so the lot becomes
-    // selectable and exportable again (e.g. an export that had to be redone).
-    const undoBtn = (isPaid && window._userRole === 'admin')
-      ? ` <button class="btn btn-o" style="padding:1px 7px;font-size:10.5px;font-weight:600;margin-left:4px" onclick="payLwUnmarkPaid(${l.id}, ${esc(JSON.stringify(String(l.name || '')))})" title="Admin: undo the paid stamp so this lot can be selected and exported again">↩ Undo</button>`
-      : '';
-    // Remove this lot's advance in one click, rather than opening Pay Advance
-    // and blanking the box. Only on UNPAID rows: a settled lot has already had
-    // its advance netted off the payment that went out, so the server refuses
-    // to clear it until the paid stamp is undone — offering the button there
-    // would only produce that error.
-    const undoAdvBtn = (advance > 0 && !isPaid)
-      ? ` <button class="btn btn-o needs-lot-write" style="padding:1px 7px;font-size:10.5px;font-weight:600;margin-left:4px;color:#B45309;border-color:#FDE68A" onclick="payLwUndoAdvance(${l.id}, ${esc(JSON.stringify(String(l.name || '')))})" title="Remove this lot's advance. Its Payable goes back up by ₹${esc(fmtI(advance, 2))}.">↩ Undo advance</button>`
-      : '';
-    // Stored stock, not a lot awaiting a price. Without the badge an operator
-    // reads "awaiting price" on goods that were never put up for sale and goes
-    // looking for the missing price. The Godown screen is where it is managed.
-    const godownBadge = Number(l.godown)
-      ? ' <span style="font-size:9px;font-weight:800;background:#14b8a6;color:#fff;padding:1px 5px;border-radius:8px;vertical-align:middle;letter-spacing:.3px" title="Godown storage — not auctioned. Manage it on the Godown screen.">GODOWN</span>'
-      : '';
-    const ticked = (!isPaid && _payLwState.selected.has(l.id)) ? ' checked' : '';
-    // A paid row's box means something different from an unpaid one's: it picks
-    // the lot for "↩ Undo selected", not for the export. It feeds its own set
-    // (selectedPaid) and only admins get it, matching the per-row Undo button
-    // and the server's requireAdmin on unmark-paid. For everyone else the box
-    // stays the disabled "already paid" lock it has always been.
-    const paidTicked = _payLwState.selectedPaid.has(l.id) ? ' checked' : '';
-    const cb = isPaid
-      ? (window._userRole === 'admin'
-          ? `<input type="checkbox" class="paylw-cb-paid" data-id="${l.id}"${paidTicked} onchange="payLwTickPaid(${l.id}, this.checked)" title="Admin: tick to undo this lot's paid stamp with &quot;Undo selected&quot;" style="cursor:pointer;width:15px;height:15px;accent-color:var(--spice-chili)">`
-          : `<input type="checkbox" disabled title="Already paid — locked out of selection" style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`)
-      // An unpriced lot has no payable, so the box would arm an export line of
-      // ₹0.00 and a paid stamp on an unsettled lot. Locked, and it says why —
-      // Pay Advance is the one thing this row IS for.
-      : unpriced
-        ? `<input type="checkbox" disabled title="Not priced yet — there is nothing to export or mark paid. Use Pay Advance to record an advance against it." style="width:15px;height:15px;cursor:not-allowed;opacity:.5">`
-        : `<input type="checkbox" class="paylw-cb" data-id="${l.id}"${ticked} onchange="payLwTick(${l.id}, this.checked)" style="cursor:pointer;width:15px;height:15px">`;
-    // Payable is reported NET of the advance. When there is one, the gross it
-    // was taken off is shown underneath — a bare net figure that no longer
-    // matches the lot's amount reads as an error rather than as a part payment.
-    // An unpriced lot has no payable at all, and a 0.00 there would read as
-    // "settled" rather than "not known yet", so it says so in words.
-    const payableCell = unpriced
-      ? `<span style="font-weight:400;font-size:11px;color:var(--text3)">awaiting price</span>`
-      : advance > 0
-        ? `${fmtI(Number(l.payable) || 0, 2)}`
-          + `<div style="font-weight:400;font-size:10.5px;color:var(--text3)">of ₹${fmtI(gross, 2)}</div>`
-        : fmtI(Number(l.payable) || 0, 2);
-    return `<tr${rowCls}${rowStyle}>
-      <td style="text-align:center">${cb}</td>
-      <td>${esc(l.name || '')}${godownBadge}${paidBadge}${unpricedBadge}${advBadge}${overBadge}${undoBtn}${undoAdvBtn}</td>
-      <td style="font-family:monospace;font-weight:600;${Number(l.godown) ? 'color:#0f766e' : ''}">${esc(String(l.lot_no || ''))}</td>
-      <td style="text-align:right">${fmtI(Number(l.qty) || 0, 3)}</td>
-      <td>${esc(l.branch || '')}</td>
-      <td><div style="display:flex;gap:6px;align-items:center">${isPaid ? '<span style="color:var(--text3);font-size:11.5px">—</span>' : (bankCell + addBtn)}</div></td>
-      <td style="text-align:right;font-weight:600;color:#B45309">${advance > 0 ? fmtI(advance, 2) : '<span style="color:var(--text3);font-weight:400">—</span>'}</td>
-      <td style="text-align:right;font-weight:700;color:var(--spice-cardamom-dk)">${payableCell}</td>
-    </tr>`;
-  }).join('');
+  // One row per LOT, or — when the Purchase type filter is on URD — one row
+  // per SELLER with its lots folded underneath. URD sellers are paid as a
+  // party (one Bill of Supply, one payment), so that is how the screen
+  // lists them; RD sellers are billed and paid lot by lot.
+  const rows = _payLwGrouped()
+    ? _payLwGroupRows(canWrite)
+    : _payLwSortedLots().map(l => _payLwLotRow(l, canWrite)).join('');
   body.innerHTML = missingHtml + `
     <div class="paylw-scroll">
       <table class="paylw-table" style="width:100%">
         <thead><tr>
           <th style="width:36px;text-align:center"><input type="checkbox" id="paylw-cb-all" onchange="payLwTickAll(this.checked)" title="Select / clear every payable lot" style="cursor:pointer;width:15px;height:15px"></th>
-          ${_payLwTh('seller', 'Seller')}${_payLwTh('lot', 'Lot')}<th style="text-align:right">Qty</th>${_payLwTh('branch', 'Branch')}
+          ${_payLwTh('seller', 'Seller')}${_payLwGrouped() ? '<th>Lots</th>' : _payLwTh('lot', 'Lot')}<th style="text-align:right">Qty</th>${_payLwTh('branch', 'Branch')}
           <th style="min-width:320px">Bank</th>
           <th style="text-align:right" title="Advance already paid against this lot — already deducted from the Payable beside it">Advance</th>
           <th style="text-align:right">Payable</th>
@@ -44269,7 +44553,33 @@ function payLwClearSelection() {
 }
 // Repaint the selection line, the header box's tri-state, and the export
 // button's count — the three places that answer "what will I be paying?".
+// Sync the seller-wise view's group boxes to the lot ids actually ticked.
+// A group is checked when every payable lot under it is selected and
+// indeterminate when only some are — `indeterminate` cannot be expressed in
+// the rendered HTML, so it is set here, after each render.
+function _payLwSyncGroupBoxes() {
+  if (!_payLwGrouped()) return;
+  const groups = _payLwGroups();
+  document.querySelectorAll('#paylw-body .paylw-cb-group').forEach(cb => {
+    const g = groups.find(x => x.key === cb.getAttribute('data-key'));
+    if (!g) return;
+    const sel = _payLwGroupSelectable(g).filter(l => _payLwState.selected.has(l.id)).length;
+    const n = _payLwGroupSelectable(g).length;
+    cb.checked = n > 0 && sel === n;
+    cb.indeterminate = sel > 0 && sel < n;
+  });
+  document.querySelectorAll('#paylw-body .paylw-cb-gpaid').forEach(cb => {
+    const g = groups.find(x => x.key === cb.getAttribute('data-key'));
+    if (!g) return;
+    const paid = g.lots.filter(l => l.paid_at);
+    const sel = paid.filter(l => _payLwState.selectedPaid.has(l.id)).length;
+    cb.checked = paid.length > 0 && sel === paid.length;
+    cb.indeterminate = sel > 0 && sel < paid.length;
+  });
+}
+
 function _payLwRefreshSelection() {
+  _payLwSyncGroupBoxes();
   const sel = _payLwState.lots.filter(l => _payLwState.selected.has(l.id));
   const undoSel = _payLwState.lots.filter(l => _payLwState.selectedPaid.has(l.id));
   // The header box governs the export selection, so its tri-state is measured

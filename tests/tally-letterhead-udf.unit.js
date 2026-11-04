@@ -362,7 +362,13 @@ check('buildSalesIspRows maps it onto row.sbl', /sbl:\s*r\.buyer_sbl/.test(build
 // block at the first literal "Z" in the text (there is one in the GSTIN).
 {
   const defined = new Set();
-  const BUILTIN = new Set(['issales']);
+  // Formulas TALLY defines, not this file. Referencing one is a calculated
+  // risk, not an error: if it does not resolve in a custom report it blanks
+  // its whole expression (the very failure this rule exists for), so each one
+  // must sit ALONE on a diagnostic line where a blank costs nothing else.
+  //   eInvoiceQRCValue — Tally's own e-invoice QR payload, probed on the
+  //   e-Way strip to see whether it beats $IRNQRCode here.
+  const BUILTIN = new Set(['issales', 'einvoiceqrcvalue']);
   let inFormula = false;
   for (const line of tdlLines) {
     const def = line.match(/^\[([A-Za-z]+):\s*([^\]]*)\]/);
@@ -402,27 +408,83 @@ check('buildSalesIspRows maps it onto row.sbl', /sbl:\s*r\.buyer_sbl/.test(build
     /QRCode\s*:\s*@@SpiceQrValue\s*:\s*Yes/.test(body));
 }
 
-// RULE 12 — the e-way-bill candidate chain must stay wired.
-// The number's Tally field name is unknown, so every candidate SpiceEwayC<n>
-// is tried in turn and the first non-empty one wins. A candidate that is
-// DEFINED but left out of the chain is never evaluated — it silently proves
-// nothing, which is the whole failure mode this construct exists to avoid.
-// Pinned here because the chain is exactly the kind of thing a later edit
-// extends by adding C6 and forgetting the matching pick line.
+// RULE 15 (was 12) — only VERIFIED field names may feed the printed cells.
+//
+// The rule this replaces assumed a wrong field name was free: it would "yield
+// an empty value", so candidates could be chained and the right one would win.
+// Voucher RNS/I-10 proved the opposite on 2026-10-30. Eight candidate names
+// were printed side by side; seven of their lines did not appear on the page
+// AT ALL — not the value, not the bracket, not the label. An unknown $Field
+// behaves exactly like an undefined @@formula (rule 10): it kills the whole
+// expression, literals included.
+//
+// So a guess costs a printed line, the chain could never have worked (it died
+// at its first link, $EWayBillNo), and the invoice showed a bare "e-Way Bill
+// No" with not even its ": ". Only names seen to print on the diagnostic strip
+// may appear in an expression that a real document depends on.
 {
-  const cands = [...tdl.matchAll(/^\s{2,}(SpiceEwayC\d+)\s*:/gm)].map(m => m[1]);
-  check('e-way candidate names were found', cands.length >= 2, 'found ' + cands.length);
+  const VERIFIED = ['$EWBNo'];   // add only after its probe line has printed
+  const m = /\n\s{2,}SpiceEwayNo\s*:\s*(.+)/.exec(tdl);
+  check('the e-way formula exists', !!m);
+  if (m) {
+    const expr = m[1].trim();
+    const fields = [...expr.matchAll(/\$[A-Za-z][A-Za-z0-9_]*/g)].map(x => x[0]);
+    const unverified = fields.filter(f => !VERIFIED.includes(f));
+    check('@@SpiceEwayNo reads only field names proven to resolve',
+      unverified.length === 0, unverified.join(', ') + ' in: ' + expr);
+    // A fallback chain is the specific shape that hid the failure: the dead
+    // first link took the whole expression with it, so nothing printed and
+    // nothing said why.
+    check('...and reads ONE of them, with no fallback chain',
+      !/\bIf\b|\bElse\b|@@Spice/i.test(expr), expr);
+  }
 
-  const chain = tdl.match(/^\s{2,}SpiceEway(?:P\d+|No)\s*:.*$/gm) || [];
-  const chained = new Set();
-  for (const ln of chain) for (const m of ln.matchAll(/@@(SpiceEwayC\d+)/g)) chained.add(m[1]);
-  const unchained = cands.filter(c => !chained.has(c));
-  check('every e-way candidate is referenced by the pick chain',
-    unchained.length === 0, unchained.join(', '));
-
-  // The last link must be SpiceEwayNo — that is what the printed cell reads.
   check('the printed e-Way Bill No cell reads the resolved value',
-    /\[Field: SpiceFldEInvEway\][\s\S]{0,400}?Set as\s*:\s*": "\s*\+\s*@@SpiceEwayNo/.test(tdl));
+    /\[Field: SpiceFldEInvEway\][\s\S]{0,600}?Set as\s*:\s*": "\s*\+\s*@@SpiceEwayNo/.test(tdl));
+}
+
+// RULE 13 — band colours are NAMED, and no `[Color: …]` definition exists.
+// The custom `[Color: SpiceBandGreen]` block (Red/Green/Blue attributes)
+// raised a definition error on the live TallyPrime 7.1 install, and a file
+// that will not load prints NOTHING — it took the e-Way Bill diagnostic strip
+// down with it and cost a trip to the machine for a cosmetic tint.
+//
+// The proven shape is the one the site's own Customized Invoice.txt has been
+// printing with for years: a bare, space-separated palette name
+// (`Print BG : Light Green`), never a quoted string and never a colour defined
+// in the add-on. One-word spellings like `LightGreen` are guesses from the
+// same batch as the custom colour and are not evidence of anything.
+{
+  const colorDefs = [...tdl.matchAll(/^\[#?Colou?r:\s*([^\]]+)\]/gm)].map(m => m[1].trim());
+  check('no [Color:] definition is declared in the add-on',
+    colorDefs.length === 0, colorDefs.join(', '));
+
+  const badTint = [];
+  for (const m of tdl.matchAll(/^\s*Local\s*:\s*Field\s*:\s*Default\s*:\s*Print BG\s*:\s*(.+)$/gm)) {
+    const colour = m[1].trim();
+    // A quoted string is the trap that made `Print BG : @@SpiceBandBG` render
+    // nothing; a one-word run-together name is the unproven-guess shape.
+    if (/^["']/.test(colour) || !/\s/.test(colour)) badTint.push(colour);
+  }
+  check('every band tint names a bare, space-separated palette colour',
+    badTint.length === 0, badTint.join(', '));
+}
+
+// RULE 14 — the diagnostic control line is a PURE LITERAL.
+// A control line exists to prove the strip reached the page. The first
+// version concatenated @@SpiceCoName, $VoucherNumber and an If/Then/Else, so
+// any one of them failing would have blanked the literal text too (rule 10) —
+// the line whose whole job is to say "the mechanism works" would have gone
+// silent while the mechanism worked. That is not a control, and a trip to the
+// Tally machine is the price of finding out.
+{
+  const m = /\[Field: SpiceFldEwbCtl\][\s\S]*?\n\s*Set as\s*:\s*(.+)/.exec(tdl);
+  check('the control field exists', !!m);
+  if (m) {
+    const expr = m[1].trim();
+    check('the control line is a quoted literal with no expression in it',
+      /^"[^"]*"$/.test(expr), expr);
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

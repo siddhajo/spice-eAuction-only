@@ -18489,7 +18489,11 @@ function parseLotSearch(raw) {
 
 function explainMissingLots(db, auctionId, lotTokens, ctx) {
   if (!lotTokens || !lotTokens.length) return [];
-  const { seller, link, status, finalIds } = ctx;
+  const { seller, link, status, ptype, finalIds } = ctx;
+  // The same rule as calculations.hasValidGstinSql('cr'), asked in JS because
+  // the lots being explained here never reached the caller's result set, so
+  // there is no `is_rd` on them to read.
+  const isRdLot = (l) => hasValidGstin(l.cr);
   // Which status bucket a lot that did NOT come back falls in — the same rule
   // the search itself applies, asked directly because these lots are not in
   // the caller's result set to read it off. Only consulted when the status
@@ -18523,7 +18527,7 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
     // be reported missing merely because of leading-zero spelling.
     const isNum = /^\d+$/.test(token);
     const rows = db.all(
-      `SELECT id, lot_no, name, code, amount, paid, paid_at, bank_id, trader_id
+      `SELECT id, lot_no, name, code, amount, paid, paid_at, bank_id, trader_id, cr
          FROM lots
         WHERE auction_id = ?
           AND (TRIM(lot_no) = ?${isNum ? ' OR CAST(lot_no AS INTEGER) = ?' : ''})
@@ -18549,6 +18553,9 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
     // Checked BEFORE the link fallback: with a status filter on, that fallback
     // would blame the bank-account toggle for an exclusion it had no part in.
     else if (status && status !== 'all' && lotStatus(l) !== status) reason = 'status_filter';
+    // Before the link fallback, for the reason the status filter is: the
+    // bank-account toggle had no part in this exclusion.
+    else if (ptype && ptype !== 'all' && (ptype === 'rd') !== isRdLot(l)) reason = 'ptype_filter';
     else reason = 'link_filter';
     const entry = { lot: String(l.lot_no || token).trim(), reason, seller: l.name || '' };
     // For either toggle, say which side the lot is on so the fix is obvious.
@@ -18559,6 +18566,10 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
     if (reason === 'status_filter') {
       entry.status = lotStatus(l);
       entry.wanted = status;
+    }
+    if (reason === 'ptype_filter') {
+      entry.ptype = isRdLot(l) ? 'rd' : 'urd';
+      entry.wanted = ptype;
     }
     out.push(entry);
   }
@@ -18580,6 +18591,14 @@ function explainMissingLots(db, auctionId, lotTokens, ctx) {
 //   lots    comma-separated lot numbers. Matched both verbatim and
 //           numerically, so "24" finds lot "024" and vice versa.
 //   link    all (default) | linked | unlinked — see routeOfLot below.
+//   ptype   all (default) | rd | urd — which PURCHASE TYPE the lot's seller
+//           falls under. A seller holding a full-format GSTIN in `cr` buys on
+//           an RD Purchase Invoice; everyone else is URD (agriculturist, Bill
+//           of Supply). Same predicate the purchase and bill generators gate
+//           their eligible-lot queries on — calculations.hasValidGstinSql —
+//           so this screen and those documents can never disagree about which
+//           side a seller is on. The client renders `urd` seller-wise and the
+//           other two lot-wise; the SERVER only filters.
 //   status  all (default) | paid | advance | unpaid — where the lot stands in
 //           the payment run. The three buckets PARTITION the result: a lot is
 //           `paid` once it carries a paid stamp (whether or not an advance was
@@ -18613,6 +18632,10 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
     if (!['all', 'paid', 'advance', 'unpaid'].includes(status)) {
       return res.status(400).json({ error: 'status must be one of: all, paid, advance, unpaid' });
     }
+    const ptype = String(req.query.ptype || 'all').trim().toLowerCase();
+    if (!['all', 'rd', 'urd'].includes(ptype)) {
+      return res.status(400).json({ error: 'ptype must be one of: all, rd, urd' });
+    }
     // Lot tokens: a comma/whitespace list that may mix single lots and ranges,
     // e.g. "010-020, 021,022". Ranges are expanded for matching; only the
     // individually-typed lots feed the missing-lot report.
@@ -18628,6 +18651,12 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       `(l.paid IS NULL OR l.paid = '')`,
     ];
     const params = [auctionId];
+    // RD / URD split. The REAL `cr` on purpose, never effectiveGradeCrSql():
+    // a dummy seller masks a lot on the e-Auction CSV and Form C only, and the
+    // money still goes to the real party — so a mask must never move a lot
+    // between the two payment runs.
+    if (ptype === 'rd')  where.push(hasValidGstinSql('l.cr'));
+    if (ptype === 'urd') where.push(`NOT ${hasValidGstinSql('l.cr')}`);
     if (seller) {
       // Name substring, or — when the text reads as a phone number — the
       // seller's number, digits-only (so "+91 97907 44444", "97907-44444" and
@@ -18674,6 +18703,13 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       `SELECT l.id, l.lot_no, l.name, l.trader_id, l.branch, l.qty,
               l.balance AS payable, l.amount, l.bank_id, l.immediate_payment,
               l.locked_at,
+              -- Which purchase type this lot's seller falls under, decided
+              -- once here so the client never re-implements the rule.
+              -- 1 = RD (registered dealer, Purchase Invoice), 0 = URD
+              -- (agriculturist, Bill of Supply). Emitted on every row whatever
+              -- ?ptype asked for, so a mixed 'all' listing can still badge
+              -- each row for what it is.
+              CASE WHEN ${hasValidGstinSql('l.cr')} THEN 1 ELSE 0 END AS is_rd,
               -- Godown rows are listed here deliberately: an advance against
               -- stored stock is paid through this very screen, and the payable
               -- export can never pick one up (it needs amount > 0). The flag
@@ -18818,7 +18854,7 @@ app.get('/api/payments/lots/:auctionId', requireView, (req, res) => {
       // not in `lots` — "001 is withdrawn" beats an empty table. Only the
       // individually-typed lots are explained; gaps inside a range are not
       // flagged as missing.
-      missing: explainMissingLots(db, auctionId, explicitTokens, { seller, link, status, finalIds }),
+      missing: explainMissingLots(db, auctionId, explicitTokens, { seller, link, status, ptype, finalIds }),
     });
   } catch (e) {
     console.error('lot-wise payments search error:', e);
