@@ -2099,7 +2099,7 @@ async function exportDeliveryChalanRegister(db, opts = {}) {
     { header: 'CHALAN NO', key: 'chalan_no', width: 16 },
     { header: 'DATE',      key: 'date',      width: 12 },
     { header: 'TIME',      key: 'time',      width: 9  },
-    { header: 'TNO',       key: 'tno',       width: 6  },
+    { header: 'ANO',       key: 'tno',       width: 6  },
     { header: 'BRANCH',    key: 'branch',    width: 14 },
     { header: 'VEHICLE',   key: 'veh',       width: 13 },
     { header: 'MODE',      key: 'mode',      width: 11 },

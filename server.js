@@ -8934,6 +8934,98 @@ app.get('/api/auctions/:id(\\d+)/arrivals-export', requireExport, async (req, re
 // to surface it (HTTP 400 for direct reassign, or a denial reason when an
 // operator's reassign request is approved). `actor` is {id, username} for
 // the reassign_log audit row.
+// ── Move lot NUMBERS between branch allocations ──────────────────────────
+// The allocation surgery, on its own, with no policy attached: carve the
+// moving lot numbers out of whatever ranges hold them today and give the
+// destination branch one tidy set of ranges covering them.
+//
+// Two callers with opposite rules about WHICH lots may move share this:
+//   • applyLotReassignment() moves only FREE numbers — nothing booked, and
+//     every number must already be allocated somewhere.
+//   • bulk-branch moves BOOKED lots, whose numbers may never have been
+//     allocated at all (hand-entered, or a trade that skipped allocation).
+// The surgery is identical either way, and it must stay identical: two
+// re-cutters would drift and leave a trade whose depots disagree about which
+// numbers they hold. The policy lives in the callers; only the cutting lives
+// here.
+//
+// `moving` is a list of lot numbers. Returns what was found and done:
+//   bySource    Map(branchName → [lot numbers]) for the covered ones
+//   notCovered  moving lots no range held — added to the destination anyway,
+//               since the number does now belong to that depot
+// Caller decides whether `notCovered` is an error (it is, for a free-number
+// move) or ordinary (it is, for a booked-lot move).
+function recutAllocations(db, auctionId, moving, toBranch) {
+  const lotKey = (l) => { const p = parseLotNo(l); return p ? p.prefix + ' ' + p.num : String(l || '').trim(); };
+  const movingKeys = new Set(moving.map(lotKey));
+  const allRanges = db.all(
+    'SELECT id, branch, start_lot, end_lot FROM lot_allocations WHERE auction_id = ?', [auctionId]);
+  // Adopt the spelling this trade's allocations already use for the
+  // destination. Branch names reach us from several places with different
+  // casing (Settings stores "Erode", configuredBranches uppercases it, the
+  // mobile shim uppercases too), and inserting a second spelling would show
+  // up as two depots in allocation stats for the rest of the trade's life.
+  const normBr = (s) => String(s || '').trim().toUpperCase();
+  {
+    const canon = allRanges.map(r => r.branch).find(b => normBr(b) === normBr(toBranch));
+    if (canon) toBranch = canon;
+  }
+  const lotsByRangeId = new Map();
+  const ownerOf = new Map();        // lotKey → { branch, rangeId }
+  for (const r of allRanges) {
+    let lots = [];
+    try { lots = enumerateRange(r.start_lot, r.end_lot); } catch (_) {}
+    lotsByRangeId.set(r.id, lots);
+    for (const l of lots) ownerOf.set(lotKey(l), { branch: r.branch, rangeId: r.id });
+  }
+  // Split each affected range around the removed lots: delete it and
+  // re-insert the surviving contiguous chunks, under ITS OWN branch (which is
+  // why this walks every range and not just one branch's). Untouched ranges
+  // are left be.
+  for (const r of allRanges) {
+    const lots = lotsByRangeId.get(r.id) || [];
+    if (!lots.some(l => movingKeys.has(lotKey(l)))) continue;
+    db.run('DELETE FROM lot_allocations WHERE id = ?', [r.id]);
+    const keep = lots.filter(l => !movingKeys.has(lotKey(l)));
+    for (const ch of chunkLots(keep)) {
+      db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
+        [auctionId, r.branch, ch.start, ch.end]);
+    }
+  }
+  // Dest branch gains the moved lots — collapsed over everything it will then
+  // hold, not just over this move. Chunking the moving set alone left the
+  // destination with ranges that touch but are stored apart: move 003-004
+  // across, then 005, and it holds "003-004" and "005" where "003-005" says
+  // the same thing. Two moves that happen to be adjacent are not two facts.
+  // So re-cut the destination whole: what survived the splits above, plus
+  // what is arriving.
+  const destLots = [];
+  const seen = new Set();
+  for (const r of db.all(
+    'SELECT start_lot, end_lot FROM lot_allocations WHERE auction_id = ? AND branch = ?',
+    [auctionId, toBranch])) {
+    let lots = [];
+    try { lots = enumerateRange(r.start_lot, r.end_lot); } catch (_) {}
+    for (const l of lots) if (!seen.has(lotKey(l))) { seen.add(lotKey(l)); destLots.push(l); }
+  }
+  for (const l of moving) if (!seen.has(lotKey(l))) { seen.add(lotKey(l)); destLots.push(l); }
+  db.run('DELETE FROM lot_allocations WHERE auction_id = ? AND branch = ?', [auctionId, toBranch]);
+  const destChunks = chunkLots(destLots);
+  for (const ch of destChunks) {
+    db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
+      [auctionId, toBranch, ch.start, ch.end]);
+  }
+  const bySource = new Map();
+  const notCovered = [];
+  for (const l of moving) {
+    const own = ownerOf.get(lotKey(l));
+    if (!own) { notCovered.push(l); continue; }
+    if (!bySource.has(own.branch)) bySource.set(own.branch, []);
+    bySource.get(own.branch).push(l);
+  }
+  return { bySource, notCovered, destChunks, ownerOf, lotKey };
+}
+
 function applyLotReassignment(db, auctionId, fields, actor) {
   fields = fields || {};
   let from_branch = String(fields.from_branch || '').trim();
@@ -9018,14 +9110,16 @@ function applyLotReassignment(db, auctionId, fields, actor) {
   // top rather than driving the query, because a typed list of lot numbers
   // can legitimately straddle several depots and the operator moving them is
   // not thinking in depots at all.
+  //
+  // Read here only to VALIDATE against (who owns what, is anything
+  // unallocated, is anything already in the destination). The cutting itself
+  // is recutAllocations(), called once the checks below have passed.
   const allRanges = db.all(
     'SELECT id, branch, start_lot, end_lot FROM lot_allocations WHERE auction_id = ?', [auctionId]);
-  const lotsByRangeId = new Map();
   const ownerOf = new Map();        // lotKey → { branch, rangeId }
   for (const r of allRanges) {
     let lots = [];
     try { lots = enumerateRange(r.start_lot, r.end_lot); } catch (_) {}
-    lotsByRangeId.set(r.id, lots);
     for (const l of lots) ownerOf.set(lotKey(l), { branch: r.branch, rangeId: r.id });
   }
 
@@ -9063,42 +9157,21 @@ function applyLotReassignment(db, auctionId, fields, actor) {
     return { ok: false, error: `Every lot selected is already allocated to ${to_branch}.` };
   }
 
-  // Split each affected range around the removed lots: delete it and
-  // re-insert the surviving contiguous chunks, under ITS OWN branch (which
-  // is why this walks every range and not just one branch's). Untouched
-  // ranges are left be.
-  for (const r of allRanges) {
-    const lots = lotsByRangeId.get(r.id) || [];
-    if (!lots.some(l => movingKeys.has(lotKey(l)))) continue;
-    db.run('DELETE FROM lot_allocations WHERE id = ?', [r.id]);
-    const keep = lots.filter(l => !movingKeys.has(lotKey(l)));
-    for (const ch of chunkLots(keep)) {
-      db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
-        [auctionId, r.branch, ch.start, ch.end]);
-    }
-  }
-
-  // Dest branch gains the moved lots, collapsed into contiguous chunks over
-  // the WHOLE moving set — chunking per source would leave the destination
-  // holding two ranges that touch (010-015 from A, 016-020 from B) where one
-  // says the same thing.
-  const destChunks = chunkLots(moving);
-  for (const ch of destChunks) {
-    db.run('INSERT INTO lot_allocations (auction_id, branch, start_lot, end_lot) VALUES (?, ?, ?, ?)',
-      [auctionId, to_branch, ch.start, ch.end]);
-  }
+  // Cut the ranges. Shared with the booked-lot mover — see recutAllocations().
+  // Every moving lot is known to be covered by now (notCovered was refused
+  // above), so the audit below can read bySource without a fallback.
+  const { bySource } = recutAllocations(db, auctionId, moving, to_branch);
+  // The shape of THIS move, for the message below. Deliberately not the
+  // destination's chunks: recutAllocations re-cuts the destination whole, so
+  // its ranges describe everything that depot now holds, which is a different
+  // sentence from "these are the lots you just moved".
+  const movedChunks = chunkLots(moving);
 
   // The audit log is written per SOURCE branch, because that is the question
   // it answers ("where did this lot come from?") — a dest chunk that merged
   // two sources could not say. Chunked within each source so the
   // "reassigned" tile overlay and the mobile alloc_rev marker still cover
   // exactly the lots that moved.
-  const bySource = new Map();
-  for (const l of moving) {
-    const br = ownerOf.get(lotKey(l)).branch;
-    if (!bySource.has(br)) bySource.set(br, []);
-    bySource.get(br).push(l);
-  }
   for (const [srcBranch, lots] of bySource) {
     for (const ch of chunkLots(lots)) {
       try {
@@ -9123,8 +9196,8 @@ function applyLotReassignment(db, auctionId, fields, actor) {
   const tail = alreadyThere.length
     ? ` · ${alreadyThere.length} already in ${to_branch}, left alone`
     : '';
-  const message = (destChunks.length === 1 && rangeSize(destChunks[0].start, destChunks[0].end) === moving.length && bySource.size === 1)
-    ? `Lots ${destChunks[0].start}-${destChunks[0].end} reassigned from ${srcLabel} to ${to_branch}${tail}`
+  const message = (movedChunks.length === 1 && rangeSize(movedChunks[0].start, movedChunks[0].end) === moving.length && bySource.size === 1)
+    ? `Lots ${movedChunks[0].start}-${movedChunks[0].end} reassigned from ${srcLabel} to ${to_branch}${tail}`
     : `Moved ${moving.length} lot(s) from ${srcLabel} to ${to_branch}${tail}`;
   return {
     ok: true, allocations: allocs, message, moved: moving.length,
@@ -12239,6 +12312,230 @@ app.post('/api/lots/bulk-grade', requireLotWrite, (req, res) => {
     res.json({ success: true, updated, grade: g, skipped_locked: lockedIds.length });
   } catch (e) {
     res.status(500).json({ error: 'Bulk grade update failed: ' + (e.message || e) });
+  }
+});
+
+// What a branch move WOULD do. Read-only — nothing is written.
+//
+// Moving booked lots re-cuts a trade's depot ranges, and the operator cannot
+// see from the Lots table which depots the selection is spread across or
+// which of them carry documents already. So the modal asks this first and
+// shows it, rather than offering a confirm that just counts rows.
+app.post('/api/lots/bulk-branch/preview', requireViewOrLotEntry, (req, res) => {
+  try {
+    const { ids, branch } = req.body || {};
+    const numericIds = (Array.isArray(ids) ? ids : []).map(x => Number(x)).filter(Number.isFinite);
+    if (!numericIds.length) return res.status(400).json({ error: 'ids[] is required' });
+    const db = getDb();
+    const wanted = String(branch == null ? '' : branch).trim().toUpperCase();
+    const configured = configuredBranches(db);
+    const canonical = configured.find(b => b === wanted) || '';
+
+    const { allowed, skipped } = filterLockedLotIds(db, numericIds);
+    const CHUNK = 500;
+    const rows = [];
+    for (let i = 0; i < allowed.length; i += CHUNK) {
+      const slice = allowed.slice(i, i + CHUNK);
+      const ph = slice.map(() => '?').join(',');
+      rows.push(...(db.all(
+        `SELECT id, auction_id, TRIM(COALESCE(lot_no,'')) AS lot_no,
+                TRIM(COALESCE(branch,'')) AS branch,
+                TRIM(COALESCE(invo,'')) AS invo,
+                COALESCE(amount,0) AS amount
+           FROM lots WHERE id IN (${ph})
+          ORDER BY CAST(lot_no AS INTEGER), lot_no`, slice) || []));
+    }
+    const toMove = canonical
+      ? rows.filter(r => String(r.branch || '').toUpperCase() !== canonical)
+      : rows;
+    const from = {};
+    for (const r of toMove) {
+      const b = r.branch || '(none)';
+      if (!from[b]) from[b] = { branch: b, lots: 0, nos: [] };
+      from[b].lots++;
+      if (from[b].nos.length < 40) from[b].nos.push(r.lot_no);
+    }
+    res.json({
+      selected: numericIds.length,
+      movable: toMove.length,
+      already_there: rows.length - toMove.length,
+      skipped_locked: skipped.length,
+      invoiced: toMove.filter(r => r.invo).length,
+      priced: toMove.filter(r => Number(r.amount) > 0).length,
+      branch: canonical,
+      branches: configured,
+      from: Object.values(from).sort((a, b) => b.lots - a.lots),
+      // The lot numbers, collapsed the way the allocation ranges will be —
+      // "024-026, 031" is what the operator is about to hand the new depot.
+      ranges: chunkLots(toMove.map(r => r.lot_no).filter(Boolean))
+        .map(ch => (ch.start === ch.end ? ch.start : `${ch.start}-${ch.end}`)),
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Branch move preview failed: ' + (e.message || e) });
+  }
+});
+
+// ── Move BOOKED lots to a different depot ────────────────────
+// The counterpart to /api/auctions/:id/reassign-lots, which moves lot NUMBERS
+// that nobody has booked yet and refuses anything saved. This moves the lots
+// themselves: rows that already carry a seller, a weight and possibly a price,
+// because the goods turned out to be at a different depot from the one they
+// were entered under.
+//
+// Two things have to move together or the trade ends up inconsistent:
+//   1. `lots.branch` — what every reader keys off. The delivery challan's
+//      printed address, the registers' depot grouping, the Godown sheet, the
+//      branch filters on Price Entry and the checklist all resolve the branch
+//      at read time, so this column IS the move for all of them.
+//   2. `lot_allocations` — which depot OWNS those lot numbers. Leave it and
+//      the trade is split-brained: Lot Entry would go on offering number 024
+//      under the old depot while the booked lot sits under the new one, and
+//      allocation stats would count it twice. The re-cut is shared with the
+//      free-number mover (recutAllocations) so the two can never disagree.
+//
+// `moveAllocations: false` writes the lot column only — for correcting a
+// mis-stamped lot where the depot's number ranges are already right.
+//
+// Locked lots are skipped and counted, as in every other bulk lot action.
+// Invoiced lots are NOT refused: a document already raised keeps the figures
+// it was raised with, and the branch is a fact about where the goods were,
+// which is exactly what the admin is here to correct. The response says how
+// many of the moved lots carry documents so the caller can say so.
+app.post('/api/lots/bulk-branch', requireLotWrite, (req, res) => {
+  try {
+    const { ids, branch, moveAllocations } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids[] is required' });
+    }
+    const numericIds = ids.map(x => Number(x)).filter(Number.isFinite);
+    if (!numericIds.length) {
+      return res.status(400).json({ error: 'ids[] contains no valid numeric ids' });
+    }
+    const db = getDb();
+    // Only a depot the install actually has. lots.branch holds one of these
+    // and nothing else — a free-text branch would silently drop the lot out
+    // of every depot filter in the app.
+    const wanted = String(branch == null ? '' : branch).trim();
+    if (!wanted) return res.status(400).json({ error: 'branch is required' });
+    const configured = configuredBranches(db);
+    const canonical = configured.find(b => b === wanted.toUpperCase());
+    if (!canonical) {
+      return res.status(400).json({
+        error: `"${wanted}" is not one of this install's depots. Configured: ${configured.join(', ') || '(none)'}`,
+      });
+    }
+    const doAlloc = moveAllocations !== false;   // default ON
+
+    const { allowed: mutableIds, skipped: lockedIds } = filterLockedLotIds(db, numericIds);
+    if (!mutableIds.length) {
+      return res.status(400).json({
+        error: 'Every selected lot is locked. Unlock them first (admin) to move them.',
+        skipped_locked: lockedIds.length,
+      });
+    }
+
+    // Read what is actually moving BEFORE the write — the lot numbers drive
+    // the allocation re-cut, and the old branch names are what the result
+    // reports back ("12 from ANAVILASAM, 3 from BODI").
+    const CHUNK = 500;
+    const rows = [];
+    for (let i = 0; i < mutableIds.length; i += CHUNK) {
+      const slice = mutableIds.slice(i, i + CHUNK);
+      const ph = slice.map(() => '?').join(',');
+      rows.push(...(db.all(
+        `SELECT id, auction_id, TRIM(COALESCE(lot_no,'')) AS lot_no,
+                TRIM(COALESCE(branch,'')) AS branch,
+                TRIM(COALESCE(invo,'')) AS invo
+           FROM lots WHERE id IN (${ph})`, slice) || []));
+    }
+    if (!rows.length) return res.status(404).json({ error: 'None of those lots exist' });
+
+    // Already there = nothing to do for that lot. Not an error: a selection
+    // dragged across a table easily includes lots that are already right.
+    const toMove = rows.filter(r => String(r.branch || '').toUpperCase() !== canonical);
+    const already = rows.length - toMove.length;
+    if (!toMove.length) {
+      return res.json({
+        success: true, updated: 0, already_there: already,
+        skipped_locked: lockedIds.length, branch: canonical,
+        message: `All ${already} selected lot(s) are already in ${canonical}.`,
+      });
+    }
+
+    const fromCounts = {};
+    for (const r of toMove) {
+      const b = r.branch || '(none)';
+      fromCounts[b] = (fromCounts[b] || 0) + 1;
+    }
+    const invoiced = toMove.filter(r => r.invo).length;
+
+    // 1. The lot column.
+    let updated = 0;
+    const moveIds = toMove.map(r => r.id);
+    for (let i = 0; i < moveIds.length; i += CHUNK) {
+      const slice = moveIds.slice(i, i + CHUNK);
+      const ph = slice.map(() => '?').join(',');
+      const info = db.run(`UPDATE lots SET branch = ? WHERE id IN (${ph})`, [canonical, ...slice]);
+      if (info && typeof info.changes === 'number') updated += info.changes;
+    }
+
+    // 2. The allocations, per trade — a selection can in principle span
+    //    trades, and allocation ranges are scoped to one.
+    const allocSummary = [];
+    if (doAlloc) {
+      const byAuction = new Map();
+      for (const r of toMove) {
+        if (!r.auction_id || !r.lot_no) continue;
+        if (!byAuction.has(r.auction_id)) byAuction.set(r.auction_id, []);
+        byAuction.get(r.auction_id).push(r.lot_no);
+      }
+      for (const [aid, lotNos] of byAuction) {
+        const uniq = Array.from(new Set(lotNos));
+        const cut = recutAllocations(db, aid, uniq, canonical);
+        allocSummary.push({
+          auction_id: aid,
+          lots: uniq.length,
+          // Numbers no depot had claimed. Not a problem — the number belongs
+          // to the destination now either way — but worth reporting, because
+          // it usually means the trade was never allocated at all.
+          unallocated: cut.notCovered.length,
+          from: Array.from(cut.bySource.entries()).map(([b, l]) => ({ branch: b, lots: l.length })),
+        });
+        // Same audit trail a free-number reassignment leaves, so the two
+        // kinds of move read alike in the log.
+        for (const [srcBranch, lots] of cut.bySource) {
+          for (const ch of chunkLots(lots)) {
+            try {
+              db.run(
+                `INSERT INTO reassign_log
+                   (auction_id, from_branch, to_branch, start_lot, end_lot, user_id, username)
+                 VALUES (?,?,?,?,?,?,?)`,
+                [aid, srcBranch, canonical, ch.start, ch.end,
+                 (req.user && req.user.id) || null, (req.user && req.user.username) || '']
+              );
+            } catch (_) { /* best-effort */ }
+          }
+        }
+      }
+    }
+
+    const fromLabel = Object.entries(fromCounts)
+      .map(([b, n]) => `${b} (${n})`).join(', ');
+    res.json({
+      success: true,
+      updated,
+      branch: canonical,
+      from: fromCounts,
+      already_there: already,
+      skipped_locked: lockedIds.length,
+      invoiced,
+      allocations_moved: doAlloc,
+      allocations: allocSummary,
+      message: `Moved ${updated} lot(s) to ${canonical} from ${fromLabel}`
+             + (doAlloc ? ' — allocations re-cut' : ' — allocations left as they were'),
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Branch move failed: ' + (e.message || e) });
   }
 });
 

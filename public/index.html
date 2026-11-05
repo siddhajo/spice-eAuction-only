@@ -7640,6 +7640,24 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <span aria-hidden="true">↻</span> Change Seller
             <span id="le-change-seller-count" class="le-tb-badge"></span>
           </button>
+          <!-- Move Depot — changes lots.branch on every ticked lot AND re-cuts
+               the trade's allocation ranges so the depot that owns those lot
+               NUMBERS matches. Lives here, beside Change Seller, because both
+               answer the same kind of "this row was entered wrong" question
+               and the operator is already looking at the lots they just typed.
+               (Edit Allocations → Reassign is the other half: it moves FREE
+               lot numbers and refuses anything booked.) -->
+          <!-- No .needs-lot-write here, deliberately, and Change Seller beside
+               it is the same: that class carries
+               `body[data-perm-lot-write="1"] .needs-lot-write{display:…
+               !important}`, which beats the inline display:none and would
+               leave the button permanently visible with nothing ticked.
+               Visibility on this toolbar is leUpdatePrintToolbar's job; the
+               permission is enforced server-side by requireLotWrite. -->
+          <button id="le-change-branch-btn" type="button" onclick="openLotBranchModal()" class="le-toolbar-btn le-tb-secondary" style="display:none" title="Move the ticked lots to another depot — the lot rows and the depot's allocated lot numbers move together">
+            <span aria-hidden="true">🏚</span> Move Depot
+            <span id="le-change-branch-count" class="le-tb-badge"></span>
+          </button>
           <!-- Delivery Challan — the gate pass for the ticked lots. Not a
                receipt and not an invoice: one vehicle, one rate, a bag count
                and a serial out of the install-wide challan book. Gated by
@@ -9386,7 +9404,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
             <span style="font-weight:400;font-size:12px;color:var(--text3)">Form GST Delivery Challan — fill it in on the left, see the paper on the right. Nothing is numbered until you print.</span>
           </h2>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
-            <div class="fg" style="margin:0;min-width:190px"><label>Trade</label>
+            <div class="fg" style="margin:0;min-width:190px"><label>Auction</label>
               <select id="dc-auction" onchange="dcLoadLots()" style="height:38px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px"></select>
             </div>
             <div class="fg" style="margin:0;min-width:180px"><label>Branch</label>
@@ -10226,6 +10244,41 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
      the operator is actually reading were the part that got clipped. Price
      Entry also stacks the Invoice Split and Dummy Code rows underneath, so this
      is the tallest modal of the pair too. -->
+<!-- ══ MOVE LOTS TO ANOTHER DEPOT ════════════════════════════════════
+     The lot rows and the depot's allocated lot NUMBERS move together —
+     leaving one behind splits the trade's view of itself (Lot Entry would go
+     on offering a number under the old depot while the booked lot sits under
+     the new one). The preview is fetched before anything is written, because
+     the operator cannot see from the Lots table which depots their selection
+     is spread across or which of those lots already carry documents. -->
+<div class="modal-bg" id="lot-branch-modal"><div class="modal" style="max-width:720px">
+  <h2>🏚 Move <span id="lbr-count">0</span> lot(s) to another depot</h2>
+  <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.55">
+    Changes the depot on the selected lots and hands those lot numbers to it in the
+    trade's allocations. Every reader resolves the depot when it renders — the
+    delivery challan's address, the registers' depot grouping, the Godown sheet and
+    the branch filters — so this is the whole of the move.
+  </p>
+  <div class="fg">
+    <label>Move to depot</label>
+    <select id="lbr-branch" onchange="lotBranchPreview()" style="width:100%"></select>
+  </div>
+  <div id="lbr-preview" style="margin-top:12px;padding:11px 13px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12.5px;color:var(--text2);line-height:1.7">
+    <span style="color:var(--text3)">Pick a depot to see what will move.</span>
+  </div>
+  <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:12.5px;cursor:pointer">
+    <input type="checkbox" id="lbr-alloc" checked style="width:15px;height:15px;margin-top:2px;cursor:pointer">
+    <span>Also move these lot numbers in the trade's <strong>allocations</strong>
+      <span style="display:block;color:var(--text3);font-size:11.5px">Leave this on unless the depot's number ranges are already correct and only the lot rows are wrong. With it off the two will disagree about who owns these numbers.</span>
+    </span>
+  </label>
+  <div id="lbr-err" style="display:none;margin-top:10px;padding:8px 12px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;font-size:12px;color:var(--spice-chili);white-space:pre-line"></div>
+  <div class="actions">
+    <button class="btn btn-o" onclick="hideModal('lot-branch-modal')">Cancel</button>
+    <button class="btn btn-g" id="lbr-go" onclick="lotBranchApply()">Move lots</button>
+  </div>
+</div></div>
+
 <div class="modal-bg feat-bulk-set-buyer-code" id="bulk-setbuyer-modal"><div class="modal" style="max-width:760px">
   <h2>Set Buyer Code on <span id="bsb-count">0</span> lot(s)</h2>
   <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.5">
@@ -27303,14 +27356,20 @@ function leUpdatePrintToolbar() {
   const badge    = document.getElementById('le-print-selected-count');
   const seBadge  = document.getElementById('le-print-by-seller-count');
   const csBadge  = document.getElementById('le-change-seller-count');
+  const chgBr    = document.getElementById('le-change-branch-btn');
+  const brBadge  = document.getElementById('le-change-branch-count');
   if (!btn) return;
   const ids = (_le.selectedForPrint && _le.selectedForPrint.size) ? _le.selectedForPrint : new Set();
   const n = ids.size;
   btn.style.display = n > 0 ? 'inline-flex' : 'none';
   clr.style.display = n > 0 ? 'inline-flex' : 'none';
   if (chgSel)  chgSel.style.display  = n > 0 ? 'inline-flex' : 'none';
+  // Move Depot follows the selection exactly as Change Seller does — both
+  // rewrite a column on the ticked rows.
+  if (chgBr)   chgBr.style.display   = n > 0 ? 'inline-flex' : 'none';
   if (badge)   badge.textContent   = n;
   if (csBadge) csBadge.textContent = n;
+  if (brBadge) brBadge.textContent = n;
   // Sellers represented in the current selection.
   let sellerCount = 0;
   if (n > 0 && Array.isArray(_le.recentLots)) {
@@ -37487,6 +37546,138 @@ let _bsbSelected = null;       // resolved buyer { code, buyer, buyer1, sale, pl
 let _bsbLotIds   = [];         // lot ids captured at modal open
 let _bsbWired    = false;      // input/blur/key handlers wired once
 let _bsbContext  = 'lots';     // which screen opened the modal: 'lots' | 'pe'
+
+// ── Move ticked lots to another depot ────────────────────────────
+// Two writes that have to happen together: the lots' own `branch` column, and
+// the trade's allocation ranges so the depot that OWNS those numbers matches.
+// See POST /api/lots/bulk-branch.
+let _lbrIds = [];
+// The ticked lots. Lot Entry owns this flow (the toolbar button sits beside
+// Change Seller), so `_le.selectedForPrint` is the selection — the same set
+// Print Selected and Change Seller act on. The Lots screen's BulkActions set
+// is still accepted as a fallback so an older caller cannot silently pass an
+// empty list.
+function _lbrTickedIds(){
+  if (typeof _le !== 'undefined' && _le && _le.selectedForPrint && _le.selectedForPrint.size) {
+    return [..._le.selectedForPrint];
+  }
+  if (typeof BulkActions !== 'undefined' && BulkActions.getTickedIds) {
+    return BulkActions.getTickedIds('lot');
+  }
+  return [];
+}
+async function openLotBranchModal(){
+  _lbrIds = _lbrTickedIds();
+  if (!_lbrIds.length) { toast('Tick one or more lots first'); return; }
+  document.getElementById('lbr-count').textContent = _lbrIds.length;
+  const err = document.getElementById('lbr-err');
+  if (err) { err.style.display = 'none'; err.textContent = ''; }
+  const alloc = document.getElementById('lbr-alloc'); if (alloc) alloc.checked = true;
+  const prev = document.getElementById('lbr-preview');
+  if (prev) prev.innerHTML = '<span style="color:var(--text3)">Loading…</span>';
+  const sel = document.getElementById('lbr-branch');
+  if (sel) sel.innerHTML = '<option value="">Loading depots…</option>';
+  showModal('lot-branch-modal');
+  // The depot list comes back with the preview, so the two can never disagree
+  // about which depots exist.
+  try {
+    const d = await j('/api/lots/bulk-branch/preview', {
+      method: 'POST', body: JSON.stringify({ ids: _lbrIds, branch: '' }),
+    });
+    const opts = ['<option value="">— Pick a depot —</option>']
+      .concat((d.branches || []).map(b => `<option value="${esc(b)}">${esc(b)}</option>`));
+    if (sel) sel.innerHTML = opts.join('');
+    if (prev) prev.innerHTML = (d.branches || []).length
+      ? '<span style="color:var(--text3)">Pick a depot to see what will move.</span>'
+      : '<span style="color:var(--spice-chili)">No depots are configured — set them up in Settings → Branches first.</span>';
+  } catch (e) {
+    if (sel) sel.innerHTML = '<option value="">—</option>';
+    if (prev) prev.innerHTML = `<span style="color:var(--spice-chili)">${esc(e.message || String(e))}</span>`;
+  }
+}
+
+// Ask the server what the move WOULD do and say it plainly. Re-run whenever
+// the destination changes, because "already there" and the source split both
+// depend on it.
+async function lotBranchPreview(){
+  const prev = document.getElementById('lbr-preview');
+  const branch = (document.getElementById('lbr-branch') || {}).value || '';
+  if (!prev) return;
+  if (!branch) { prev.innerHTML = '<span style="color:var(--text3)">Pick a depot to see what will move.</span>'; return; }
+  prev.innerHTML = '<span style="color:var(--text3)">Checking…</span>';
+  try {
+    const d = await j('/api/lots/bulk-branch/preview', {
+      method: 'POST', body: JSON.stringify({ ids: _lbrIds, branch }),
+    });
+    const bits = [];
+    if (d.movable) {
+      const from = (d.from || [])
+        .map(f => `<strong>${esc(f.branch)}</strong> (${f.lots})`).join(', ');
+      bits.push(`<div><strong style="color:var(--text)">${d.movable}</strong> lot(s) will move to <strong style="color:var(--text)">${esc(branch)}</strong> from ${from || '—'}.</div>`);
+      if ((d.ranges || []).length) {
+        const shown = d.ranges.slice(0, 12).join(', ') + (d.ranges.length > 12 ? ', …' : '');
+        bits.push(`<div style="font-family:monospace;font-size:11.5px;color:var(--text3)">${esc(shown)}</div>`);
+      }
+    } else {
+      bits.push('<div style="color:var(--spice-chili)">Nothing to move.</div>');
+    }
+    // The three things an operator should know BEFORE pressing, not after.
+    if (d.already_there) bits.push(`<div style="color:var(--text3)">${d.already_there} already in ${esc(branch)} — left alone.</div>`);
+    if (d.skipped_locked) bits.push(`<div style="color:#B45309">${d.skipped_locked} locked lot(s) will be skipped.</div>`);
+    if (d.invoiced) bits.push(`<div style="color:#B45309">⚠ ${d.invoiced} of them already carry an invoice number. Moving the depot does not change any figure on a document already raised, but the depot it is grouped under in the registers will change.</div>`);
+    prev.innerHTML = bits.join('');
+  } catch (e) {
+    prev.innerHTML = `<span style="color:var(--spice-chili)">${esc(e.message || String(e))}</span>`;
+  }
+}
+
+async function lotBranchApply(){
+  const branch = (document.getElementById('lbr-branch') || {}).value || '';
+  const err = document.getElementById('lbr-err');
+  const show = (m) => { if (err) { err.textContent = m; err.style.display = 'block'; } };
+  if (err) err.style.display = 'none';
+  if (!branch) { show('Pick the depot to move these lots to.'); return; }
+  const moveAllocations = !!(document.getElementById('lbr-alloc') || {}).checked;
+  if (!confirm(
+      `Move ${_lbrIds.length} ticked lot(s) to ${branch}?\n\n`
+    + (moveAllocations
+        ? 'Their lot numbers move to that depot in the trade\'s allocations too.'
+        : 'The allocations are NOT being changed — the depot\'s lot numbers will stay where they are.')
+    + '\n\nLocked lots are skipped.')) return;
+  const btn = document.getElementById('lbr-go');
+  if (btn) { btn.disabled = true; btn.textContent = 'Moving…'; }
+  try {
+    const r = await j('/api/lots/bulk-branch', {
+      method: 'POST', body: JSON.stringify({ ids: _lbrIds, branch, moveAllocations }),
+    });
+    let msg = `${r.updated || 0} lot(s) moved to ${r.branch}`;
+    if (r.already_there) msg += ` · ${r.already_there} already there`;
+    if (r.skipped_locked) msg += ` · ${r.skipped_locked} locked skipped`;
+    const un = (r.allocations || []).reduce((s, a) => s + (a.unallocated || 0), 0);
+    if (un) msg += ` · ${un} number(s) were not allocated to any depot`;
+    toast(msg);
+    hideModal('lot-branch-modal');
+    // Untick what was just moved — those rows are about to be re-rendered
+    // under a different depot, and a tick left on them would arm the next
+    // action against a selection the operator no longer means.
+    if (typeof _le !== 'undefined' && _le && _le.selectedForPrint) {
+      _le.selectedForPrint.clear();
+      if (typeof leUpdatePrintToolbar === 'function') leUpdatePrintToolbar();
+    }
+    // (_toggleAll is BulkActions' own clear — there is no `clear`.) Harmless
+    // when the Lots screen isn't the caller.
+    if (typeof BulkActions !== 'undefined' && BulkActions._toggleAll) BulkActions._toggleAll('lot', false);
+    // Repaint whichever list is on screen so the new depot shows. The
+    // allocation bar too — its per-depot counts have just changed.
+    if (typeof loadLeRecent === 'function') loadLeRecent();
+    if (typeof leLoadAllocBar === 'function') leLoadAllocBar();
+    if (typeof refreshLots === 'function' && document.getElementById('lot-auction')?.value) refreshLots();
+  } catch (e) {
+    show(e.message || String(e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Move lots'; }
+  }
+}
 
 async function openBulkSetBuyerModal(){
   _bsbContext = 'lots';
@@ -49906,7 +50097,9 @@ function regColumns(type){
     { key:'chalan_no', label:'Challan No', sort:'text', totalKind:'count', totalLabel:'Total' },
     { key:'date', label:'Date', sort:'text' },
     { key:'time', label:'Time', sort:'text' },
-    { key:'tno', label:'TNo', sort:'text' },
+    // ANO, not TNO: the operator's word for the auction number, in step with
+    // the Pending Sales register and the challan screen's own picker.
+    { key:'tno', label:'ANO', sort:'text' },
     { key:'branch', label:'Branch', sort:'text' },
     { key:'veh', label:'Vehicle', sort:'text' },
     { key:'mode', label:'Mode', sort:'text' },

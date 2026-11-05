@@ -112,7 +112,10 @@ function cleanup() {
     check('…under its own number', String(r0['CHALAN NO']) === 'RNS-195', String(r0['CHALAN NO']));
     check('…with the vehicle upper-cased', String(r0.VEHICLE) === 'TN66H1234', String(r0.VEHICLE));
     check('…the receiver', /KOCHI WAREHOUSE/.test(String(r0.RECEIVER)), String(r0.RECEIVER));
-    check('…the trade number', String(r0.TNO) === '81', String(r0.TNO));
+    // ANO, not TNO — the operator's word for the auction number, the same
+    // heading the Pending Sales register uses.
+    check('…the auction number, headed ANO', String(r0.ANO) === '81', String(r0.ANO));
+    check('…and not under the old TNO heading', r0.TNO === undefined, String(r0.TNO));
     check('…and the lots, numerically sorted as the challan prints them',
       String(r0.LOTS) === '3,7,12', String(r0.LOTS));
     check('bags / qty / value carried through',
