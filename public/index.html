@@ -44891,20 +44891,93 @@ function _payLwGroupModalRender() {
     <div class="paylw-group-scroll">
       <table class="paylw-table" style="width:100%">
         <thead><tr>
-          <th style="width:36px"></th><th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th>
+          <th style="width:36px;text-align:center"><input type="checkbox" id="paylw-group-cb-all"
+            onchange="payLwTickGroupAll(this.checked)" style="cursor:pointer;width:15px;height:15px"></th>
+          <th>Seller</th><th>Lot</th><th style="text-align:right">Qty</th>
           <th>Branch</th><th style="min-width:320px">Bank</th>
           <th style="text-align:right">Advance</th><th style="text-align:right">Payable</th>
         </tr></thead>
         <tbody>${lots.map(l => _payLwLotRow(l, canWrite)).join('')}</tbody>
       </table>
     </div>`;
+  // The header box's tri-state and the footer count are set by
+  // _payLwSyncGroupModal(), not here: ticking ONE row inside the dialog goes
+  // through payLwTick() → _payLwRefreshSelection(), which never repaints the
+  // dialog. Writing them here as well would leave both stale after exactly
+  // the action they describe.
+  _payLwSyncGroupModal();
+}
+
+// ── The dialog's select-all ───────────────────────────────────
+// Scoped to the seller whose lots are open, which is the only thing it could
+// sensibly mean: the dialog shows one seller, and the toolbar already has
+// "Clear selection" for the whole result set.
+//
+// It mirrors the table's header box deliberately, including the undo-mode
+// switch — one control that behaves differently in two places is worse than
+// no control. See payLwTickAll() for the reasoning behind that switch.
+function payLwTickGroupAll(checked) {
+  const key = _payLwState.openGroup;
+  if (!key) return;
+  const g = _payLwGroups().find(x => x.key === key);
+  if (!g) return;
+  // Every lot here already paid, and an admin looking at them: there is no
+  // export selection to make and the only live boxes in the dialog are the
+  // undo ones, so the header ticks those. Unambiguous precisely because
+  // there is no other kind of row present for it to mean.
+  if (!_payLwGroupSelectable(g).length && g.lots.some(l => l.paid_at) && window._userRole === 'admin') {
+    payLwTickGroupPaid(key, checked);
+    return;
+  }
+  payLwTickGroup(key, checked);
+}
+
+// Paint the dialog's header box and footer count from current state. Split
+// out of the render so a single row tick can refresh them without rebuilding
+// the table under the operator's cursor — `indeterminate` cannot be
+// expressed in HTML anyway, so it has to be set from script after a paint.
+function _payLwSyncGroupModal() {
+  const box = document.getElementById('paylw-group-cb-all');
   const foot = document.getElementById('paylw-group-foot');
+  const key = _payLwState.openGroup;
+  const g = key ? _payLwGroups().find(x => x.key === key) : null;
+  if (!g) {
+    if (box) { box.checked = false; box.indeterminate = false; box.disabled = true; }
+    if (foot) foot.textContent = '';
+    return;
+  }
+  const selectable = _payLwGroupSelectable(g);
+  const sel = selectable.filter(l => _payLwState.selected.has(l.id)).length;
+  const paid = g.lots.filter(l => l.paid_at);
+  const paidSel = paid.filter(l => _payLwState.selectedPaid.has(l.id)).length;
+  const undoMode = !selectable.length && paid.length > 0 && window._userRole === 'admin';
+
+  if (box) {
+    const n = undoMode ? paid.length : selectable.length;
+    const picked = undoMode ? paidSel : sel;
+    box.checked = n > 0 && picked === n;
+    box.indeterminate = picked > 0 && picked < n;
+    // With nothing it can tick, the box would arm and then un-tick itself on
+    // the refresh — which reads as a broken control. Make it visibly inert
+    // and say why, exactly as the table's header box does.
+    box.disabled = n === 0;
+    box.style.cursor = n ? 'pointer' : 'not-allowed';
+    box.style.opacity = n ? '' : '.45';
+    box.style.accentColor = undoMode ? 'var(--spice-chili)' : '';
+    box.title = undoMode
+      ? 'Select / clear every paid lot of this seller, ready for Undo selected'
+      : n
+        ? 'Select / clear every payable lot of this seller'
+        : (g.lots.some(l => !l.paid_at && _payLwUnpriced(l))
+            ? 'None of this seller’s lots has a price yet — nothing can be exported until the price import runs. Pay Advance still works.'
+            : 'Every lot of this seller is already paid — nothing here can be selected for export');
+  }
   if (foot) {
-    const sel = _payLwGroupSelectable(g).filter(l => _payLwState.selected.has(l.id)).length;
-    const can = _payLwGroupSelectable(g).length;
-    foot.textContent = can
-      ? `${sel} of ${can} payable lot${can === 1 ? '' : 's'} ticked — the same selection the toolbar is counting`
-      : 'No payable lots here';
+    foot.textContent = undoMode
+      ? `${paidSel} of ${paid.length} paid lot${paid.length === 1 ? '' : 's'} ticked to undo`
+      : selectable.length
+        ? `${sel} of ${selectable.length} payable lot${selectable.length === 1 ? '' : 's'} ticked — the same selection the toolbar is counting`
+        : 'No payable lots here';
   }
 }
 
@@ -45441,6 +45514,9 @@ function _payLwSyncGroupBoxes() {
 
 function _payLwRefreshSelection() {
   _payLwSyncGroupBoxes();
+  // The open dialog reads the SAME selection, so it has to follow every
+  // change to it — including one made by its own row boxes.
+  _payLwSyncGroupModal();
   const sel = _payLwState.lots.filter(l => _payLwState.selected.has(l.id));
   const undoSel = _payLwState.lots.filter(l => _payLwState.selectedPaid.has(l.id));
   // The header box governs the export selection, so its tri-state is measured
