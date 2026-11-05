@@ -5148,7 +5148,14 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
         <span id="comfort-toggle-label">A</span>
       </button>
-      <button class="btn btn-o" onclick="logout()">Logout</button>
+      <!-- Icon + label, matching Refresh and the text-size button beside it:
+           same padding, same 16px stroke icon, same gap. It was the one
+           topbar button with a bare label, which made it read as a different
+           kind of control from its two neighbours. -->
+      <button class="btn btn-o" onclick="logout()" title="Sign out of this session" style="padding:6px 10px;display:flex;align-items:center;gap:6px;font-weight:700">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        <span>Logout</span>
+      </button>
     </div>
   </div>
 
