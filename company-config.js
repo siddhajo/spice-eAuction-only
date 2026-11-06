@@ -508,6 +508,22 @@ const DEFAULTS = [
   // then prints INSTEAD of the real values on the e-Auction (Spices Board)
   // CSV and Form C — and on nothing else. Default OFF.
   { key: 'flag_lot_dummy_details', value: 'false', category: 'flags', label: 'Alternate Seller (Lots tab → e-Auction CSV / Form C)', type: 'boolean' },
+  // SHOW THE CONTROLS — a different question from "is the feature on", and
+  // the two must not be conflated.
+  //
+  // flag_lot_dummy_details above decides whether a mask PRINTS: with it off
+  // the e-Auction CSV and Form C revert to the real seller (see
+  // sellerIdentity in spice-board-reports.js). That is right for an admin
+  // retiring the feature, and wrong for the far commoner "I have finished
+  // staging, hide the clutter" — which must change nothing the regulator
+  // receives.
+  //
+  // So this one, and only this one, drives the 🎭 button, the Lots
+  // alternate-seller filter, the bulk dialog and the ALT badge. Turning it
+  // off leaves every stored mask printing exactly as before.
+  // Default ON, and a MISSING key reads as ON, so an install that has never
+  // reseeded keeps the controls it already had.
+  { key: 'flag_alt_seller_controls', value: 'true', category: 'flags', label: 'Alternate Seller — show the controls (🎭 button, filter, ALT badge)', type: 'boolean' },
   // Price Entry's "⚡ Generate All Documents" — the one-click run that raises
   // sales invoices, purchases, bills of supply and debit notes for a whole
   // trade in a single pass. Default ON, unlike the other button flags here:

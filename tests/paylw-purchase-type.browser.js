@@ -15,6 +15,8 @@
 //   [fold]    RD = one row per seller, with the lot count and summed figures
 //   [open]    clicking the count opens that seller's lots in a DIALOG
 //   [tick]    a group box ticks exactly its own payable lots
+//   [all]     the dialog's header box selects/clears that seller's lots,
+//             goes indeterminate on a partial pick, and touches nobody else
 //   [mixed]   a seller whose lots differ says "mixed" rather than picking one
 //   [urd]     URD stays strictly lot-wise
 //
@@ -301,6 +303,68 @@ function cleanup() {
     });
     check('ticking in the dialog moves the screen\'s own selection',
       (await selectedCount()) !== before, `${before} → ${await selectedCount()}`);
+    // ── The dialog's own select-all ─────────────────────────
+    // Same job as the table's header box, scoped to the one seller on
+    // screen. The assertion that protects money is the last one: it must
+    // tick THIS seller's lots and nobody else's, or the export count stops
+    // reconciling with what the operator thinks they picked.
+    await page.evaluate(() => payLwClearSelection());
+    const boxState = () => page.evaluate(() => {
+      const b = document.getElementById('paylw-group-cb-all');
+      return b ? { checked: b.checked, indet: b.indeterminate, disabled: b.disabled, title: b.title } : null;
+    });
+    const footText = () => page.evaluate(() =>
+      (document.getElementById('paylw-group-foot') || {}).textContent || '');
+
+    check('the dialog has a header checkbox', (await boxState()) !== null);
+    let bs = await boxState();
+    check('…clear when nothing is ticked', bs.checked === false && bs.indet === false, JSON.stringify(bs));
+    check('…and live, because this seller has payable lots', bs.disabled === false, JSON.stringify(bs));
+
+    const tickHeader = (on) => page.evaluate((v) => {
+      const b = document.getElementById('paylw-group-cb-all');
+      b.checked = v; b.dispatchEvent(new Event('change', { bubbles: true }));
+    }, on);
+
+    await tickHeader(true);
+    check('ticking it selects all three of this seller\'s lots',
+      (await selectedCount()) === 3, String(await selectedCount()));
+    bs = await boxState();
+    check('…and the box reads fully checked, not half',
+      bs.checked === true && bs.indet === false, JSON.stringify(bs));
+    check('…and the footer counts them',
+      /3 of 3 payable lots ticked/.test(await footText()), await footText());
+    check('every row box in the dialog is ticked too',
+      await page.evaluate(() => Array.from(
+        document.querySelectorAll('#paylw-group-body tbody .paylw-cb')).every(cb => cb.checked)));
+
+    // One row off → the header must drop to indeterminate, and say so
+    // without a re-render of the table underneath.
+    await page.evaluate(() => {
+      const cb = document.querySelector('#paylw-group-body tbody .paylw-cb');
+      cb.checked = false; cb.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    bs = await boxState();
+    check('unticking one row makes the header indeterminate',
+      bs.indet === true && bs.checked === false, JSON.stringify(bs));
+    check('…and the footer follows it without reopening the dialog',
+      /2 of 3 payable lots ticked/.test(await footText()), await footText());
+
+    await tickHeader(false);
+    check('unticking it clears this seller\'s lots', (await selectedCount()) === 0,
+      String(await selectedCount()));
+
+    // THE one that matters: it is scoped to the open seller.
+    await tickHeader(true);
+    const mine = await page.evaluate(() => {
+      const g = _payLwGroups().find(x => x.key === _payLwState.openGroup);
+      return g.lots.every(l => _payLwState.selected.has(l.id));
+    });
+    check('it ticks the open seller\'s lots…', mine);
+    check('…and leaves every other seller alone',
+      (await selectedCount()) === 3, `selected ${await selectedCount()}, expected this seller's 3`);
+    await page.evaluate(() => payLwClearSelection());
+
     // Esc closes it, and the state goes with it.
     await page.keyboard.press('Escape');
     await page.waitForFunction(

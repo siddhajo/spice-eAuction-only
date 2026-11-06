@@ -10437,7 +10437,18 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
        and cleared the moment any box is edited by hand, so it can never
        describe values that are no longer on screen. -->
   <div id="ldd-source" style="display:none;margin-top:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--text2)"></div>
-  <div class="actions">
+  <div class="actions" style="align-items:center">
+    <!-- "Finished with this feature" — the whole point of the Alternate
+         Seller controls is a one-off staging job before the Board return
+         goes out, after which the 🎭 button is clutter on every Lots screen.
+         This turns the feature OFF install-wide (flag_lot_dummy_details), so
+         the button, the Lots dummy filter and this dialog all disappear.
+         Masks already saved keep printing — the flag hides the CONTROLS, and
+         the e-Auction CSV / Form C go on reading lots.dummy_*.
+         Deliberately on the left, away from Apply: it is not part of the
+         save, and nothing here should be one mis-click from vanishing. -->
+    <button class="btn btn-o" id="ldd-done" style="margin-right:auto;font-weight:600" onclick="lddHideFeature()"
+            title="Hide the 🎭 button, the Lots filter, this dialog and the ALT badge. Nothing that prints changes — alternate sellers already saved keep printing on the e-Auction CSV and Form C. Show the controls again at Settings → Flags → Lots, Trade & Screens.">✓ Done with alternate sellers</button>
     <button class="btn btn-o" onclick="lddCloseDropdown();hideModal('lot-dummy-modal')">Cancel</button>
     <button class="btn btn-o" id="ldd-clear" style="color:#c0392b;border-color:#c0392b" onclick="clearLotDummyDetails()">Clear All</button>
     <button class="btn btn-g" id="ldd-apply" onclick="applyLotDummyDetails()">Apply</button>
@@ -13453,9 +13464,29 @@ async function applyFeatureFlags() {
   // "👤 Set Buyer Code" button + its modal only when an admin
   // explicitly enables it.
   document.body.setAttribute('data-feat-bulk-set-buyer-code', cfg && on(cfg.flag_bulk_set_buyer_code) ? '1' : '0');
-  // Dummy Seller Details (Lots tab toolbar). Default OFF — surfaces the
-  // "🎭 Dummy Details" button + its modal only when an admin enables it.
-  document.body.setAttribute('data-feat-lot-dummy-details', cfg && on(cfg.flag_lot_dummy_details) ? '1' : '0');
+  // Alternate Seller controls (Lots tab toolbar button, the Lots
+  // alternate-seller filter, the bulk dialog and the 🎭 ALT badge).
+  //
+  // TWO settings, deliberately:
+  //   flag_lot_dummy_details   — is the feature part of this install at all.
+  //                              Default OFF. This is also what decides
+  //                              whether a mask PRINTS on the e-Auction CSV
+  //                              and Form C, so switching it off changes what
+  //                              the regulator receives.
+  //   flag_alt_seller_controls — are the controls on screen. Default ON (a
+  //                              missing key reads as ON, so an install that
+  //                              has never reseeded keeps what it had). This
+  //                              is what "✓ Done with alternate sellers"
+  //                              turns off, and it changes NOTHING that
+  //                              prints.
+  // The controls need both. Collapsing them into one switch is the bug this
+  // split exists to prevent: hiding the clutter would quietly un-mask every
+  // seller on the Spices Board return.
+  const altCtrlRaw = cfg ? cfg.flag_alt_seller_controls : undefined;
+  const altCtrlOn = (altCtrlRaw === undefined || altCtrlRaw === null || altCtrlRaw === '')
+    ? true : on(altCtrlRaw);
+  document.body.setAttribute('data-feat-lot-dummy-details',
+    (cfg && on(cfg.flag_lot_dummy_details) && altCtrlOn) ? '1' : '0');
   // Generate All Documents (Price Entry). Default ON when the setting is
   // missing — it pre-dates its own flag, so an older install that has never
   // seen the key must keep the button it already had.
@@ -29866,7 +29897,7 @@ const SET_FIELD_GROUPS = {
       keys:['flag_lotwise_purchase','flag_lotwise_bills','flag_lotwise_dn_planter','flag_bos_purchase_bill','flag_proforma_invoice'] },
     { title:'Lots, Trade & Screens', icon:'📦', hint:'Controls on the lot/trade screens — locks, validation, price checks, and optional screens or buttons.',
       keys:['flag_price_check','flag_lot_lock','flag_reserved_price','flag_immediate_reserve','flag_godown','flag_lot_validation',
-            'flag_bulk_set_buyer_code','flag_lot_dummy_details','flag_generate_all_docs','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
+            'flag_bulk_set_buyer_code','flag_lot_dummy_details','flag_alt_seller_controls','flag_generate_all_docs','flag_price_list_mapping','flag_print_selected_purchase','flag_lotwise_payments',
             'flag_auction_desk','flag_auction_manager','flag_insights','flag_pertrade_breakdown',
             'flag_dash_snapshot','flag_dash_current_auction','flag_dash_quick_actions','flag_delivery_chalan'] },
     { title:'Auction Sheets', icon:'📋', hint:'Optional columns and grouping on the post-auction verification sheets — which columns the Checklist prints, and which code the Tharai List totals its buyers by.',
@@ -31668,6 +31699,12 @@ const FIELD_HELP = {
   discount_gst:    'GST rate applied on the discount-on-purchase amount (DN).',
   discount_pct:    'Auction credit discount percentage per 1000 rupees per day.',
   discount_days:   'Number of days the trade credit is extended.',
+  // The way BACK from "✓ Done with alternate sellers" in the 🎭 dialog, which
+  // switches this very setting off. Spelled out here because that button is
+  // the only thing that hides the feature, and once hidden this row is the
+  // only thing that brings it back.
+  flag_lot_dummy_details: 'Whether the Alternate Seller feature is part of this install at all. It also decides whether a mask PRINTS: with this OFF the e-Auction CSV and Form C revert to the real seller, even on lots that carry an alternate. To hide the controls WITHOUT changing what prints, use "Alternate Seller — show the controls" below instead.',
+  flag_alt_seller_controls: 'Shows the 🎭 Alternate Seller controls — the Lots toolbar button, the alternate-seller filter, the bulk dialog and the ALT badge on masked rows. This is the one to turn off when the staging job is finished: it changes nothing that prints, so the e-Auction CSV and Form C keep showing every alternate already saved. The dialog\'s "✓ Done with alternate sellers" button switches it off; this is where you switch it back on.',
   tharai_dummy_code: 'Groups the Tharai List\'s INTER and LOCAL sides by the Price Entry ALTERNATE CODE instead of the buyer code. Off = buyer code (the default). Both the spreadsheet and the PDF follow this, and the bag reconciliation holds either way — only the name on each row changes.',
   business_mode:   'This build is e-Auction only.',
   business_state:  'Tamil Nadu uses TN office details, GSTIN, and bank. Kerala uses KL details. Invoices and exports adapt to the selected state.',
@@ -37518,6 +37555,70 @@ async function clearLotDummyDetails(){
   if (!confirm(`Clear the dummy name, phone, CR and grade on ${n} lot${n === 1 ? '' : 's'}?\n\nThe e-Auction CSV and Form C will go back to printing the real seller details.`)) return;
   const btn = document.getElementById('ldd-clear');
   await _lddSend({ ids: _lddLotIds, clear: true }, btn, 'Dummy details cleared');
+}
+
+// ── "Done with alternate sellers" ────────────────────────────────
+// Setting stand-in sellers is a one-off staging job before the Spices Board
+// return goes out; afterwards the 🎭 controls are clutter on a screen the
+// office uses every day. This retires them in one action instead of making
+// the user go and find a flag.
+//
+// It turns flag_lot_dummy_details OFF **install-wide**, which is the same
+// switch Settings → Flags drives — one source of truth, not a second
+// "hidden" state that could disagree with it. Everything gated on
+// .feat-lot-dummy-details goes at once: the toolbar button, the Lots dummy
+// filter, this dialog.
+//
+// What it does NOT do is change what prints. Masks already saved stay on the
+// lots and the e-Auction CSV / Form C go on reading them — the flag gates who
+// may SET a mask, not whether one is used. The confirm says so, because
+// "hide this" could easily be read as "undo all of it".
+async function lddHideFeature(){
+  if (!confirm(
+      'Finished setting alternate sellers?\n\n'
+    + 'The 🎭 Alternate Seller button, the Lots alternate-seller filter and this dialog '
+    + 'will be hidden everywhere in the app.\n\n'
+    + 'Nothing else changes. Alternate sellers already saved stay on their lots and\n'
+    + 'keep printing on the e-Auction CSV and Form C exactly as they do now.\n\n'
+    + 'You can show the controls again any time at\n'
+    + 'Settings → Flags → "Lots, Trade & Screens" → "Alternate Seller — show the controls".')) return;
+  const btn = document.getElementById('ldd-done');
+  if (btn) { btn.disabled = true; btn.textContent = 'Hiding…'; }
+  try {
+    // flag_alt_seller_controls, NOT flag_lot_dummy_details. The latter also
+    // decides whether a mask PRINTS, so turning it off here would silently
+    // revert every masked lot to its real seller on the e-Auction CSV and
+    // Form C — the exact thing the feature exists to prevent. This switch is
+    // the controls only; nothing that prints moves.
+    await j('/api/company-settings', {
+      method: 'PUT',
+      body: JSON.stringify({ settings: { flag_alt_seller_controls: 'false' } }),
+    });
+    lddCloseDropdown();
+    hideModal('lot-dummy-modal');
+    // Repaint the gates now rather than on the next reload — the button the
+    // user just retired should not still be sitting there behind the dialog.
+    if (typeof applyFeatureFlags === 'function') await applyFeatureFlags();
+    // CSS gating (.feat-lot-dummy-details) only covers elements that EXIST in
+    // the markup. The 🎭 ALT badge on a row is painted into a string by the
+    // row renderer, which reads the gate at render time — so rows already on
+    // screen keep their badge until something repaints them. Repaint the two
+    // tables that draw it, or the operator is told the feature is hidden
+    // while the marks are still staring back at them.
+    if (typeof loadLots === 'function' && document.getElementById('lot-auction')?.value) {
+      loadLots({ keepPage: true });
+    }
+    // The dashboard's Current Auction lot list, if it happens to be open.
+    if (typeof renderDepotLotsTable === 'function'
+        && document.getElementById('depot-lots-modal')?.classList.contains('show')) {
+      renderDepotLotsTable();
+    }
+    toast('Alternate Seller controls hidden — nothing that prints has changed. Show them again at Settings → Flags → Lots, Trade & Screens');
+  } catch (e) {
+    showError(e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✓ Done with alternate sellers'; }
+  }
 }
 
 // Per-row handlers — wired from the lock/unlock icons in the Lots-tab
