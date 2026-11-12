@@ -879,6 +879,13 @@ const DEFAULTS = [
   // the gunny HSN (`hsn_gunny`), is counted in BAGS at the per-bag
   // `gunny_rate` from Settings - Rates, and carries no sample line at all.
   { key: 'chalan_gunny_desc', value: 'GUNNY', category: 'lot_entry', label: 'Delivery Challan: Description of Goods (Gunny)', type: 'text' },
+  // Kilos of sample PER LOT on a Spices Board challan. A different figure
+  // from the one the Commission Bill deducts (`sb_refund` +
+  // `sb_trader_sample`): that is what comes off the seller, while this is
+  // what physically goes to the Board's auction centre. Blank falls back to
+  // the bill's pair, which is what the challan used before this existed.
+  { key: 'chalan_sb_sample_kg', value: '1.5', category: 'lot_entry',
+    label: 'Delivery Challan: Sample per lot to Spices Board (kg)', type: 'number' },
   // Printed verbatim in the Remarks and Terms boxes at the foot.
   { key: 'chalan_remarks',   value: 'Auction Sample Not for Sales, Only for Auction Purpose',
     category: 'lot_entry', label: 'Delivery Challan: Remarks (Cardamom)', type: 'text' },

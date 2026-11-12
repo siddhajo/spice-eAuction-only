@@ -28042,7 +28042,7 @@ function leChalanBranchChanged() {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   const bags   = lots.reduce((n, l) => n + (Number(l.bags) || 0), 0);
   const netQty = lots.reduce((n, l) => n + (Number(l.qty) || 0), 0);
-  const smpQty = leChalanSampleQty(lots, cfg);
+  const smpQty = leChalanSampleQty(lots, cfg, sb);
   // On a sample consignment there is no net weight and no bag count to read
   // off the lots — what goes is however many sample bags the operator made
   // up, which only they know.
@@ -28374,16 +28374,20 @@ function leChalanPartyBlocks(cfg, branch, swapped) {
 function _leChalanDirect(base, cfg, swapped) {
   // Pointing outwards, this firm is the sender whoever the consignee is —
   // including the Spices Board, which is then merely the other party.
-  if (!swapped) return { ...base, senderIsSB: false, senderName: '' };
+  if (!swapped) return { ...base, senderIsSB: false, senderName: '', senderGstin: '' };
   // Swapped, the party that WAS the consignee is now sending — so the
-  // masthead becomes theirs. `senderName` empty means "this company", which
-  // is every challan but a turned-round Spices Board one.
+  // masthead becomes theirs: name, logo AND the GSTIN beside them. Printing
+  // this firm's registration under the Board's name would misstate who is
+  // moving the goods. Empty means "this company", which is every challan but
+  // a turned-round Spices Board one.
   const senderName = base.sbParty ? 'SPICES BOARD' : '';
+  const senderGstin = base.sbParty ? (base.receiver.gstin || '') : '';
   const coGstin = leChalanCompanyGstin(cfg);
   const isKL = String(cfg.business_state || '').toUpperCase().includes('KERALA');
   return {
     senderIsSB: !!base.sbParty,
     senderName,
+    senderGstin,
     // The heading line would only repeat the masthead when the Board is
     // sending, so it is dropped there and the address stands alone.
     heading: senderName ? '' : base.receiver.name,
@@ -28412,8 +28416,15 @@ function _leChalanDirect(base, cfg, swapped) {
 // Reading the same `sb_refund` / `sb_trader_sample` boxes the bill reads
 // keeps the paper that moves the goods agreeing with the paper that prices
 // them. Both default to 0, in which case there is no sample row at all.
-function leChalanSampleQty(lots, cfg) {
-  const per = (Number((cfg || {}).sb_refund) || 0) + (Number((cfg || {}).sb_trader_sample) || 0);
+function leChalanSampleQty(lots, cfg, forBoard) {
+  cfg = cfg || {};
+  // A SPICES BOARD challan carries a different draw: what physically goes to
+  // the auction centre, not what the Commission Bill deducts from the seller.
+  // Its own setting, blank falling back to the bill's pair.
+  const sbPer = String(cfg.chalan_sb_sample_kg == null ? '' : cfg.chalan_sb_sample_kg).trim();
+  const per = (forBoard && sbPer !== '')
+    ? (Number(sbPer) || 0)
+    : (Number(cfg.sb_refund) || 0) + (Number(cfg.sb_trader_sample) || 0);
   // Rounded to the gram: a float product like 3 x 0.45 lands on
   // 1.3499999999999999 and would print a nonsense tail.
   return Math.round((lots || []).length * per * 1000) / 1000;
@@ -28450,7 +28461,7 @@ function leChalanLines(o) {
   const qty = o.qty != null ? (Number(o.qty) || 0)
     : lots.reduce((t, l) => t + (Number(l.qty) || 0), 0);
   const sample = o.sampleQty != null ? (Number(o.sampleQty) || 0)
-    : leChalanSampleQty(lots, cfg);
+    : leChalanSampleQty(lots, cfg, o.sampleOnly);
   // A Spices Board consignment is the SAMPLES ALONE — the draw from every lot
   // in the trade, which is the whole reason that despatch exists. No net line:
   // the goods themselves are not going to the Board.
@@ -28644,7 +28655,7 @@ function leBuildChalanHtml(o) {
 
   <div class="row">
     <div class="half-l pad">
-      ${kv('GSTIN', pick('gstin'), '64px')}
+      ${kv('GSTIN', o.senderGstin || pick('gstin'), '64px')}
       <div style="height:14px"></div>
       ${kv('Serial No. of Challan', o.chalanNo, '0')}
     </div>
@@ -28808,7 +28819,7 @@ function dcBranchChanged() {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   const bags   = _dc.lots.reduce((n, l) => n + (Number(l.bags) || 0), 0);
   const netQty = _dc.lots.reduce((n, l) => n + (Number(l.qty) || 0), 0);
-  const smpQty = leChalanSampleQty(_dc.lots, cfg);
+  const smpQty = leChalanSampleQty(_dc.lots, cfg, sb);
   set('dc-qty', sb ? '' : (netQty ? netQty.toFixed(3) : ''));
   set('dc-sample-qty', smpQty ? smpQty.toFixed(3) : '');
   set('dc-bags', sb ? '' : (bags ? String(bags) : ''));
