@@ -10441,6 +10441,27 @@ const _chalanNext = (db) => {
   const raw = parseInt(String(getSetting(db, 'chalan_next_no') || '').trim(), 10);
   return (Number.isFinite(raw) && raw > 0) ? raw : 1;
 };
+// The SERIAL inside a printed challan number, by stripping the configured
+// prefix/suffix. "RNS-195/26-27" → 195.
+//
+// Used to keep the book's next number ahead of a HAND-TYPED challan number,
+// which claim-no never sees. Returns null when the number does not fit this
+// install's pattern — a one-off like "RNS-012/OLD" is recorded in the
+// register but must not be read as a position in the series.
+const _chalanSerialNumber = (db, no) => {
+  let s = String(no == null ? '' : no).trim();
+  if (!s) return null;
+  const prefix = String(getSetting(db, 'chalan_prefix') || '').trim();
+  const suffix = String(getSetting(db, 'chalan_suffix') || '').trim();
+  if (prefix && s.toUpperCase().startsWith(prefix.toUpperCase())) s = s.slice(prefix.length);
+  if (suffix && s.toUpperCase().endsWith(suffix.toUpperCase())) s = s.slice(0, -suffix.length);
+  s = s.trim();
+  // What is left has to be the serial and nothing else. Anything with other
+  // characters in it is not a number out of this book.
+  if (!/^\d+$/.test(s)) return null;
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
 // Amount in words, for a document the BROWSER renders (the delivery challan
 // builds its HTML client-side so the operator can send it to the gate's own
 // printer). It goes through the server rather than a second copy of the
@@ -10535,7 +10556,33 @@ app.post('/api/delivery-chalan/record', requireLotWrite, (req, res) => {
        row.veh, row.mode, row.receiver, row.lot_count, row.bags, row.qty,
        row.value, row.lots, row.created_by]
     );
-    res.json({ ok: true, chalanNo: row.chalan_no });
+    // Keep the book's NEXT number ahead of whatever just printed.
+    //
+    // claim-no already advances it for the ordinary flow, but the operator
+    // can type over the previewed number — continuing a paper book by hand,
+    // or starting a new series — and that path claimed nothing, so the
+    // counter sat still and the next challan re-offered a number already
+    // used. Advancing here, where every printed challan is recorded whichever
+    // way its number was reached, is what makes Settings show the right next
+    // serial after EVERY challan.
+    //
+    // Only ever forwards: re-printing a LOST challan under its old number is
+    // a deliberate act and must not drag the book backwards, nor push it past
+    // numbers that have not been issued.
+    let nextNo = null;
+    try {
+      const n = _chalanSerialNumber(db, row.chalan_no);
+      if (n != null && n + 1 > _chalanNext(db)) {
+        db.run(
+          `INSERT INTO company_settings (key, value, category, label, field_type)
+           VALUES ('chalan_next_no', ?, 'lot_entry', 'Delivery Challan: Next Serial No', 'number')
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [String(n + 1)]
+        );
+        nextNo = n + 1;
+      }
+    } catch (_) { /* book-keeping only — never fail a recorded challan */ }
+    res.json({ ok: true, chalanNo: row.chalan_no, next: nextNo });
   } catch (e) {
     // Never let the book-keeping stop the printing — the operator is standing
     // at a lorry. Report it and let the client carry on to the PDF.

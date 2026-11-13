@@ -27999,7 +27999,14 @@ async function leOpenChalan() {
   const rateEl0 = document.getElementById('le-chalan-rate');
   if (rateEl0) rateEl0.dataset.seeded = rateEl0.value;   // so switching goods may replace it
   set('le-chalan-mode', cfg.chalan_transport_mode || 'By Road');
-  set('le-chalan-pos',  cfg.chalan_place_of_supply || '');
+  // Place of Supply is kept in step with the RECEIVER by leChalanSyncPos(),
+  // which runs from leChalanBranchChanged() on open and on every change.
+  // Seeded EMPTY (and the auto-marker cleared with it) so that sync is free
+  // to fill it: a value left here would look like something the operator
+  // typed, and sync refuses to overwrite those. The
+  // `chalan_place_of_supply` setting is still the fallback inside sync, for
+  // a receiver with no state on file.
+  leChalanResetPos('le-chalan-pos');
 
   // Sample bags are a COUNT OF BAGS, not a weight, and nothing on the lot
   // records it — the operator counts them onto the lorry. Printed as the
@@ -28060,8 +28067,9 @@ function leChalanBranchChanged() {
   document.querySelectorAll('#le-chalan-modal .le-ch-netonly')
     .forEach(el => { el.style.display = sb ? 'none' : ''; });
 
-  leChalanPaintParties('le-chalan-parties', 'le-chalan-swap',
-    leChalanPartyBlocks(cfg, branch, _le_chalan.swapped), _le_chalan.swapped);
+  const parties = leChalanPartyBlocks(cfg, branch, _le_chalan.swapped);
+  leChalanPaintParties('le-chalan-parties', 'le-chalan-swap', parties, _le_chalan.swapped);
+  leChalanSyncPos('le-chalan-pos', parties, cfg);
 
   const sum = document.getElementById('le-chalan-summary');
   if (sum) {
@@ -28167,6 +28175,9 @@ async function leConfirmChalan() {
   const o = {
     lots: _le_chalan.lots,
     cfg: _le_chalan.cfg || {},
+    // Carried so the Spices Board remark can check this trade's main depot —
+    // see leBuildChalanHtml.
+    auction: _le_chalan.auction || {},
     chalanNo,
     date: val('le-chalan-date'),
     time: val('le-chalan-time'),
@@ -28360,6 +28371,45 @@ function leChalanPartyBlocks(cfg, branch, swapped) {
   }, cfg, swapped);
 }
 
+// ── Place of Supply follows the RECEIVER ─────────────────────────
+// Under GST the place of supply is where the goods are going, so it is a fact
+// about the consignee — not an install-wide constant. It used to be seeded
+// once from `chalan_place_of_supply` and left there, which meant a challan to
+// the Spices Board in Kerala and one to a Tamil Nadu depot printed the same
+// line, and turning the pair round (which swaps who receives) did not change
+// it at all.
+//
+// So it is re-derived from the receiver every time the branch changes or the
+// direction is flipped. The operator can still type over it: an edited box is
+// left alone, tracked with `dataset.auto` holding the last value this put
+// there — the same "seeded value" trick the rate field uses.
+//
+// The receiver's STATE is the place of supply; `chalan_place_of_supply`
+// remains the fallback for a receiver that has none on file.
+// Hand Place of Supply back to leChalanSyncPos(): blank the box AND the
+// marker that says "this value is mine to replace". Called when a dialog
+// opens, so a stale value from the last challan is never mistaken for
+// something the operator typed on this one.
+function leChalanResetPos(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = '';
+  el.dataset.auto = '';
+}
+
+function leChalanSyncPos(id, parties, cfg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const rcv = (parties && parties.receiver) || {};
+  const want = String(rcv.state || '').trim() || String((cfg || {}).chalan_place_of_supply || '').trim();
+  const typed = String(el.value || '').trim();
+  // Only overwrite a box this function filled (or an empty one) — never
+  // something the operator typed.
+  if (typed && typed !== String(el.dataset.auto || '').trim()) return;
+  el.value = want;
+  el.dataset.auto = want;
+}
+
 // Turn the pair round for a consignment running the other way — the lorry
 // coming BACK, which is the same two places in the opposite roles.
 //
@@ -28374,6 +28424,8 @@ function leChalanPartyBlocks(cfg, branch, swapped) {
 function _leChalanDirect(base, cfg, swapped) {
   // Pointing outwards, this firm is the sender whoever the consignee is —
   // including the Spices Board, which is then merely the other party.
+  // `sbParty` travels out with the block so the renderer can tell a Spices
+  // Board leg from an ordinary one — it decides which Remarks line prints.
   if (!swapped) return { ...base, senderIsSB: false, senderName: '', senderGstin: '' };
   // Swapped, the party that WAS the consignee is now sending — so the
   // masthead becomes theirs: name, logo AND the GSTIN beside them. Printing
@@ -28385,6 +28437,7 @@ function _leChalanDirect(base, cfg, swapped) {
   const coGstin = leChalanCompanyGstin(cfg);
   const isKL = String(cfg.business_state || '').toUpperCase().includes('KERALA');
   return {
+    sbParty: !!base.sbParty,
     senderIsSB: !!base.sbParty,
     senderName,
     senderGstin,
@@ -28573,7 +28626,27 @@ function leBuildChalanHtml(o) {
   // The cardamom remark declares the auction samples riding along. A gunny
   // challan carries none, so repeating it there would be a false statement on
   // a GST document — gunny has its own line, and blank prints no Remarks row.
-  const remark = String((o.goods === 'gunny' ? cfg.chalan_gunny_remarks : cfg.chalan_remarks) || '').trim();
+  // Remarks print on the SPICES BOARD legs ONLY — and nowhere else.
+  //
+  // `chalan_remarks` declares the auction samples riding along ("Auction
+  // Sample Not for Sales, Only for Auction Purpose"). That is true of exactly
+  // two consignments: the main depot sending samples to the Board, and the
+  // Board sending them back. On a depot-to-depot load it is a false statement
+  // on a GST document, which is why it now prints on neither — the Remarks
+  // row is simply absent.
+  //
+  //   sbParty && !senderIsSB → main depot → the Board
+  //   sbParty &&  senderIsSB → the Board → main depot (pair turned round)
+  //
+  // "Our end is the main depot" has to be assertable: a Spices Board challan
+  // has no branch picker (choosing the Board replaces the branch), so our end
+  // is the TRADE's main depot, auctions.main_branch. With none set there is
+  // no main-depot leg to claim and the row stays blank, so setting the main
+  // depot (New/Edit Auction, or Edit Allocations) is the prerequisite.
+  const _mainDepot = String((o.auction && o.auction.main_branch) || '').trim();
+  const remark = (o.sbParty && _mainDepot)
+    ? String(cfg.chalan_remarks || '').trim()
+    : '';
   const totQty = rows.reduce((t, r) => t + r.qty, 0);
   const totVal = rows.reduce((t, r) => t + r.value, 0);
   const blankRow = '<tr class="sp"><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
@@ -28765,7 +28838,9 @@ async function loadDeliveryChalan() {
   set('dc-time', String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0'));
   set('dc-veh',  _dc.cfg.chalan_veh_no || '');
   set('dc-mode', _dc.cfg.chalan_transport_mode || 'By Road');
-  set('dc-pos',  _dc.cfg.chalan_place_of_supply || '');
+  // Empty + auto-marker cleared; dcBranchChanged() fills it from the
+  // receiver. See leChalanResetPos().
+  leChalanResetPos('dc-pos');
   set('dc-goods', 'cardamom');
   set('dc-sample-bags', '');
 
@@ -28827,8 +28902,10 @@ function dcBranchChanged() {
   const goodsEl = document.getElementById('dc-goods');
   if (goodsEl) { if (sb) goodsEl.value = 'cardamom'; goodsEl.disabled = sb; }
 
-  leChalanPaintParties('dc-parties', 'dc-swap',
-    leChalanPartyBlocks(cfg, branch, _dc.swapped), _dc.swapped);
+  const dcParties = leChalanPartyBlocks(cfg, branch, _dc.swapped);
+  leChalanPaintParties('dc-parties', 'dc-swap', dcParties, _dc.swapped);
+  // Place of Supply follows the receiver here too — see leChalanSyncPos().
+  leChalanSyncPos('dc-pos', dcParties, cfg);
   dcGoodsChanged();
 }
 
@@ -50303,8 +50380,8 @@ function regColumns(type){
     { key:'veh', label:'Vehicle', sort:'text' },
     { key:'mode', label:'Mode', sort:'text' },
     { key:'receiver', label:'Receiver', sort:'text' },
-    { key:'lots', label:'Lots', sort:'text',
-      render:(r)=> r.lots ? esc(String(r.lots)) : '<span style="color:var(--text3)">—</span>' },
+    // No Lots column — see the xlsx column list in
+    // exports.exportDeliveryChalanRegister, which this is kept in step with.
     { key:'lot_count', label:'No of Lots', sort:'number', numeric:true, fmt:regFmtNum(0) },
     { key:'bags', label:'Bags', sort:'number', numeric:true, fmt:regFmtNum(0) },
     { key:'qty', label:'Qty', sort:'number', numeric:true, fmt:regFmtNum(3) },

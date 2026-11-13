@@ -379,8 +379,15 @@ function cleanup() {
   check('the serial pre-fills wrapped in its prefix and suffix', form.no === 'DC-1/26-27', form.no);
   check('the vehicle pre-fills from its setting', form.veh === 'TN 55 AB 1234', form.veh);
   check('the rate pre-fills from its setting', String(form.rate) === '310', form.rate);
-  check('the transport mode and place of supply pre-fill',
-        form.mode === 'By Road' && form.pos === 'NIRAPPELKADA', JSON.stringify(form));
+  check('the transport mode pre-fills from its setting',
+        form.mode === 'By Road', JSON.stringify(form.mode));
+  // Place of Supply is NOT the `chalan_place_of_supply` setting any more: it
+  // is the RECEIVER's state, re-derived whenever the branch or the direction
+  // changes (see leChalanSyncPos). This challan's receiver is the configured
+  // consignee in Kerala, so that is what it reads; the setting survives only
+  // as the fallback for a receiver with no state on file.
+  check('place of supply is the receiver\'s state, not the install setting',
+        form.pos === 'KERALA', JSON.stringify(form.pos));
   // The dialog is the quick print: both address blocks follow from the
   // Branch and are no longer typed here.
   check('the dialog carries no address inputs any more',
@@ -568,10 +575,14 @@ function cleanup() {
   // printer and read by the tax office.
   check('no developer comments ship inside the printed form',
         !/<!--/.test(gh), (gh.match(/<!--[^]{0,60}/) || [''])[0]);
-  // The cardamom remark declares auction samples; printing it on a gunny
-  // challan would be a false statement on a GST document.
-  check('the gunny challan carries its OWN remark',
-        /Empty gunny returned/.test(gh) && !/Auction Sample Not for Sales/.test(gh), 'gunny remark');
+  // Remarks now print on the Spices Board legs ONLY (main depot → Board and
+  // back), because `chalan_remarks` declares auction samples and that is a
+  // false statement on any other load. A gunny challan is never a Board leg,
+  // so it carries no Remarks row at all — including the old gunny-specific
+  // line, which no longer has a reader.
+  check('the gunny challan carries no remark at all',
+        !/Empty gunny returned/.test(gh) && !/Auction Sample Not for Sales/.test(gh),
+        (gh.match(/Remarks[^<]{0,60}/) || ['(none)'])[0]);
   check('switching back restores the cardamom labels', gunny.backToCardamom === 'Rate (per kg)',
         gunny.backToCardamom);
 
@@ -661,8 +672,12 @@ function cleanup() {
         doc.words === 'Rupees Thirty Six Lakh Four Thousand Five Hundred Only', doc.words);
   check('…and is printed under the table', /Challan Total Value \(In Words\)/.test(h) && h.includes(doc.words));
 
-  check('the Remarks box prints its configured line',
-        /Auction Sample Not for Sales, Only for Auction Purpose/.test(h));
+  // Not on this one: it is a depot challan, not a Spices Board leg. The
+  // auction-sample line prints only for main depot → Board and back — see
+  // chalan-pos-and-sb-remarks.browser.js.
+  check('the Remarks box is absent on a depot-to-depot challan',
+        !/Auction Sample Not for Sales, Only for Auction Purpose/.test(h),
+        (h.match(/Remarks[^<]{0,60}/) || ['(none)'])[0]);
   // "194+5" — the goods bags, then the SAMPLE bags riding with them, which
   // the Remarks line declares are not for sale. Two inputs joined at print,
   // not one typed string, so each number can be corrected on its own.

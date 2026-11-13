@@ -920,6 +920,7 @@ const DEFAULTS = [
   // on it would be a false statement on a GST document. Blank prints no
   // Remarks row at all.
   { key: 'chalan_gunny_remarks', value: '', category: 'lot_entry', label: 'Delivery Challan: Remarks (Gunny)', type: 'text' },
+
   { key: 'chalan_terms',     value: '',   category: 'lot_entry',
     label: 'Delivery Challan: Terms & Condition', type: 'textarea' },
   // Physical paper width of the lot-receipt slip, in millimetres. Thermal

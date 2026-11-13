@@ -10,6 +10,11 @@
 // issued from the moment recording began. Challans printed before that are
 // not recoverable — there is nothing to recover them from.
 //
+//   [serial]  the book's NEXT number moves on after every challan, including
+//             one whose number was typed by hand (claim-no never sees those)
+//   [nolots]  the register carries no LOTS column — a 13-lot challan ran that
+//             cell halfway across the sheet, and the book reconciles on the
+//             challan NUMBER
 //   [record]  a printed challan is logged, keyed on its NUMBER
 //   [reprint] re-printing the same number updates that row, never duplicates
 //   [typed]   a hand-typed number (no serial claimed) is still in the book
@@ -116,8 +121,9 @@ function cleanup() {
     // heading the Pending Sales register uses.
     check('…the auction number, headed ANO', String(r0.ANO) === '81', String(r0.ANO));
     check('…and not under the old TNO heading', r0.TNO === undefined, String(r0.TNO));
-    check('…and the lots, numerically sorted as the challan prints them',
-      String(r0.LOTS) === '3,7,12', String(r0.LOTS));
+    check('the lot NUMBERS are still stored, just not columned',
+      /3,7,12/.test(String((await api('GET', `/api/registers/delivery-chalan`)).d
+        .find(x => x.chalan_no === 'RNS-195').lots)), 'lots field missing');
     check('bags / qty / value carried through',
       Number(r0.BAGS) === 30 && Number(r0.QTY) === 300 && Number(r0.VALUE) === 600000,
       JSON.stringify([r0.BAGS, r0.QTY, r0.VALUE]));
@@ -166,11 +172,19 @@ function cleanup() {
       bad.status + ' ' + JSON.stringify(bad.d));
   }
 
+  console.log('[nolots] the LOTS column is gone from the sheet');
+  {
+    const s = await sheet();
+    check('no LOTS column in the header', !s.head.includes('LOTS'), s.head.join(' | '));
+    check('…but NO OF LOTS stays — the count is the useful part',
+      s.head.includes('NO OF LOTS'), s.head.join(' | '));
+  }
+
   console.log('[sheet] the register totals reconcile');
   {
     const s = await sheet();
     check('the header is the challan book\'s, not a money register\'s',
-      ['CHALAN NO', 'DATE', 'VEHICLE', 'RECEIVER', 'LOTS', 'BAGS', 'QTY'].every(h => s.head.includes(h)),
+      ['CHALAN NO', 'DATE', 'VEHICLE', 'RECEIVER', 'NO OF LOTS', 'BAGS', 'QTY'].every(h => s.head.includes(h)),
       s.head.join(' | '));
     // 10 + 5 bags, 100 + 50 qty across the two rows.
     const sum = (k) => s.rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
@@ -206,6 +220,38 @@ function cleanup() {
     const on = await sheet();
     check('turning it back on restores the register', on.status === 200 && on.rows.length === 2,
       `${on.status} / ${on.rows.length}`);
+  }
+
+  console.log('[serial] the book moves on after every challan');
+  {
+    // A hand-typed number, higher than the book's next. claim-no is never
+    // called on this path, so before the fix the counter sat still and the
+    // next challan re-offered a number already used.
+    const flat = async () => ((await api('GET', '/api/company-settings/flat')).d || {}).chalan_next_no;
+    await api('PUT', '/api/company-settings', { settings: { chalan_next_no: '200' } });
+    await api('POST', '/api/delivery-chalan/record', {
+      chalanNo: 'RNS-240', auctionId: aid, date: '2026-10-22', branch: 'ANAVILASAM',
+      veh: 'TN66H0001', lots: [{ lot_no: '5' }], bags: 1, qty: 10, value: 1000,
+    });
+    check('a typed number ahead of the book advances it to +1',
+      String(await flat()) === '241', String(await flat()));
+    // Re-printing an OLDER challan must not drag the book backwards.
+    await api('POST', '/api/delivery-chalan/record', {
+      chalanNo: 'RNS-195', auctionId: aid, date: '2026-10-20', branch: 'ANAVILASAM',
+      veh: 'TN66H9999', lots: [{ lot_no: '3' }], bags: 10, qty: 100, value: 200000,
+    });
+    check('re-printing an older number leaves the book where it was',
+      String(await flat()) === '241', String(await flat()));
+    // A number that is not out of this book at all is ignored, not parsed.
+    await api('POST', '/api/delivery-chalan/record', {
+      chalanNo: 'RNS-012/OLD', auctionId: aid, date: '2026-10-19', branch: 'ANAVILASAM',
+      veh: 'TN66H4321', lots: [{ lot_no: '9' }], bags: 5, qty: 50, value: 100000,
+    });
+    check('a one-off number outside the series does not move it',
+      String(await flat()) === '241', String(await flat()));
+    // And the ordinary claim path still works from the new position.
+    const c = await api('POST', '/api/delivery-chalan/claim-no', {});
+    check('the next claim issues 241', c.d && c.d.no === 'RNS-241', JSON.stringify(c.d));
   }
 
   console.log(`\n${fail ? 'FAILED' : 'PASSED'} — ${pass} ok, ${fail} failed`);

@@ -2104,7 +2104,11 @@ async function exportDeliveryChalanRegister(db, opts = {}) {
     { header: 'VEHICLE',   key: 'veh',       width: 13 },
     { header: 'MODE',      key: 'mode',      width: 11 },
     { header: 'RECEIVER',  key: 'receiver',  width: 26 },
-    { header: 'LOTS',      key: 'lots',      width: 24 },
+    // No LOTS column. The full comma list of lot numbers made the sheet
+    // unreadable — a 13-lot challan ran a cell halfway across the page — and
+    // the book is reconciled on the challan NUMBER, not on which lots rode on
+    // it. The count stays; `delivery_chalans.lots` still holds the list for
+    // anyone who needs it.
     { header: 'NO OF LOTS', key: 'lot_count', width: 10 },
     { header: 'BAGS',      key: 'bags',      width: 9,  numFmt: '#,##0' },
     { header: 'QTY',       key: 'qty',       width: 12, numFmt: '#,##0.000' },

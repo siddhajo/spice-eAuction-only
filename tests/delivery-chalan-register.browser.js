@@ -173,13 +173,17 @@ function cleanup() {
       return { heads, rows };
     });
     check('the challan columns are shown, not a money register\'s',
-      ['Challan No', 'Vehicle', 'Receiver', 'Lots', 'Bags'].every(h => seen.heads.includes(h)),
+      ['Challan No', 'Vehicle', 'Receiver', 'No of Lots', 'Bags'].every(h => seen.heads.includes(h)),
       seen.heads.join(' | '));
+    // The Lots column was removed: a 13-lot challan ran that cell halfway
+    // across the sheet, and the book reconciles on the challan NUMBER.
+    check('…and no Lots column', !seen.heads.includes('Lots'), seen.heads.join(' | '));
     const flat = JSON.stringify(seen.rows);
     check('both challans are listed', /RNS-195/.test(flat) && /RNS-196/.test(flat), flat.slice(0, 300));
     check('…with the lorry and the receiver',
       /TN66H1234/.test(flat) && /KOCHI WAREHOUSE/.test(flat), flat.slice(0, 300));
-    check('…and the lots as printed', /3,12/.test(flat), flat.slice(0, 300));
+    check('…and the lot COUNT, which replaced the lot list', /"2"/.test(flat),
+      flat.slice(0, 300));
   }
 
   console.log('[pdf] the PDF button explains itself instead of failing');
