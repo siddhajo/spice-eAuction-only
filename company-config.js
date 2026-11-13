@@ -103,6 +103,9 @@ const DEFAULTS = [
   // shows no mark at all.
   { key: 'app_logo',         value: '/logo-app.svg', category: 'company', label: 'Application logo (path)', type: 'text' },
   { key: 'app_contact',      value: '9790745462 / 8248922434', category: 'company', label: 'Screensaver support number(s)', type: 'text' },
+  // Shown beside the support number on the locked screen, each with its own
+  // glyph. Blank prints no email row at all.
+  { key: 'app_email',        value: '', category: 'company', label: 'Screensaver support email', type: 'text' },
   { key: 'trade_name',       value: '', category: 'company',     label: 'Trade Name',               type: 'text' },
   { key: 'legal_name',       value: '', category: 'company',     label: 'Legal Name Suffix',        type: 'text' },
   { key: 'short_name',       value: '', category: 'company',     label: 'Short Name',               type: 'text' },

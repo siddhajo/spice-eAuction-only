@@ -686,6 +686,13 @@ body[data-login="midnight"] #login .login-card .fg input:focus{background:rgba(2
 .login-hero{max-width:520px}
 .login-eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--spice-saffron-dk);background:color-mix(in srgb,var(--spice-saffron) 10%,transparent);border:1px solid color-mix(in srgb,var(--spice-saffron) 22%,transparent);padding:7px 14px;border-radius:999px;margin-bottom:24px}
 .login-eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--spice-saffron);box-shadow:0 0 8px color-mix(in srgb,var(--spice-saffron) 80%,transparent);animation:loginPulse 2s ease-in-out infinite}
+/* The chip is styled for capitals, but the thing inside it is the PRODUCT
+   NAME — operator-typed, and deliberately cased ("Saaga eAuction Suite", with
+   its lowercase e). Uppercasing it printed SAAGA EAUCTION SUITE, which is a
+   different word. The name keeps its own casing; the chip keeps everything
+   else, with the tracking eased off a little because 1.4px was tuned for
+   caps and looks gappy in mixed case. */
+#login-hero-app{text-transform:none;letter-spacing:.6px;font-size:12.5px}
 .login-hero-title{font-size:clamp(34px,calc(4.2vw / var(--zf)),50px);font-weight:800;line-height:1.05;letter-spacing:-1px;color:var(--spice-saffron-dk);margin:0 0 20px}
 .login-hero-title em{font-style:normal;background:linear-gradient(100deg,var(--lg-2) 0%,var(--lg-1) 40%,color-mix(in srgb,var(--lg-1) 45%,var(--lg-3)) 72%,var(--lg-3) 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .login-hero-sub{font-size:15.5px;line-height:1.6;color:#475569;margin:0 0 30px;max-width:460px}
@@ -5494,7 +5501,24 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
              the block when both lines are blank. -->
         <div id="ss-by" style="margin-top:22px;padding-top:18px;border-top:1px solid rgba(255,255,255,.14);display:none">
           <div id="ss-credit" style="font-size:13.5px;font-weight:600;letter-spacing:1.2px;color:rgba(255,255,255,.78)"></div>
-          <div id="ss-contact" style="margin-top:5px;font-size:13.5px;letter-spacing:1.4px;color:rgba(255,255,255,.58);font-variant-numeric:tabular-nums"></div>
+          <!-- Support contacts. Phone and email each get a glyph so an
+               operator reading the locked screen from across the room can
+               tell at a glance which is which — on a dark panel the two
+               strings otherwise look like one run of characters. Inline SVG,
+               not an emoji: emoji render differently on every machine and
+               some land as a tofu box on the Windows builds this ships to.
+               Each sits in its own row and disappears on its own when the
+               setting is blank. -->
+          <div id="ss-contacts" style="margin-top:7px;display:flex;flex-direction:column;align-items:center;gap:5px">
+            <div id="ss-contact-row" style="display:flex;align-items:center;gap:8px">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+              <span id="ss-contact" style="font-size:13.5px;letter-spacing:1.4px;color:rgba(255,255,255,.58);font-variant-numeric:tabular-nums"></span>
+            </div>
+            <div id="ss-email-row" style="display:flex;align-items:center;gap:8px">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
+              <span id="ss-email" style="font-size:13.5px;letter-spacing:.8px;color:rgba(255,255,255,.58)"></span>
+            </div>
+          </div>
         </div>
         <div id="ss-clock" style="margin-top:26px;font-size:19px;font-weight:600;color:rgba(255,255,255,.88);font-variant-numeric:tabular-nums"></div>
         <div style="margin-top:28px;font-size:12.5px;letter-spacing:.6px;color:rgba(255,255,255,.45)">Press any key or click to resume</div>
@@ -13071,12 +13095,18 @@ function ssShow(){
   // install shows no empty rule.
   const credit  = String(cfg.app_credit  || '').trim();
   const contact = String(cfg.app_contact || '').trim();
+  const email   = String(cfg.app_email   || '').trim();
   setText('ss-credit', credit);
   setText('ss-contact', contact);
+  setText('ss-email', email);
   const hide = (id, gone) => { const n = document.getElementById(id); if (n) n.style.display = gone ? 'none' : ''; };
   hide('ss-credit', !credit);
-  hide('ss-contact', !contact);
-  hide('ss-by', !credit && !contact);
+  // Hide the ROW, not just the text: the glyph lives beside it and would
+  // otherwise sit on the panel pointing at nothing.
+  hide('ss-contact-row', !contact);
+  hide('ss-email-row', !email);
+  hide('ss-contacts', !contact && !email);
+  hide('ss-by', !credit && !contact && !email);
   // The APPLICATION's mark. This used to copy the topbar image, which is the
   // CUSTOMER's logo — the one thing this panel should not be showing, since
   // the customer's name and logo are what the operator looks at all day on
@@ -29912,7 +29942,7 @@ const SET_FIELD_GROUPS = {
   ],
   company: [
     { title:'Name & Identity', icon:'🏢', hint:'What the company is called on every document — the trade name, its legal suffix, and the short code used in file names. The first three fields are a different thing: the name of THIS SOFTWARE and the credit / support numbers shown beneath it on the screensaver. None of the three appears on any document.',
-      keys:['app_name','app_logo','app_credit','app_contact','trade_name','legal_name','short_name','logo'] },
+      keys:['app_name','app_logo','app_credit','app_contact','app_email','trade_name','legal_name','short_name','logo'] },
     { title:'Constitution', icon:'🤝', hint:'Partnership firms print the firm name / registration number under the company name.',
       keys:['is_partnership','partnership_name'] },
     { title:'Statutory Registrations', icon:'📜', hint:'Numbers printed in the invoice header and quoted in the Spice Board returns.',
