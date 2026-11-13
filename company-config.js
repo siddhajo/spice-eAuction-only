@@ -407,6 +407,32 @@ const DEFAULTS = [
   //     Grade-2 cap band. The per-browser "Show / Hide" choice still works
   //     underneath this; the flag decides whether the choice exists.
   //   • Current Auction — the depot-wise panel under the headline tiles.
+  // ── Customer portal (/my) ──────────────────────────────────────────────
+  // Sellers and buyers signing in with their own phone number to download
+  // their own documents. NOT a SCREEN_FLAGS entry: this is not a sidebar
+  // screen an admin hands to a user, it is a door onto the public internet,
+  // so it is install-wide and it ships OFF. Turning it on makes /my answer;
+  // leaving it off makes /my a 404 and every /api/portal/* route a 404 too.
+  //
+  // Enrolment (Customer Access) stays reachable either way — an admin has to
+  // be able to prepare, and to audit, without the door being open.
+  { key: 'flag_customer_portal',     value: 'false', category: 'flags', label: 'Customer Portal (/my)',                type: 'boolean' },
+  // How a portal sign-in code reaches the customer.
+  //   log       — written to the server log only. TEST ONLY: it is what
+  //               lets the feature be exercised before a real channel
+  //               exists, and no customer can sign in through it.
+  //   whatsapp  — the Cloud API sender. Needs the WhatsApp account to be
+  //               live (Meta disabled it on 2026-11-04) and an approved
+  //               AUTHENTICATION-category template, which is NOT one of the
+  //               two templates whatsapp_config currently holds.
+  // There is no SMS option because no SMS provider is integrated.
+  { key: 'portal_otp_channel',       value: 'log',   category: 'flags', label: 'Portal sign-in code channel',         type: 'text' },
+  // Sign-in codes are counted on their OWN daily meter, not the shared
+  // per-contact ceiling: a code is asked for by the person receiving it, and
+  // sharing the invoice allowance means two mistyped codes lock a seller out
+  // of his own documents until tomorrow. The portal's own throttle (3 per
+  // number per 15 minutes) is the primary brake; this is the backstop.
+  { key: 'wa_max_otp_per_day',       value: '10',    category: 'flags', label: 'Max sign-in codes per number per day', type: 'number' },
   { key: 'flag_dash_snapshot',       value: 'true', category: 'flags', label: 'Auction Snapshot on Dashboard',       type: 'boolean' },
   { key: 'flag_dash_current_auction',value: 'true', category: 'flags', label: 'Current Auction Widget on Dashboard', type: 'boolean' },
   // Quick Actions card on the Dashboard — eight shortcut tiles to screens the

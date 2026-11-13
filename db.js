@@ -926,6 +926,18 @@ async function initDb() {
     tpl_document_lang TEXT DEFAULT 'en',
     tpl_text TEXT DEFAULT '',
     tpl_text_lang TEXT DEFAULT 'en',
+    -- Portal sign-in codes. This MUST be a template Meta approved in the
+    -- AUTHENTICATION category — the other two here are UTILITY, and putting
+    -- a one-time code through a utility template is the kind of
+    -- category mismatch that gets an account reviewed. Blank = the portal
+    -- cannot send codes over WhatsApp and says so rather than guessing.
+    tpl_otp TEXT DEFAULT '',
+    tpl_otp_lang TEXT DEFAULT 'en',
+    -- Authentication templates carry a button (Meta requires one): 'copy'
+    -- for a copy-code button, 'none' for a template approved without one.
+    -- The button needs the code passed a SECOND time as its own component,
+    -- so the shape has to be known before the send, not after it fails.
+    tpl_otp_button TEXT DEFAULT 'copy',
     enabled INTEGER DEFAULT 1,
     updated_at TEXT DEFAULT (datetime('now','localtime'))
   )`);
@@ -1230,6 +1242,97 @@ async function initDb() {
     FOREIGN KEY (dest_auction_id) REFERENCES auctions(id)
   )`);
 
+  // ── CUSTOMER PORTAL ────────────────────────────────────────
+  // The self-service door at /my: a seller or buyer signs in with their own
+  // phone number and downloads the documents raised in THEIR name. Four
+  // tables, all owned by customer-portal.js.
+  //
+  // ── Why there is no UNIQUE on phone_key ──────────────────────────
+  // One phone number may hold SEVERAL parties. That is a deliberate business
+  // decision (2026-11-13): in this trade a household or a group of planters
+  // commonly shares one handset, and the alternative — refusing the second
+  // person until they produce their own number — would lock roughly half the
+  // seller base out of their own paperwork. The master bears this out: of the
+  // 1,288 sellers who hold a document, 601 sit on a number another seller
+  // also uses.
+  //
+  // The cost is stated plainly so nobody has to rediscover it: whoever holds
+  // the handset sees every party bound to it. The containment is that a link
+  // is a DELIBERATE grant — nothing is visible until a row here says so, and
+  // an admin can revoke any single link without touching the others.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS party_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- 'seller' → traders.id, 'buyer' → buyers.id. Kept as a kind+id pair
+    -- rather than two nullable FK columns so one index serves both.
+    party_kind TEXT NOT NULL,
+    party_id INTEGER NOT NULL,
+    -- Last TEN digits, the same normalisation whatsapp_messages.phone_key
+    -- uses. Persisted rather than computed so the login lookup is an index
+    -- hit and not a scan with five nested replace() calls.
+    phone_key TEXT NOT NULL,
+    -- 'active' | 'revoked'. Revoked rows are kept: who could once see what
+    -- is exactly the question asked after a dispute.
+    status TEXT NOT NULL DEFAULT 'active',
+    -- 'seeded'  the one-time import from the phone on the master
+    -- 'admin'   bound by hand on the Customer Access screen
+    -- 'claim'   bound by the party themselves (reserved; not yet built)
+    source TEXT NOT NULL DEFAULT 'admin',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    created_by TEXT DEFAULT '',
+    revoked_at TEXT DEFAULT NULL,
+    revoked_by TEXT DEFAULT ''
+  )`);
+
+  // One row per OTP issued. `code_hash` rather than the code: this table is
+  // in every backup that leaves the building, and a readable OTP column
+  // would make the backup a skeleton key for the portal.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS party_otp (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone_key TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    consumed_at TEXT DEFAULT NULL,
+    channel TEXT DEFAULT '',
+    ip TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+
+  // Portal sessions are deliberately NOT rows in `sessions`. That table is
+  // FK'd to users(id) and wired into checkDuplicateLogin, the idle
+  // auto-logout window, login_history and the concurrent-admin notices —
+  // putting customers through it would make them appear on the Users screen
+  // and let one seller signing in bump another off.
+  //
+  // Keyed on the PHONE, not on a party: one number may hold several parties
+  // (see party_links above), so the session authenticates a handset and the
+  // party list is resolved per request from the live links. Revoking a link
+  // therefore takes effect on the next request, not at next sign-in.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS party_sessions (
+    token TEXT PRIMARY KEY,
+    phone_key TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    last_used_at TEXT DEFAULT (datetime('now','localtime')),
+    expires_at TEXT NOT NULL,
+    device TEXT DEFAULT '',
+    ip TEXT DEFAULT ''
+  )`);
+
+  // Every document a customer actually pulled. This is the audit trail that
+  // answers "who downloaded that bill" — the one question a shared-handset
+  // login makes it important to be able to answer.
+  wrapped.exec(`CREATE TABLE IF NOT EXISTS party_downloads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone_key TEXT NOT NULL,
+    party_kind TEXT NOT NULL,
+    party_id INTEGER NOT NULL,
+    doc_kind TEXT NOT NULL,
+    doc_id INTEGER NOT NULL,
+    doc_no TEXT DEFAULT '',
+    ip TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+
   // ── INDEXES ────────────────────────────────────────────────
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_traders_name ON traders(name)',
@@ -1278,6 +1381,19 @@ async function initDb() {
     // search, the bank export's deduction and the payments roll-up all scan
     // by auction_id, never by lot_id alone.
     'CREATE INDEX IF NOT EXISTS idx_lot_advances_auction ON lot_advances(auction_id)',
+    // Portal login: "which parties does this handset open?" runs on every
+    // single portal request, so it must be an index hit.
+    'CREATE INDEX IF NOT EXISTS idx_party_links_phone ON party_links(phone_key, status)',
+    // The Customer Access screen asks the reverse: "is this seller linked?"
+    'CREATE INDEX IF NOT EXISTS idx_party_links_party ON party_links(party_kind, party_id, status)',
+    // One active link per (party, phone) — binding the same pair twice is a
+    // double-click, not a second grant. Partial so a revoked row can be
+    // re-granted later without tripping it.
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_party_links_live
+       ON party_links(party_kind, party_id, phone_key) WHERE status = 'active'`,
+    'CREATE INDEX IF NOT EXISTS idx_party_otp_phone ON party_otp(phone_key, id DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_party_sessions_phone ON party_sessions(phone_key)',
+    'CREATE INDEX IF NOT EXISTS idx_party_downloads_party ON party_downloads(party_kind, party_id, id DESC)',
   ];
   for (const idx of indexes) { try { wrapped.exec(idx); } catch (e) {} }
 
@@ -1663,6 +1779,45 @@ async function initDb() {
       WHERE i.auction_id IS NOT NULL AND i.bag > 0 AND i.gunny > 0
         AND i.id = (SELECT MIN(i2.id) FROM invoices i2
                      WHERE i2.auction_id = i.auction_id AND i2.bag > 0 AND i2.gunny > 0)`,
+    // Portal sign-in codes over WhatsApp — see the whatsapp_config schema.
+    "ALTER TABLE whatsapp_config ADD COLUMN tpl_otp TEXT DEFAULT ''",
+    "ALTER TABLE whatsapp_config ADD COLUMN tpl_otp_lang TEXT DEFAULT 'en'",
+    "ALTER TABLE whatsapp_config ADD COLUMN tpl_otp_button TEXT DEFAULT 'copy'",
+    // ── invoices.buyer_id — the buyer side of the customer portal ──
+    //
+    // Every SELLER document already carries trader_id (bills, purchases and
+    // both debit-note tables, 100% populated), so "whose document is this?"
+    // has an exact answer on that side. Sales invoices never had the
+    // equivalent: the buyer is a NAME plus a GSTIN, and party names repeat.
+    // A portal that scoped on the name alone would hand one buyer another
+    // buyer's invoices the first time two of them shared a name.
+    //
+    // The backfill is deliberately CONSERVATIVE — it writes an id only where
+    // the match is unambiguous, and leaves the rest NULL:
+    //   1. name + GSTIN both agree, and exactly one buyer matches
+    //   2. failing that, name alone, and exactly one buyer carries that name
+    // An invoice still NULL after this is simply never portal-visible. That
+    // is the right failure: a document nobody can reach is a support call,
+    // a document the wrong person can reach is a breach.
+    'ALTER TABLE invoices ADD COLUMN buyer_id INTEGER',
+    `UPDATE invoices SET buyer_id = (
+        SELECT b.id FROM buyers b
+         WHERE UPPER(TRIM(b.buyer)) = UPPER(TRIM(invoices.buyer))
+           AND UPPER(TRIM(COALESCE(b.gstin,''))) = UPPER(TRIM(COALESCE(invoices.gstin,'')))
+       )
+      WHERE buyer_id IS NULL
+        AND TRIM(COALESCE(buyer,'')) <> ''
+        AND (SELECT COUNT(*) FROM buyers b
+              WHERE UPPER(TRIM(b.buyer)) = UPPER(TRIM(invoices.buyer))
+                AND UPPER(TRIM(COALESCE(b.gstin,''))) = UPPER(TRIM(COALESCE(invoices.gstin,'')))) = 1`,
+    `UPDATE invoices SET buyer_id = (
+        SELECT b.id FROM buyers b
+         WHERE UPPER(TRIM(b.buyer)) = UPPER(TRIM(invoices.buyer))
+       )
+      WHERE buyer_id IS NULL
+        AND TRIM(COALESCE(buyer,'')) <> ''
+        AND (SELECT COUNT(*) FROM buyers b
+              WHERE UPPER(TRIM(b.buyer)) = UPPER(TRIM(invoices.buyer))) = 1`,
   ];
   for (const m of migrations) {
     try { wrapped.exec(m); console.log('Migration applied:', m); }

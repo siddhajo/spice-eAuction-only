@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>My Documents</title>
+<style>
+  /* Deliberately one small file: no framework, no webfont, no icon library.
+     The people this is for are on a phone on mobile data, and the admin SPA
+     next door is 3.1 MB. Every icon here is inline SVG from one <symbol>
+     sheet, so the whole set costs about a kilobyte and inherits currentColor
+     in both themes. */
+  /* Cardamom green, not grey. The first cut was a cool-neutral palette with
+     one very dark accent, which read as a grey form with a green button on
+     it. Three things carry the colour now: a gradient header that is the
+     first thing on screen, an accent bright enough to survive a 17px icon
+     (#0f8b4c against the old #1f6f43, which went almost black at that size),
+     and a stripe tinted green rather than grey so the list belongs to the
+     same page. Text contrast went UP at the same time — vibrancy is no use
+     to someone who cannot read the number. */
+  :root{
+    --bg:#eff4f1; --card:#fff; --ink:#0c1a12; --muted:#56685d;
+    --line:#d7e3da; --accent:#0f8b4c; --accent-ink:#fff;
+    --accent-dark:#0a6b3a; --accent-soft:#d9f0e2; --stripe:#f2f9f5;
+    --danger:#c0392b;
+    --shadow:0 1px 3px rgba(12,26,18,.10), 0 1px 2px rgba(12,26,18,.06);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0d1711; --card:#17241c; --ink:#e8f3ec; --muted:#93ab9d;
+           --line:#27382d; --accent:#2ecc71; --accent-ink:#04240f;
+           --accent-dark:#1f9e55; --accent-soft:#143024; --stripe:#1c2a22;
+           --danger:#ff7f6e;
+           --shadow:0 1px 3px rgba(0,0,0,.45); }
+  }
+  *{box-sizing:border-box}
+  /* 18px base, not 16. The people reading this are growers, often older,
+     outdoors, holding the phone at arm's length — and every size below is
+     derived from that rather than from a desktop default. */
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:18px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+       -webkit-text-size-adjust:100%}
+  .wrap{max-width:720px;margin:0 auto;padding:16px 16px 32px}
+
+  /* A real app bar: pinned to the top, full-bleed, and NOT a rounded card.
+     Sticking a rounded card to top:0 leaves a transparent sliver above it
+     that the list scrolls through, which looks like a bug. Full-bleed also
+     lets it carry the notch inset on a modern phone. */
+  header{position:sticky;top:0;z-index:30;color:#fff;
+         background:linear-gradient(135deg,var(--accent) 0%,var(--accent-dark) 100%);
+         box-shadow:0 2px 12px rgba(12,26,18,.18);
+         padding-top:env(safe-area-inset-top,0px)}
+  header .hwrap{max-width:720px;margin:0 auto;padding:13px 16px;
+                display:flex;align-items:center;gap:12px}
+  header .mark{width:38px;height:38px;border-radius:11px;flex:none;
+               background:rgba(255,255,255,.92);color:var(--accent);
+               display:grid;place-items:center}
+  header h1{font-size:21px;margin:0;font-weight:700;letter-spacing:-.015em;color:#fff}
+  header .co{font-size:14px;margin-top:0;color:rgba(255,255,255,.85);font-weight:500}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+        padding:18px;margin-bottom:14px;box-shadow:var(--shadow)}
+  label{display:block;font-size:15px;color:var(--muted);margin-bottom:8px;font-weight:500}
+  .field{position:relative}
+  .field .ico{position:absolute;left:12px;top:50%;transform:translateY(-50%);
+              color:var(--muted);pointer-events:none}
+  /* `appearance:none` is for the TEXT and SELECT controls. A checkbox caught
+     by this rule keeps its box and loses its tick — it renders as an empty
+     rounded rectangle that never visibly changes, which is exactly as
+     useless as it sounds. Checkboxes are styled by `accent-color` instead,
+     below. */
+  input:not([type=checkbox]),select{width:100%;padding:14px 12px;font-size:19px;
+       border:1px solid var(--line);border-radius:10px;background:var(--bg);
+       color:var(--ink);appearance:none}
+  input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
+  /* 17px is not taste: iOS Safari zooms the whole page on focus below 16px. */
+  .field input{padding-left:40px}
+  input:not([type=checkbox]):focus,select:focus{outline:2px solid var(--accent);
+       outline-offset:-1px;border-color:transparent}
+  input[inputmode="numeric"]{letter-spacing:.06em}
+
+  button{width:100%;padding:14px;font-size:18px;font-weight:600;border:0;border-radius:10px;
+         background:var(--accent);color:var(--accent-ink);cursor:pointer;margin-top:14px;
+         display:inline-flex;align-items:center;justify-content:center;gap:8px}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line);font-weight:500}
+  /* Sign out reads as a leave-action, so it gets its own colour rather than
+     the brand green (which everywhere else on this page means "open a
+     document"). Tinted rather than solid — it is not the thing we want a
+     thumb to land on by accident. */
+  /* A transparent red over a green-tinted page mixes to mud — this needs
+     its own opaque ground, not a tint of whatever is behind it. */
+  button.leave{background:#fdeceb;color:#b3271a;border:1.5px solid #f5cfcb;font-weight:650}
+  button[disabled]{opacity:.5;cursor:default}
+
+  .msg{padding:12px 14px;border-radius:10px;font-size:15.5px;margin-top:13px;
+       display:flex;gap:9px;align-items:flex-start}
+  .msg svg{flex:none;margin-top:2px}
+  .msg.err{background:color-mix(in srgb,var(--danger) 11%,transparent);color:var(--danger)}
+  #doclist > .msg{margin:12px 14px}
+  .msg.info{background:var(--accent-soft);color:var(--accent-dark)}
+  .msg.warn{background:#fff3e0;color:#9a5b00}
+  /* The countdown. Tabular figures so the line does not jiggle each second,
+     which is distracting on a screen somebody is reading a code onto. */
+  .msg b{font-variant-numeric:tabular-nums;font-weight:700}
+  #resend{margin-top:10px}
+
+  /* ── The party selector ──────────────────────────────────────────────
+     A <select>, not a row of tiles. One handset can hold seventeen
+     parties here; as tiles that is a wall of buttons that pushes the
+     documents off the screen, and on a phone the native picker is both
+     smaller and easier to use than anything we could draw. */
+  .who{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .who .sel{flex:1;position:relative}
+  .who select{padding:12px 38px 12px 42px;font-size:17px;font-weight:700;
+              background:var(--card);border-radius:11px;color:var(--ink);
+              border-color:var(--accent-soft);box-shadow:var(--shadow)}
+  .who .avatar{position:absolute;left:11px;top:50%;transform:translateY(-50%);
+               color:var(--accent);pointer-events:none}
+  .who .chev{position:absolute;right:12px;top:50%;transform:translateY(-50%);
+             color:var(--muted);pointer-events:none}
+  .who .one{flex:1;display:flex;align-items:center;gap:10px;font-weight:700;font-size:17.5px}
+
+  /* Whose sign-in is this? On a shared handset the party name alone does not
+     answer that — the NUMBER is the account. */
+  .signed{display:flex;align-items:center;gap:7px;font-size:14px;color:var(--muted);
+          margin:-6px 2px 12px}
+  .signed b{font-weight:700;color:var(--accent-dark);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+
+  /* Count on the left, financial-year picker on the right — the year is a
+     filter, not an identity, so it does not deserve the full-width row the
+     party selector gets. */
+  /* Year and month sit together on their own row — two pickers, because
+     "show me October" and "show me this year" are the two ways a grower
+     asks for their papers. The count and the bulk button share the row
+     below them. */
+  .period{display:flex;gap:8px;margin:0 0 10px}
+  .period .yr{flex:1}
+  .period .yr select{width:100%}
+  .bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 8px}
+  /* Download-everything-shown. Sized as a link rather than a block button:
+     it belongs to the list under it, not to the page. */
+  .grab{display:inline-flex;align-items:center;gap:7px;font-size:14.5px;font-weight:650;
+        color:var(--accent-ink);background:var(--accent);border:0;border-radius:9px;
+        padding:9px 14px;cursor:pointer;width:auto;margin:0;
+        box-shadow:0 1px 3px rgba(15,139,76,.3)}
+  .grab[disabled]{opacity:.55;cursor:default}
+  .grab.plain{background:var(--card);color:var(--accent);border:1.5px solid var(--accent-soft);
+              box-shadow:none}
+  .bar .btns{display:flex;gap:7px;flex:none}
+
+  /* ── Select mode ──────────────────────────────────────────────────────
+     Checkboxes and the per-row View/Download buttons are ALTERNATIVES, not
+     neighbours: at 414px with 18px type there is room for one or the other,
+     and a row carrying both re-truncates "Auction 21". Hiding the buttons
+     while selecting is also the honest reading — you are picking documents,
+     not opening them. */
+  .doc .pick{width:24px;height:24px;flex:none;margin:0;accent-color:var(--accent)}
+  .doc.on{background:var(--accent-soft)}
+  .selall{display:flex;align-items:center;gap:11px;padding:11px 18px;
+          border-bottom:1px solid var(--line);font-size:15px;font-weight:600;
+          color:var(--muted);cursor:pointer;position:sticky;top:0;
+          background:var(--card);z-index:1}
+  /* The app bar wins any overlap with the list's own sticky header. */
+  .selall input{width:24px;height:24px;flex:none;margin:0;accent-color:var(--accent)}
+  .count{font-size:14px;color:var(--muted)}
+  .yr{position:relative;flex:none}
+  .yr select{width:auto;padding:9px 32px 9px 13px;font-size:14.5px;font-weight:650;
+             background:var(--card);border-radius:10px;color:var(--ink);
+             border-color:var(--accent-soft);box-shadow:var(--shadow)}
+  .yr .chev{position:absolute;right:9px;top:50%;transform:translateY(-50%);
+            color:var(--muted);pointer-events:none}
+
+  /* The list scrolls inside its own card rather than the page: the party
+     picker and the year stay put while a grower with forty bills scrolls
+     through them. Capped against the viewport so it is never taller than
+     the screen on a phone, and never a stub on a desktop. */
+  #doclist{max-height:min(58vh,460px);overflow-y:auto;overscroll-behavior:contain;
+           -webkit-overflow-scrolling:touch;padding:0;overflow-x:hidden}
+  #doclist::-webkit-scrollbar{width:9px}
+  #doclist::-webkit-scrollbar-thumb{background:var(--line);border-radius:9px;
+           border:3px solid var(--card)}
+
+  /* The amount sits on the META line, not in a third column. Competing for
+     width with the title is what truncated "Commission Bill 2873" to
+     "Commission …" on a 414px phone — and the document number is the one
+     thing on the row the reader is actually looking for. */
+  /* Zebra rows instead of hairline separators — one device or the other,
+     never both, or the list reads as a grid. The stripe runs the full width
+     of the card (the card's own side padding moved onto the rows) so the
+     bands do not float with a white gutter either side of them. */
+  .doc{display:flex;align-items:center;gap:12px;padding:12px 18px}
+  .doc.alt{background:var(--stripe)}
+  /* No per-row type icon. Each party now sees exactly ONE kind of document
+     — a seller only commission bills, a buyer only invoices — so the glyph
+     was identical on every row: 52px of width that said nothing, and at
+     18px base type that width is the difference between "Auction 19" and
+     "Auc…". The kind is already in the title of each row. */
+  .doc .grow{flex:1;min-width:0}
+  .doc .t{font-weight:650;font-size:16.5px;line-height:1.35;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .doc .s{font-size:14.5px;color:var(--muted);line-height:1.4;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .doc .s b{font-weight:700;color:var(--accent-dark);font-variant-numeric:tabular-nums}
+  .acts{display:flex;gap:6px;flex:none}
+  .acts a{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;
+          border:1.5px solid var(--accent-soft);color:var(--accent);
+          text-decoration:none;background:var(--card)}
+  .acts a.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
+             box-shadow:0 1px 3px rgba(15,139,76,.3)}
+  .acts a:active{transform:scale(.94)}
+
+  .empty{color:var(--muted);font-size:15.5px;padding:20px 4px;text-align:center}
+  .foot{color:var(--muted);font-size:13.5px;text-align:center;padding:14px 0 4px}
+  [hidden]{display:none!important}
+
+  /* ── Dark-theme overrides ─────────────────────────────────────────────
+     LAST in the sheet on purpose. These are plain class selectors, same
+     specificity as the rules they correct, so order is the only thing
+     deciding the winner — declared higher up, the dark sign-out button
+     silently lost to the light one and rendered pink on black. */
+  @media (prefers-color-scheme:dark){
+    header{box-shadow:0 4px 16px rgba(0,0,0,.5)}
+    header .mark{background:rgba(255,255,255,.95)}
+    .grab, .acts a.go{box-shadow:0 1px 3px rgba(0,0,0,.4)}
+    /* --accent-soft is a near-black green; as a 1.5px border it vanished. */
+    .acts a{border-color:#2d5a40}
+    .grab.plain{border-color:#2d5a40}
+    .who select, .yr select{border-color:#2d5a40}
+    button.leave{background:#2b1512;color:#ff9385;border-color:#4a231d}
+  }
+</style>
+</head>
+<body>
+
+<!-- One sprite sheet; every icon below is a <use> of it. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-leaf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>
+  </symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="2" width="14" height="20" rx="2.5"/><path d="M12 18h.01"/>
+  </symbol>
+  <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3"/><path d="m16 5 3 3"/><path d="m19 2 3 3"/>
+  </symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+  </symbol>
+  <symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/>
+  </symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+  </symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m6 9 6 6 6-6"/>
+  </symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h6"/><path d="M8 13h8M8 17h5"/>
+  </symbol>
+  <symbol id="i-note" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h6"/><path d="M12 11v6M9 14h6"/>
+  </symbol>
+  <symbol id="i-receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 2v20l2.5-1.5L9 22l3-1.5L15 22l2.5-1.5L20 22V2l-2.5 1.5L15 2l-3 1.5L9 2 6.5 3.5Z"/><path d="M8 8h8M8 12h8M8 16h5"/>
+  </symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>
+  </symbol>
+  <symbol id="i-dl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
+  </symbol>
+  <symbol id="i-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>
+  </symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/>
+  </symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/>
+  </symbol>
+</defs></svg>
+
+<header>
+  <div class="hwrap">
+    <span class="mark"><svg width="19" height="19"><use href="#i-leaf"/></svg></span>
+    <span>
+      <h1>My Documents</h1>
+      <div class="co" id="co"></div>
+    </span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ── Step 1: phone ── -->
+  <section class="card" id="step-phone">
+    <label for="phone">Your mobile number</label>
+    <div class="field">
+      <span class="ico"><svg width="18" height="18"><use href="#i-phone"/></svg></span>
+      <input id="phone" type="tel" inputmode="numeric" autocomplete="tel"
+             maxlength="15" placeholder="10-digit mobile number">
+    </div>
+    <button id="send"><svg width="16" height="16"><use href="#i-send"/></svg> Send code</button>
+    <div class="msg err" id="err-phone" hidden></div>
+  </section>
+
+  <!-- ── Step 2: code ── -->
+  <section class="card" id="step-code" hidden>
+    <label for="code">Enter the 6-digit code sent to <span id="to"></span></label>
+    <div class="field">
+      <span class="ico"><svg width="18" height="18"><use href="#i-lock"/></svg></span>
+      <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" placeholder="······">
+    </div>
+    <div class="msg info" id="ttl"></div>
+    <button id="verify">Sign in</button>
+    <button class="ghost" id="resend"></button>
+    <button class="ghost" id="back">Use a different number</button>
+    <div class="msg err" id="err-code" hidden></div>
+  </section>
+
+  <!-- ── Step 3: documents ── -->
+  <section id="step-docs" hidden>
+    <div class="who" id="who"></div>
+    <div class="signed" id="signed" hidden></div>
+    <div class="period" id="period" hidden>
+      <span class="yr" id="yr"></span>
+      <span class="yr" id="mo"></span>
+    </div>
+    <div class="bar">
+      <span class="count" id="count"></span>
+      <span class="btns">
+        <button class="grab plain" id="pickbtn" hidden></button>
+        <button class="grab" id="grab" hidden></button>
+      </span>
+    </div>
+    <div class="card" id="doclist"></div>
+    <button class="leave" id="out"><svg width="16" height="16"><use href="#i-out"/></svg> Sign out</button>
+  </section>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var $ = function(id){ return document.getElementById(id); };
+  var token = sessionStorage.getItem('portal_token') || '';
+  var parties = [], active = null, myPhone = '';
+  var allDocs = [], fyPick = '', moPick = '';   // moPick '' = the whole year
+  var selMode = false, sel = {};                // id → true, only while selecting
+  var ticker = null, expiresAt = 0, resendAt = 0;
+
+
+  function svg(id, size){
+    return '<svg width="'+(size||17)+'" height="'+(size||17)+'" aria-hidden="true"><use href="'+id+'"/></svg>';
+  }
+  function show(step){
+    $('step-phone').hidden = step !== 'phone';
+    $('step-code').hidden  = step !== 'code';
+    $('step-docs').hidden  = step !== 'docs';
+  }
+  function err(el, m){
+    var e = $(el);
+    if (!m) { e.hidden = true; return; }
+    e.innerHTML = svg('#i-alert', 16) + '<span></span>';
+    e.lastChild.textContent = m;
+    e.hidden = false;
+  }
+  function money(n){
+    var v = Number(n);
+    if (!isFinite(v)) return '';
+    return '₹' + v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  }
+  // ── Indian financial year: 1 April → 31 March ──────────────────────
+  // A document dated 12 Feb 2027 belongs to FY 2026-27, not 2027-28. Derived
+  // on the client from the date already in the list, so the year filter costs
+  // no extra request.
+  function fyOf(d){
+    var m = String(d || '').match(/^(\d{4})-(\d{2})/);
+    if (!m) return '';
+    var y = Number(m[1]), mon = Number(m[2]);
+    var start = mon >= 4 ? y : y - 1;
+    return start + '-' + String((start + 1) % 100).padStart(2, '0');
+  }
+
+  var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  // "08 Oct", not "08/10/2026". The financial year is already chosen in the
+  // picker directly above the list, so repeating it on every row spends the
+  // width that "Auction 19" needs — and that is the one fact a grower rings
+  // the office about.
+  function when(d){
+    if (!d) return '';
+    var m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return String(d);
+    return m[3] + ' ' + (MON[Number(m[2]) - 1] || m[2]);
+  }
+
+  async function api(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({ 'Content-Type':'application/json' }, opts.headers || {});
+    if (token) opts.headers.Authorization = 'Bearer ' + token;
+    var r = await fetch(path, opts);
+    var j = null;
+    try { j = await r.json(); } catch(_) {}
+    if (!r.ok) throw new Error((j && j.error) || 'Something went wrong. Please try again.');
+    return j;
+  }
+
+  // ── Step 1 ──
+  // One path for both the first send and a resend, so the countdown and the
+  // cooldown can never be set by one and not the other.
+  async function requestCode(again){
+    var onCode = !!again;
+    err(onCode ? 'err-code' : 'err-phone', '');
+    var phone = $('phone').value.replace(/\D/g,'');
+    if (phone.length < 10) return err('err-phone','Please enter your 10-digit mobile number.');
+    var btn = onCode ? $('resend') : $('send');
+    btn.disabled = true;
+    try {
+      var r = await api('/api/portal/otp/request', { method:'POST', body: JSON.stringify({ phone: phone }) });
+      $('to').textContent = phone.slice(-10);
+      $('code').value = '';
+      if (!onCode) { show('code'); $('code').focus(); }
+      startClock(r.ttlSeconds || 600, r.resendAfterSeconds || 45);
+      // The server answers identically for a number it does not know, so
+      // this wording is the only honest thing to say at this point.
+      $('foot').textContent = 'If this number is registered with us, a code is on its way.';
+    } catch(e){
+      err(onCode ? 'err-code' : 'err-phone', e.message);
+      btn.disabled = false;
+    }
+  }
+  $('send').onclick = function(){ requestCode(false); };
+
+  // ── The expiry clock ───────────────────────────────────────────────
+  // A code with a ten-minute life has to SAY so, and keep saying it. A line
+  // that reads "valid for 10 minutes" and then goes stale is worse than
+  // none: the one thing a person needs to know at minute nine is how long
+  // is left, and whether asking again is allowed yet.
+  function mmss(sec){
+    var m = Math.floor(sec / 60), s2 = sec % 60;
+    return m + ':' + (s2 < 10 ? '0' : '') + s2;
+  }
+  function stopClock(){ if (ticker) { clearInterval(ticker); ticker = null; } }
+
+  function startClock(ttlSec, cooldownSec){
+    stopClock();
+    expiresAt = Date.now() + ttlSec * 1000;
+    resendAt  = Date.now() + (cooldownSec || 45) * 1000;
+    tick();
+    ticker = setInterval(tick, 1000);
+  }
+
+  function tick(){
+    var left = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
+    var wait = Math.max(0, Math.round((resendAt - Date.now()) / 1000));
+    var box = $('ttl'), rs = $('resend');
+
+    if (left > 0) {
+      box.className = 'msg info';
+      box.innerHTML = svg('#i-clock', 16) + '<span>This code expires in <b></b>. '
+        + 'Enter it before then — after that it stops working and you will need a new one.</span>';
+      box.querySelector('b').textContent = mmss(left);
+      $('verify').disabled = false;
+    } else {
+      box.className = 'msg warn';
+      box.innerHTML = svg('#i-alert', 16) + '<span>This code has expired. Send a new one to carry on.</span>';
+      $('verify').disabled = true;
+      stopClock();
+    }
+
+    if (wait > 0 && left > 0) {
+      rs.disabled = true;
+      rs.textContent = 'Send again in ' + wait + 's';
+    } else {
+      rs.disabled = false;
+      rs.textContent = 'Send a new code';
+    }
+  }
+
+  $('resend').onclick = function(){ requestCode(true); };
+
+  $('back').onclick = function(){
+    stopClock(); err('err-code',''); $('foot').textContent=''; show('phone');
+  };
+
+  // ── Step 2 ──
+  $('verify').onclick = async function(){
+    err('err-code','');
+    var phone = $('phone').value.replace(/\D/g,'');
+    var code  = $('code').value.replace(/\D/g,'');
+    if (code.length !== 6) return err('err-code','Enter the 6-digit code.');
+    $('verify').disabled = true;
+    try {
+      var r = await api('/api/portal/otp/verify', { method:'POST', body: JSON.stringify({ phone: phone, code: code }) });
+      token = r.token;
+      sessionStorage.setItem('portal_token', token);
+      parties = r.parties || [];
+      myPhone = r.phone || '';
+      stopClock();
+      $('foot').textContent = '';
+      enter();
+    } catch(e){ err('err-code', e.message); }
+    $('verify').disabled = false;
+  };
+
+  // ── Step 3 ──
+  function enter(){
+    show('docs');
+    if (myPhone) {
+      var sg = $('signed');
+      sg.innerHTML = svg('#i-phone', 13) + '<span>Signed in as </span>';
+      var b = document.createElement('b');
+      b.textContent = myPhone;
+      sg.appendChild(b);
+      sg.hidden = false;
+    }
+    var who = $('who');
+    who.innerHTML = '';
+    if (parties.length > 1) {
+      // A dropdown rather than a row of tiles: one handset here can hold
+      // seventeen parties, and the native picker stays one line however
+      // many there are.
+      var sel = document.createElement('div'); sel.className = 'sel';
+      var s = document.createElement('select');
+      s.setAttribute('aria-label','Choose whose documents to view');
+      parties.forEach(function(p, i){
+        var o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = p.name + (p.kind === 'buyer' ? '  (buyer)' : '');
+        s.appendChild(o);
+      });
+      s.onchange = function(){ select(Number(s.value)); };
+      sel.innerHTML = '<span class="avatar">' + svg('#i-user',17) + '</span>'
+                    + '<span class="chev">' + svg('#i-chev',16) + '</span>';
+      sel.insertBefore(s, sel.firstChild);
+      who.appendChild(sel);
+    } else if (parties.length === 1) {
+      var one = document.createElement('div'); one.className = 'one';
+      one.innerHTML = '<span style="color:var(--accent)">' + svg('#i-user',18) + '</span>';
+      var nm = document.createElement('span');
+      nm.textContent = parties[0].name;
+      one.appendChild(nm);
+      who.appendChild(one);
+    }
+    select(0);
+  }
+
+  async function select(i){
+    active = parties[i];
+    if (!active) return;
+    var list = $('doclist');
+    $('count').textContent = '';
+    $('period').hidden = true;
+    $('grab').hidden = true;
+    $('pickbtn').hidden = true;
+    selMode = false; sel = {};
+    list.innerHTML = '<div class="empty">Loading…</div>';
+    try {
+      var r = await api('/api/portal/documents?party=' + encodeURIComponent(active.kind + ':' + active.id));
+      allDocs = r.documents || [];
+      fyPick = ''; moPick = '';  // a new party starts on its own latest year
+      selMode = false; sel = {};
+      buildPeriod();
+      render();
+    } catch(e){
+      if (/sign in/i.test(e.message)) return signedOut();
+      allDocs = [];
+      $('grab').hidden = true;
+      $('pickbtn').hidden = true;
+      list.innerHTML = '';
+      $('count').textContent = '';
+      var d = document.createElement('div'); d.className = 'empty'; d.textContent = e.message;
+      list.appendChild(d);
+    }
+  }
+
+  // Both pickers offer only periods this party actually HAS documents in —
+  // an empty month in the list is a dead end the reader has to back out of.
+  function selectEl(box, items, current, onPick, aria){
+    box.innerHTML = '';
+    var sel = document.createElement('select');
+    sel.setAttribute('aria-label', aria);
+    items.forEach(function(it){
+      var o = document.createElement('option');
+      o.value = it.v; o.textContent = it.t;
+      if (it.v === current) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.onchange = function(){ onPick(sel.value); };
+    box.appendChild(sel);
+    var ch = document.createElement('span'); ch.className = 'chev';
+    ch.innerHTML = svg('#i-chev', 15);
+    box.appendChild(ch);
+  }
+
+  function buildPeriod(){
+    var years = [];
+    allDocs.forEach(function(d){
+      var f = fyOf(d.date);
+      if (f && years.indexOf(f) === -1) years.push(f);
+    });
+    years.sort().reverse();
+    if (!years.length) { $('period').hidden = true; return; }
+    if (!fyPick || years.indexOf(fyPick) === -1) fyPick = years[0];
+
+    selectEl($('yr'), years.map(function(y){ return { v:y, t:'FY ' + y }; }), fyPick,
+      function(v){ fyPick = v; moPick = ''; selMode = false; sel = {}; buildPeriod(); render(); }, 'Financial year');
+
+    // Months WITHIN the chosen year, newest first, plus "whole year".
+    var months = [];
+    allDocs.forEach(function(d){
+      if (fyOf(d.date) !== fyPick) return;
+      var ym = String(d.date || '').slice(0, 7);
+      if (ym && months.indexOf(ym) === -1) months.push(ym);
+    });
+    months.sort().reverse();
+    if (moPick && months.indexOf(moPick) === -1) moPick = '';
+    var opts = [{ v:'', t:'Whole year' }].concat(months.map(function(m){
+      return { v:m, t: MON[Number(m.slice(5,7)) - 1] + ' ' + m.slice(0,4) };
+    }));
+    selectEl($('mo'), opts, moPick, function(v){ moPick = v; selMode = false; sel = {}; render(); }, 'Month');
+    $('period').hidden = false;
+  }
+
+  function render(){
+    var list = $('doclist');
+    var docs = allDocs.filter(function(d){
+      if (fyPick && fyOf(d.date) !== fyPick) return false;
+      if (moPick && String(d.date || '').slice(0, 7) !== moPick) return false;
+      return true;
+    });
+    list.innerHTML = '';
+    list.scrollTop = 0;
+    if (!docs.length) {
+      list.innerHTML = '<div class="empty">' + svg('#i-inbox', 28)
+        + '<div style="margin-top:8px">'
+        + (allDocs.length ? 'Nothing in this period.' : 'No documents yet for this account.')
+        + '</div></div>';
+      $('count').textContent = '';
+      $('grab').hidden = true;
+      $('pickbtn').hidden = true;
+      return;
+    }
+    $('count').textContent = docs.length + ' document' + (docs.length === 1 ? '' : 's');
+
+    drawBar(docs);
+
+    // A "select all" header, sticky so it stays reachable in a long list.
+    if (selMode) {
+      var head = document.createElement('label'); head.className = 'selall';
+      var all = document.createElement('input'); all.type = 'checkbox';
+      var every = docs.every(function(d){ return sel[d.id]; });
+      all.checked = every && docs.length > 0;
+      all.onchange = function(){
+        docs.forEach(function(d){ if (all.checked) sel[d.id] = true; else delete sel[d.id]; });
+        render();
+      };
+      head.appendChild(all);
+      var lbl = document.createElement('span');
+      lbl.textContent = every ? 'Clear all' : 'Select all';
+      head.appendChild(lbl);
+      list.appendChild(head);
+    }
+
+    docs.forEach(function(d, i){
+      var row = document.createElement('div');
+      row.className = (i % 2 ? 'doc alt' : 'doc') + (selMode && sel[d.id] ? ' on' : '');
+
+      if (selMode) {
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.className = 'pick';
+        cb.checked = !!sel[d.id];
+        cb.setAttribute('aria-label', 'Select ' + d.label + ' ' + (d.no || ''));
+        cb.onchange = function(){
+          if (cb.checked) sel[d.id] = true; else delete sel[d.id];
+          row.className = (i % 2 ? 'doc alt' : 'doc') + (cb.checked ? ' on' : '');
+          drawBar(docs);
+          // Keep the header's own tick honest without a full redraw.
+          var head = list.querySelector('.selall input');
+          if (head) {
+            head.checked = docs.every(function(x){ return sel[x.id]; });
+            head.parentNode.lastChild.textContent = head.checked ? 'Clear all' : 'Select all';
+          }
+        };
+        row.appendChild(cb);
+        // The whole row toggles, not just the 24px box — a thumb on a phone
+        // is wider than the control.
+        row.onclick = function(ev){ if (ev.target !== cb) { cb.checked = !cb.checked; cb.onchange(); } };
+      }
+
+      var g = document.createElement('div'); g.className = 'grow';
+      var t = document.createElement('div'); t.className = 't';
+      t.textContent = d.label + ' ' + (d.no || '');
+      // Amount FIRST on the meta line. A seven-figure sum plus a date plus a
+      // trade number does not fit a 414px phone, so something has to give —
+      // and the one thing a grower is looking for is the money. Putting it
+      // in front means the trade number is what gets ellipsized, not ₹23,25,051.
+      var s = document.createElement('div'); s.className = 's';
+      var amt = document.createElement('b');
+      amt.textContent = money(d.amount);
+      s.appendChild(amt);
+      s.appendChild(document.createTextNode(
+        ' · ' + when(d.date) + (d.ano ? ' · Auction ' + d.ano : '')));
+      g.appendChild(t); g.appendChild(s);
+
+      // Two actions, because on a phone "look at it now" and "keep a copy"
+      // are different intentions, and burying the second in the browser's
+      // own menu is where it goes to die. The token rides the query string
+      // because a plain link cannot set a header.
+      var base = '/api/portal/documents/' + d.kind + '/' + d.id + '/pdf?token=' + encodeURIComponent(token);
+      var acts = document.createElement('div'); acts.className = 'acts';
+      if (selMode) acts.hidden = true;
+      var view = document.createElement('a');
+      view.href = base; view.target = '_blank'; view.rel = 'noopener';
+      view.className = 'go'; view.title = 'View'; view.setAttribute('aria-label','View ' + d.label);
+      view.innerHTML = svg('#i-eye', 17);
+      var dl = document.createElement('a');
+      dl.href = base + '&dl=1';
+      dl.title = 'Download'; dl.setAttribute('aria-label','Download ' + d.label);
+      dl.innerHTML = svg('#i-dl', 17);
+      acts.appendChild(view); acts.appendChild(dl);
+
+      row.appendChild(g); row.appendChild(acts);
+      list.appendChild(row);
+    });
+  }
+
+  // The bar under the pickers. Two states, because the question changes:
+  // browsing asks "do you want the lot?", selecting asks "do you want these?".
+  function drawBar(docs){
+    var picked = docs.filter(function(d){ return sel[d.id]; });
+    var count = $('count'), pick = $('pickbtn'), grab = $('grab');
+
+    if (selMode) {
+      count.textContent = picked.length
+        ? picked.length + ' selected'
+        : 'Tap to select';
+      pick.hidden = false;
+      pick.innerHTML = '<span>Cancel</span>';
+      pick.onclick = function(){ selMode = false; sel = {}; render(); };
+      grab.hidden = false;
+      grab.disabled = picked.length === 0;
+      grab.innerHTML = svg('#i-dl', 15) + '<span></span>';
+      grab.lastChild.textContent = 'Download ' + (picked.length || '');
+      grab.onclick = function(){
+        if (picked.length) downloadDocs(picked.map(function(d){ return d.id; }), picked.length);
+      };
+      return;
+    }
+
+    count.textContent = docs.length + ' document' + (docs.length === 1 ? '' : 's');
+    // Nothing to pick BETWEEN when there is one row — the row's own buttons
+    // already do everything select mode could.
+    pick.hidden = docs.length < 2;
+    pick.innerHTML = svg('#i-check', 15) + '<span>Select</span>';
+    pick.onclick = function(){ selMode = true; sel = {}; render(); };
+    grab.hidden = false;
+    grab.disabled = false;
+    grab.innerHTML = svg('#i-dl', 15) + '<span></span>';
+    grab.lastChild.textContent = docs.length === 1 ? 'Download' : 'Download all ' + docs.length;
+    grab.onclick = function(){ downloadDocs(null, docs.length); };
+  }
+
+  // Fetched rather than linked so a failure can be SHOWN. A plain <a> to a
+  // route that 413s lands the reader on a page of raw JSON with no way back.
+  // ids = null → everything in the current period. ids = [...] → just those.
+  async function downloadDocs(ids, n){
+    var grab = $('grab');
+    grab.disabled = true;
+    grab.innerHTML = svg('#i-dl', 15) + '<span>Preparing…</span>';
+    var qs = '/api/portal/documents/bulk?party=' + encodeURIComponent(active.kind + ':' + active.id)
+           + (ids ? '&ids=' + ids.join(',')
+                  : '&fy=' + encodeURIComponent(fyPick)
+                    + (moPick ? '&month=' + encodeURIComponent(moPick) : ''))
+           + '&token=' + encodeURIComponent(token);
+    try {
+      var r = await fetch(qs);
+      if (!r.ok) {
+        var j = null; try { j = await r.json(); } catch(_) {}
+        throw new Error((j && j.error) || 'Could not build that file.');
+      }
+      var blob = await r.blob();
+      var cd = r.headers.get('content-disposition') || '';
+      var m = cd.match(/filename="([^"]+)"/);
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = (m && m[1]) || 'documents.pdf';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 20000);
+    } catch (e) {
+      var box = $('doclist');
+      var warn = document.createElement('div');
+      warn.className = 'msg err';
+      warn.innerHTML = svg('#i-alert', 16) + '<span></span>';
+      warn.lastChild.textContent = e.message;
+      box.insertBefore(warn, box.firstChild);
+      setTimeout(function(){ warn.remove(); }, 7000);
+    }
+    // Leaving select mode after a successful grab is the expected ending —
+    // the task is finished, and a screen full of ticks says it is not.
+    if (selMode) { selMode = false; sel = {}; }
+    render();
+  }
+
+  function signedOut(){
+    stopClock();
+    token = ''; sessionStorage.removeItem('portal_token');
+    parties = []; active = null; myPhone = ''; allDocs = []; fyPick = ''; moPick = ''; selMode = false; sel = {};
+    $('signed').hidden = true;
+    show('phone');
+    err('err-phone','Your sign-in has expired. Please sign in again.');
+  }
+
+  $('out').onclick = async function(){
+    try { await api('/api/portal/logout', { method:'POST' }); } catch(_){}
+    token=''; sessionStorage.removeItem('portal_token');
+    parties = []; active = null; myPhone = ''; allDocs = []; fyPick = ''; moPick = ''; selMode = false; sel = {};
+    $('signed').hidden = true;
+    show('phone');
+  };
+
+  $('phone').addEventListener('keydown', function(e){ if (e.key === 'Enter') $('send').click(); });
+  $('code').addEventListener('keydown',  function(e){ if (e.key === 'Enter') $('verify').click(); });
+
+  // Boot: name the company, and resume a session that is still good.
+  (async function(){
+    try {
+      var c = await fetch('/api/portal/config').then(function(r){ return r.json(); });
+      if (c && c.company) $('co').textContent = c.company;
+    } catch(_){}
+    if (token) {
+      try {
+        var me = await api('/api/portal/me');
+        parties = me.parties || [];
+        myPhone = me.phone || '';
+        return enter();
+      } catch(_){ token=''; sessionStorage.removeItem('portal_token'); }
+    }
+    show('phone');
+  })();
+})();
+</script>
+</body>
+</html>

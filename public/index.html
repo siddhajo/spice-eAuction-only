@@ -30724,6 +30724,9 @@ async function _renderWhatsappCard(){
       ${field('wa-tpl-document-lang','Document template language',s.tplDocumentLang||'en','en')}
       ${field('wa-tpl-text','Text template name',s.tplText,'e.g. payment_notice')}
       ${field('wa-tpl-text-lang','Text template language',s.tplTextLang||'en','en')}
+      ${field('wa-tpl-otp','Sign-in code template name (AUTHENTICATION category)',s.tplOtp,'e.g. portal_login_code')}
+      ${field('wa-tpl-otp-lang','Sign-in code template language',s.tplOtpLang||'en','en')}
+      ${field('wa-tpl-otp-button','Sign-in code button (copy / none)',s.tplOtpButton||'copy','copy')}
     </div>
     <div class="wa-sub">Delivery receipts</div>
     <div>
@@ -31488,6 +31491,7 @@ async function _saveWhatsappConfig(){
     appSecret: v('wa-app-secret'), verifyToken: v('wa-verify-token'), displayNumber: v('wa-display-number'),
     tplDocument: v('wa-tpl-document'), tplDocumentLang: v('wa-tpl-document-lang'),
     tplText: v('wa-tpl-text'), tplTextLang: v('wa-tpl-text-lang'),
+    tplOtp: v('wa-tpl-otp'), tplOtpLang: v('wa-tpl-otp-lang'), tplOtpButton: v('wa-tpl-otp-button'),
   };
   const msgEl = document.getElementById('wa-card-msg');
   const btn = document.getElementById('wa-save-btn');

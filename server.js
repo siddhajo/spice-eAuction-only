@@ -42,6 +42,7 @@ const { safeFilePart, exportFileName, anoForFilename,
         anoLabelForRows, anoLabelForIds, scopeParts } = require('./export-filename');
 const { PIPELINE } = require('./transaction-pipeline');
 const { mountMobile } = require('./mobile-bridge');
+const { mountPortal } = require('./customer-portal');
 let { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
 // ── Inconsistent-build guard ─────────────────────────────────────────
 // These two moved out of server.js/mobile-bridge.js into trader-lot-sync.js.
@@ -1448,6 +1449,33 @@ mountMobile(app, {
   // lot-reassign request. Defined later in the file (hoisted); safe to
   // reference here. Never throws into the mobile handler.
   onReassignRequest: (row) => { try { sendReassignRequestWhatsApp(getDb(), row); } catch (_) {} },
+});
+
+// ══════════════════════════════════════════════════════════════
+// CUSTOMER PORTAL (/my) — sellers and buyers downloading their OWN documents
+// ══════════════════════════════════════════════════════════════
+// Behind `flag_customer_portal`, which is OFF unless an install turns it on:
+// this opens a door on the public internet, so it does not open by upgrade.
+//
+// The three renderers are injected rather than reimplemented — a customer's
+// copy of a document and the office's copy come off the same code path. See
+// renderStoredSalesInvoicePdf above.
+mountPortal(app, {
+  getDb,
+  getSettingsFlat,
+  requireAdmin,
+  renderSalesInvoicePdf:     (db, row) => renderStoredSalesInvoicePdf(db, row),
+  // A planter's bill goes out in the COMMISSION BILL layout, not the plain
+  // Bill of Supply: that is the document that actually shows them their
+  // money — per lot, cardamom cost, sample refund, commission, GST, NETT.
+  // The Bill of Supply renderer is still injected under its own name for a
+  // caller that wants the statutory form.
+  renderBillOfSupplyPdf:     (db, row)  => renderCommissionBoSPdf(db, [row]),
+  renderBillOfSupplyPdfMany: (db, rows) => renderCommissionBoSPdf(db, rows),
+  renderPlainBillOfSupplyPdf:(db, row) => renderStoredBillOfSupplyPdf(db, { storedRow: row }),
+  renderDebitNotePlanterPdf: (db, row) => renderStoredDebitNotePlanterPdf(db, row),
+  // Sign-in codes over WhatsApp. Defined later in this file (hoisted).
+  sendPortalOtpWhatsApp: (db, phone, code) => _waSendPortalOtp(db, phone, code),
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -3807,6 +3835,9 @@ function _waConfig(db) {
     tplDocumentLang: dbv('tpl_document_lang') || 'en',
     tplText:         pick('WHATSAPP_TPL_TEXT', 'tpl_text'),
     tplTextLang:     dbv('tpl_text_lang') || 'en',
+    tplOtp:          pick('WHATSAPP_TPL_OTP', 'tpl_otp'),
+    tplOtpLang:      dbv('tpl_otp_lang') || 'en',
+    tplOtpButton:    (dbv('tpl_otp_button') || 'copy').toLowerCase(),
     configured: Boolean(token && phoneId),
     source,
   };
@@ -3855,7 +3886,7 @@ async function _waUploadMedia(cfg, buffer, filename) {
 }
 // Send an approved template. Includes the document header component only when
 // a media id is supplied; the body component carries positional params.
-async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], documentMediaId = null, filename = 'document.pdf', buttons = [] }) {
+async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], documentMediaId = null, filename = 'document.pdf', buttons = [], otpButtonCode = null }) {
   const components = [];
   if (documentMediaId) {
     components.push({ type: 'header', parameters: [{ type: 'document', document: { id: documentMediaId, filename } }] });
@@ -3878,6 +3909,16 @@ async function _waSendTemplate(cfg, { phone, template, lang, bodyParams = [], do
     components.push({
       type: 'button', sub_type: 'quick_reply', index: String(b.index),
       parameters: [{ type: 'payload', payload: String(b.payload) }],
+    });
+  }
+  // Authentication templates: the copy-code button is its own component and
+  // carries the code again. Without it Meta rejects the send outright
+  // ("number of parameters does not match"), which is a confusing way to
+  // learn that the template has a button.
+  if (otpButtonCode) {
+    components.push({
+      type: 'button', sub_type: 'url', index: '0',
+      parameters: [{ type: 'text', text: String(otpButtonCode) }],
     });
   }
   const tpl = { name: template, language: { code: lang || 'en' } };
@@ -4017,6 +4058,79 @@ function _waGateSend(db, f) {
       f.phone, v.cls, v.code, v.reason);
   }
   return v;
+}
+
+// ── Portal sign-in code over WhatsApp ────────────────────────────────────
+//
+// Called by customer-portal.js when `portal_otp_channel` is 'whatsapp'.
+// Resolves to { ok, id?, error? } and never throws — the caller must not
+// crash a login because Meta had a bad minute.
+//
+// ── Why this cannot reuse tplText ────────────────────────────────────────
+// A one-time code has to go through a template Meta approved in the
+// AUTHENTICATION category. The two templates this install already has are
+// UTILITY (an invoice, a payment notice). Pushing a login code through a
+// utility template is a category mismatch — exactly the kind of thing that
+// gets an account reviewed, and this one has already been disabled once.
+// So a missing `tpl_otp` is an ERROR, never a fallback to the other
+// templates: no silent substitution.
+//
+// ── The shape of the call ────────────────────────────────────────────────
+// Authentication templates take the code TWICE: once in the body, and once
+// more as the button's parameter, because Meta renders the copy-code button
+// from its own parameter rather than reading the body. A template approved
+// without a button takes only the body — hence `tpl_otp_button`, which has
+// to be known before the send rather than discovered from a failure.
+async function _waSendPortalOtp(db, rawPhone, code) {
+  const cfg = _waConfig(db);
+  if (!cfg.configured) return { ok: false, error: 'WhatsApp Cloud API not configured' };
+  if (!cfg.tplOtp) {
+    return { ok: false, error: 'No AUTHENTICATION template is configured (whatsapp_config.tpl_otp). '
+      + 'Approve one in WhatsApp Manager and set its name there — the invoice and notice templates are UTILITY and must not carry a sign-in code.' };
+  }
+  const phone = _waNormalizePhone(rawPhone);
+  const badPhone = _waPhoneProblem(rawPhone);
+  if (badPhone) return { ok: false, error: badPhone };
+
+  // The gate still runs. An opt-out is honoured even for a sign-in code:
+  // somebody who told us to stop messaging them has not agreed to receive
+  // codes either, and honouring that is the thing the ban was about. The
+  // operator sees the refusal in the policy log and can bind the party to a
+  // different number from Customer Access.
+  const verdict = _waGateSend(db, {
+    cfg, phone: rawPhone, msg_type: 'template-otp',
+    caption: 'portal sign-in code', ref_type: 'portal_otp', ref_id: '',
+  });
+  if (!verdict.allow) return { ok: false, error: verdict.reason, policy: verdict.code };
+
+  try {
+    const buttons = [];
+    const wamid = await _waSendTemplate(cfg, {
+      phone, template: cfg.tplOtp, lang: cfg.tplOtpLang,
+      bodyParams: [String(code)],
+      // sub_type 'url' is what Meta's authentication templates use for the
+      // copy-code button; the parameter is the code itself.
+      otpButtonCode: cfg.tplOtpButton === 'copy' ? String(code) : null,
+      buttons,
+    });
+    // The CODE is never written to the log — only that one was sent. A
+    // readable code in whatsapp_messages would put every live sign-in code
+    // in the send-log screen and in every backup.
+    _waLog(db, {
+      phone, msg_type: 'template-otp', caption: 'sign-in code',
+      status: 'sent', wamid: wamid || '', ref_type: 'portal_otp', ref_id: '',
+    });
+    return { ok: true, id: wamid };
+  } catch (e) {
+    const msg = (e && e.message) || 'send failed';
+    _waLog(db, {
+      phone, msg_type: 'template-otp', caption: 'sign-in code',
+      status: 'failed', error: msg.slice(0, 200), ref_type: 'portal_otp', ref_id: '',
+    });
+    try { waPolicy.noteMetaError(db, phone, msg); } catch (_) {}
+    console.warn('[portal] WhatsApp OTP send failed for %s: %s', phone, msg);
+    return { ok: false, error: msg };
+  }
 }
 
 // Send a plain WhatsApp text message, server-side. Shared by the
@@ -4223,6 +4337,9 @@ app.get('/api/whatsapp/status', requireView, async (req, res) => {
     tplDocumentLang: cfg.tplDocumentLang,
     tplText: cfg.tplText,
     tplTextLang: cfg.tplTextLang,
+    tplOtp: cfg.tplOtp,
+    tplOtpLang: cfg.tplOtpLang,
+    tplOtpButton: cfg.tplOtpButton,
     webhookReady: !!(cfg.verifyToken && cfg.appSecret),
     qualityRating: null,
     displayPhone: null,
@@ -4546,6 +4663,11 @@ app.put('/api/whatsapp/config', requireSettingsWrite, (req, res) => {
   putField('tpl_document_lang', b.tplDocumentLang, 'en');
   putField('tpl_text', b.tplText);
   putField('tpl_text_lang', b.tplTextLang, 'en');
+  // Portal sign-in codes. Must name a template Meta approved in the
+  // AUTHENTICATION category — see _waSendPortalOtp.
+  putField('tpl_otp', b.tplOtp);
+  putField('tpl_otp_lang', b.tplOtpLang, 'en');
+  putField('tpl_otp_button', b.tplOtpButton, 'copy');
   if (b.enabled !== undefined) put('enabled', b.enabled ? 1 : 0);
   if (!sets.length) return res.json({ ok: true, updated: 0 });
   try {
@@ -13101,6 +13223,38 @@ app.get('/api/invoices/templates/:docType', requireView, (req, res) => {
   }
 });
 
+// Which BUYER master row this invoice belongs to.
+//
+// Stamped at generation because the customer portal scopes a buyer's
+// documents on `invoices.buyer_id` and nothing else — party names repeat, so
+// matching on the name would eventually hand one buyer another's invoice.
+// The db.js migration backfills history; this keeps every NEW invoice
+// correct without waiting for a restart.
+//
+// Resolution order: the buyer object the invoice was built from (it is the
+// master row, so it carries the id), then the buyer CODE, then name+GSTIN.
+// Returns null rather than guessing when two buyers would match equally —
+// a NULL is invisible in the portal, which is the safe way to be wrong.
+function invoiceBuyerId(db, invoice, buyerCode) {
+  const fromBuild = invoice && invoice.buyer && Number(invoice.buyer.id);
+  if (Number.isFinite(fromBuild) && fromBuild > 0) return fromBuild;
+  const code = String(buyerCode == null ? '' : buyerCode).trim();
+  if (code) {
+    const byCode = db.all('SELECT id FROM buyers WHERE UPPER(TRIM(buyer)) = UPPER(?)', [code]);
+    if (byCode.length === 1) return byCode[0].id;
+  }
+  const gstin = String((invoice && invoice.buyer && invoice.buyer.gstin) || '').trim();
+  const name  = String((invoice && invoice.buyer && (invoice.buyer.buyer1 || invoice.buyer.buyer)) || '').trim();
+  if (name) {
+    const byPair = db.all(
+      `SELECT id FROM buyers
+        WHERE (UPPER(TRIM(buyer1)) = UPPER(?) OR UPPER(TRIM(buyer)) = UPPER(?))
+          AND UPPER(TRIM(COALESCE(gstin,''))) = UPPER(?)`, [name, name, gstin]);
+    if (byPair.length === 1) return byPair[0].id;
+  }
+  return null;
+}
+
 app.post('/api/invoices/generate/:auctionId',
   requireInvoiceWrite,
   requirePriceChecked(req => parseInt(req.params.auctionId, 10)),
@@ -13191,16 +13345,15 @@ app.post('/api/invoices/generate/:auctionId',
         [req.params.auctionId, saleType, buyerCode, pn]);
     }
   }
-
   // line_items: per-lot snapshot stored alongside the totals so the PDF keeps
   // its LOT NO / RATE columns even if the lots are later re-stamped, reverted
   // or deleted. See cacheInvoiceLineItems().
-  db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma,line_items)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma,line_items,buyer_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [req.params.auctionId,auction.ano,invoiceDate,invoiceState,saleType,String(invoiceNo),buyerCode,invoice.buyer.buyer1||'',
      invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
      s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',effNoTI,isProforma,
-     JSON.stringify(invoice.lineItems||[])]);
+     JSON.stringify(invoice.lineItems||[]), invoiceBuyerId(db, invoice, buyerCode)]);
 
   if (isProforma) {
     // Proforma: stamp lots.proforma_invo ONLY — never invo/asp_invo/sale, so
@@ -13642,12 +13795,12 @@ app.post('/api/invoices/generate-all/:auctionId',
         }
       }
       // line_items — see the single-invoice handler above.
-      db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma,line_items)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma,line_items,buyer_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [req.params.auctionId,auction.ano,invoiceDate,invoiceState,useSaleType,invoNo,row.buyer,invoice.buyer.buyer1||'',
          invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
          s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',effNoTI,isProforma,
-         JSON.stringify(invoice.lineItems||[])]);
+         JSON.stringify(invoice.lineItems||[]), invoiceBuyerId(db, invoice, row.buyer)]);
       if (isProforma) {
         // Proforma: stamp lots.proforma_invo ONLY (leave invo/asp_invo/sale).
         for (const li of invoice.lineItems) {
@@ -13748,11 +13901,12 @@ app.post('/api/invoices/:id/raise-original', requireInvoiceWrite, (req, res) => 
   const s = invoice.summary;
   const invoiceDate = resolveInvoiceDate(req.body.dateSource, auction && auction.date, cfg);
   const invoiceState = cfg.business_state || (auction && auction.state) || '';
-  db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+  db.run(`INSERT INTO invoices (auction_id,ano,date,state,sale,invo,buyer,buyer1,gstin,place,bag,qty,amount,gunny,pava_hc,ins,cgst,sgst,igst,tcs,rund,tot,addl_chg,addl_name,no_ti,is_proforma,buyer_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
     [pf.auction_id, auction ? auction.ano : pf.ano, invoiceDate, invoiceState, saleType, invoiceNo, pf.buyer, invoice.buyer.buyer1||'',
      invoice.buyer.gstin||'', invoice.buyer.pla||'', s.totalBags, s.totalQty, s.totalAmount, s.gunnyCost, s.transportCost, s.insuranceCost,
-     s.cgst, s.sgst, s.igst, s.tdsAmount||0, s.roundDiff, s.grandTotal, s.addlCharge||0, s.addlChargeName||'', Number(pf.no_ti)||0]);
+     s.cgst, s.sgst, s.igst, s.tdsAmount||0, s.roundDiff, s.grandTotal, s.addlCharge||0, s.addlChargeName||'', Number(pf.no_ti)||0,
+     invoiceBuyerId(db, invoice, pf.buyer)]);
 
   const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
   for (const li of invoice.lineItems) {
@@ -14145,12 +14299,18 @@ app.post('/api/invoices/revert-all/:auctionId', requireInvoiceRevert, (req, res)
 });
 
 // Sales Invoice PDF
-app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
-  try {
-    const db = getDb();
-    const cfg = getSettingsFlat(db);
-    const stored = db.get('SELECT * FROM invoices WHERE id=?', [req.params.id]);
-    if (!stored) return res.status(404).json({ error: 'Invoice not found' });
+// ── Sales invoice PDF, extracted from its route ──────────────────────────
+// The route below and the customer portal (customer-portal.js) both call
+// this, so a buyer downloading their own invoice gets the SAME bytes the
+// office prints. Extracted rather than reimplemented for exactly that
+// reason: two renderers for one document is two documents.
+//
+// `opts` carries the per-print choices the route takes off the query string
+// (template override, dispatched-through); the portal passes none of them
+// and gets this install's configured layout.
+async function renderStoredSalesInvoicePdf(db, stored, opts = {}) {
+  const cfg = getSettingsFlat(db);
+  const req = { query: { template: opts.template || '', dispatchedThrough: opts.dispatchedThrough || '' } };
 
     // Try to rebuild fresh from lots (gives line-item detail), fall back to stored summary
     let invoice = stored.auction_id
@@ -14252,8 +14412,21 @@ app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
     } else {
       pdf = await generateSalesInvoicePDF(invoice, cfg, stored.sale, stored.invo, stored.date);
     }
+  return {
+    pdf,
+    filename: `${exportFileName('Invoice', stored.ano, stored.sale, stored.invo)}.pdf`,
+  };
+}
+
+app.get('/api/invoices/pdf/:id', requireView, async (req, res) => {
+  try {
+    const db = getDb();
+    const stored = db.get('SELECT * FROM invoices WHERE id=?', [req.params.id]);
+    if (!stored) return res.status(404).json({ error: 'Invoice not found' });
+    const { pdf, filename } = await renderStoredSalesInvoicePdf(db, stored, {
+      template: req.query.template, dispatchedThrough: req.query.dispatchedThrough });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('Invoice', stored.ano, stored.sale, stored.invo)}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.send(pdf);
   } catch (e) {
     console.error('Sales invoice PDF error:', e);
@@ -15997,13 +16170,21 @@ function cacheBillLineItems(db, billId, lineItems) {
 }
 
 // Agri bill PDF
-app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) => {
-  try {
-    const db = getDb(); const cfg = getSettingsFlat(db);
-    const sellerName = decodeURIComponent(req.params.sellerName);
-    const billNo = req.query.billNo || '001';
-
-    const storedRow = db.get('SELECT * FROM bills WHERE name = ? AND bil = ? LIMIT 1', [sellerName, parseInt(billNo)]);
+// ── Bill of Supply PDF, extracted from its route ─────────────────────────
+// Shared with the customer portal so a planter downloading their own bill
+// gets the SAME document the office prints — see the note on
+// renderStoredSalesInvoicePdf above.
+//
+// The route identifies a bill by (seller name, bill no) off the URL; the
+// portal already holds the row and passes it in. Both converge here, so the
+// rebuild-and-fallback chain below runs once, in one place.
+async function renderStoredBillOfSupplyPdf(db, args = {}) {
+  const cfg = getSettingsFlat(db);
+  const storedRow  = args.storedRow || null;
+  const sellerName = args.sellerName != null ? args.sellerName : (storedRow ? storedRow.name : '');
+  const billNo     = args.billNo     != null ? String(args.billNo) : (storedRow ? String(storedRow.bil) : '001');
+  const auctionId  = args.auctionId  != null ? args.auctionId : (storedRow ? storedRow.auction_id : null);
+  const req = { params: { auctionId }, query: { template: args.template || '', eTradeNo: args.eTradeNo || '' }, body: {} };
     // storedRow.trader_id pins which planter this bill was raised for; without
     // it a duplicated name rebuilds from BOTH planters' lots. billRebuildOpts
     // adds the lot scope for lot-wise rows, so a one-lot bill does not reprint
@@ -16012,7 +16193,10 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
       billRebuildOpts(storedRow));
     let live = bill && !bill.error;
     if (!live) {
-      if (!storedRow) return res.status(404).json({ error: bill?.error || `No bill data found for "${sellerName}"` });
+      // No live lots AND no stored row — there is no bill. Thrown rather
+      // than returned as a response: this function has two callers now
+      // (the route and the portal) and only they own the wire format.
+      if (!storedRow) { const e = new Error(bill?.error || `No bill data found for "${sellerName}"`); e.status = 404; throw e; }
       // Resolution order: live lots via the bill's trade number → the per-lot
       // snapshot stored at generation → a consolidated summary line (PRICE /
       // VALUE derived from the stored totals so they're never shown as 0).
@@ -16055,10 +16239,26 @@ app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) =
     } else {
       pdf = await generateAgriBillPDF(bill, cfg, printedBillNo);
     }
+  return {
+    pdf,
+    filename: `${exportFileName('BillOfSupply', (storedRow && storedRow.ano) || anoForFilename(db, auctionId), String(sellerName).replace(/[^\w]/g,'_'), billNo)}.pdf`,
+  };
+}
+
+app.get('/api/bills/pdf/:auctionId/:sellerName', requireView, async (req, res) => {
+  try {
+    const db = getDb();
+    const sellerName = decodeURIComponent(req.params.sellerName);
+    const billNo = req.query.billNo || '001';
+    const storedRow = db.get('SELECT * FROM bills WHERE name = ? AND bil = ? LIMIT 1', [sellerName, parseInt(billNo)]);
+    const { pdf, filename } = await renderStoredBillOfSupplyPdf(db, {
+      storedRow, sellerName, billNo, auctionId: req.params.auctionId,
+      template: req.query.template, eTradeNo: req.query.eTradeNo });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('BillOfSupply', (storedRow && storedRow.ano) || anoForFilename(db, req.params.auctionId), sellerName.replace(/[^\w]/g,'_'), billNo)}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.send(pdf);
   } catch(e) {
+    if (e && e.status === 404) return res.status(404).json({ error: e.message });
     console.error('Agri Bill PDF error:', e);
     res.status(500).json({ error: 'PDF generation failed: ' + e.message });
   }
@@ -16449,23 +16649,15 @@ function commissionInvoiceNoOpts(db, cfg, req) {
 //
 // Per-lot purchaser/refund/commission info is reconstructed from the
 // `lots` table (same source `buildAgriBill` uses for per-lot detail).
-app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
-  try {
-    const db = getDb();
-    const cfg = getSettingsFlat(db);
-    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
-    if (!ids.length) return res.status(400).json({ error: 'No bill IDs provided' });
-
-    // Which sales-invoice number goes in the PURCHASER block ("INV: …").
-    const invoOpts = commissionInvoiceNoOpts(db, cfg, req);
-
-    const placeholders = ids.map(() => '?').join(',');
-    const stored = db.all(`SELECT * FROM bills WHERE id IN (${placeholders})`, ids);
-    if (!stored.length) return res.status(404).json({ error: 'No matching bills found' });
-
-    const byId = new Map(stored.map(r => [r.id, r]));
-    const ordered = ids.map(id => byId.get(Number(id))).filter(Boolean);
-
+// ── Commission Bill (Bill-of-Supply variant), extracted from its route ───
+// Both the operator's "Commission Bill Selected" download and the customer
+// portal render through here, so a planter's own copy is the document the
+// office prints. See renderStoredSalesInvoicePdf for the general rule.
+//
+// Split in two because the two callers need different halves: the payload
+// builder is pure (one A4 page per LOT, per bill), and the renderer picks
+// the engine and names the file.
+function commissionBillPayloads(db, cfg, ordered, invoOpts) {
     const payloads = [];
     for (const b of ordered) {
       // Resolve the auction record (id + ano + date) so we can pull the
@@ -16654,27 +16846,55 @@ app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
       });
     }
 
-    // Per-print format choice: the print UI can pass a `template` (e.g.
-    // 'letterhead' or 'classic') so the operator picks the layout at print time. When
-    // supplied, it forces the HTML engine and overrides the saved template
-    // for THIS download only. Without it, fall back to the saved engine/layout.
-    const tplChoice = String((req.body && req.body.template) || (req.query && req.query.template) || '').trim();
-    let pdf;
-    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
-      engineKey: 'commission_bill_engine', templateKey: 'commission_bill_template', tplChoice });
-    if (useHtml) {
-      // A named HTML template (e.g. 'letterhead') for this download, or the
-      // saved commission layout when no per-print choice was passed.
-      const cfg2 = tplChoice ? { ...cfg, commission_bill_template: tplChoice } : cfg;
-      pdf = await require('./pdf/render-commission-html').generateCommissionBoSHtmlPDF(payloads, cfg2);
-    } else {
-      // 'pdfkit'/'classic' choice, or a saved Classic layout → legacy PDFKit.
-      pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
-    }
+    return payloads;
+}
+
+async function renderCommissionBoSPdf(db, bills, opts = {}) {
+  const cfg = getSettingsFlat(db);
+  const ordered = (bills || []).filter(Boolean);
+  if (!ordered.length) { const e = new Error('No matching bills found'); e.status = 404; throw e; }
+  const invoOpts = opts.invoOpts
+    || commissionInvoiceNoOpts(db, cfg, { body: { invoiceNo: opts.invoiceNo || '' } });
+  const payloads = commissionBillPayloads(db, cfg, ordered, invoOpts);
+
+  const tplChoice = String(opts.template || '').trim();
+  let pdf;
+  const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+    engineKey: 'commission_bill_engine', templateKey: 'commission_bill_template', tplChoice });
+  if (useHtml) {
+    const cfg2 = tplChoice ? { ...cfg, commission_bill_template: tplChoice } : cfg;
+    pdf = await require('./pdf/render-commission-html').generateCommissionBoSHtmlPDF(payloads, cfg2);
+  } else {
+    pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
+  }
+  return {
+    pdf,
+    pages: payloads.length,
+    filename: `${exportFileName('CommissionBoS_Batch', anoLabelForRows(ordered), payloads.length)}.pdf`,
+  };
+}
+
+app.post('/api/bills/commission-bos-bulk', requireView, async (req, res) => {
+  try {
+    const db = getDb();
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'No bill IDs provided' });
+    const placeholders = ids.map(() => '?').join(',');
+    const stored = db.all(`SELECT * FROM bills WHERE id IN (${placeholders})`, ids);
+    if (!stored.length) return res.status(404).json({ error: 'No matching bills found' });
+    const byId = new Map(stored.map(r => [r.id, r]));
+    const ordered = ids.map(id => byId.get(Number(id))).filter(Boolean);
+
+    const { pdf, filename } = await renderCommissionBoSPdf(db, ordered, {
+      // Which sales-invoice number goes in the PURCHASER block ("INV: …").
+      invoOpts: commissionInvoiceNoOpts(db, getSettingsFlat(db), req),
+      template: (req.body && req.body.template) || (req.query && req.query.template) || '',
+    });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('CommissionBoS_Batch', anoLabelForRows(ordered), payloads.length)}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.send(pdf);
   } catch (e) {
+    if (e && e.status === 404) return res.status(404).json({ error: e.message });
     console.error('Commission BoS bulk PDF error:', e);
     res.status(500).json({ error: 'Commission BoS PDF generation failed: ' + e.message });
   }
@@ -18405,27 +18625,48 @@ app.put('/api/debit-notes-planter/:id', requireInvoiceWrite, (req, res) => {
 });
 
 // Planter DN PDF — reuses the same single-row renderer as dealer DNs.
+// ── Planter debit-note PDF, extracted from its route ─────────────────────
+// Shared with the customer portal, same reason as the two renderers above.
+//
+// This one also stops STREAMING. It used to pipe PDFKit straight at the
+// response, which meant a renderer that threw halfway had already sent a
+// 200 and a Content-Type of application/pdf — the client got a truncated
+// file and no error. Buffering first costs one page of memory and lets both
+// callers report a failure as a failure.
+async function renderStoredDebitNotePlanterPdf(db, dn, opts = {}) {
+  const cfg = getSettingsFlat(db);
+  const tplChoice = String(opts.template || '').trim();
+  const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+    engineKey: 'debit_note_engine', templateKey: 'debit_note_template', tplChoice });
+  const filename = `${exportFileName('DebitNotePlanter', dn.ano, dn.note_no || dn.id)}.pdf`;
+
+  if (useHtml) {
+    const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
+    const pdf = await require('./pdf/render-debit-note-html').generateDebitNoteHtmlPDF(dn, db, cfg2, { planter: true });
+    return { pdf, filename };
+  }
+  const PDFDocument = require('pdfkit');
+  const doc = new PDFDocument({ size: 'A4', margin: 30 });
+  const chunks = [];
+  const done = new Promise((resolve, reject) => {
+    doc.on('data', c => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+  });
+  _renderDebitNote(doc, dn, db, cfg, { planter: true });
+  doc.end();
+  return { pdf: await done, filename };
+}
+
 app.get('/api/debit-notes-planter/:id/pdf', requireView, async (req, res) => {
   try {
-    const db  = getDb();
-    const cfg = getSettingsFlat(db);
-    const dn  = db.get('SELECT * FROM debit_notes_planter WHERE id = ?', [req.params.id]);
+    const db = getDb();
+    const dn = db.get('SELECT * FROM debit_notes_planter WHERE id = ?', [req.params.id]);
     if (!dn) return res.status(404).json({ error: 'Debit note not found' });
-    const tplChoice = String(req.query.template || '').trim();
-    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
-      engineKey: 'debit_note_engine', templateKey: 'debit_note_template', tplChoice });
+    const { pdf, filename } = await renderStoredDebitNotePlanterPdf(db, dn, { template: req.query.template });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('DebitNotePlanter', dn.ano, dn.note_no || dn.id)}.pdf"`);
-    if (useHtml) {
-      const cfg2 = tplChoice ? { ...cfg, debit_note_template: tplChoice } : cfg;
-      const pdf = await require('./pdf/render-debit-note-html').generateDebitNoteHtmlPDF(dn, db, cfg2, { planter: true });
-      return res.send(pdf);
-    }
-    const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument({ size: 'A4', margin: 30 });
-    doc.pipe(res);
-    _renderDebitNote(doc, dn, db, cfg, { planter: true });
-    doc.end();
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.send(pdf);
   } catch (e) {
     console.error('[dnp-pdf] failed:', e);
     if (!res.headersSent) res.status(500).json({ error: e.message });

@@ -85,6 +85,13 @@ const { getSetting, getSettingBool, getSettingNum } = require('./company-config'
 const CLASS_MARKETING = 'marketing';
 const CLASS_UTILITY = 'utility';
 const CLASS_SERVICE = 'service';
+// Meta's AUTHENTICATION category — a sign-in code for the customer portal.
+// It is the only class the RECIPIENT asks for a second before it is sent, so
+// the rules that exist to stop unsolicited contact do not apply to it. It
+// gets its own ceiling instead of the shared one, because the shared one is
+// three a day across everything: a planter who fat-fingers their code twice
+// and also receives a bill is locked out of his own paperwork until tomorrow.
+const CLASS_AUTH = 'auth';
 
 // msg_type (as written to the send log) → class. Anything unrecognised is
 // treated as UTILITY, never as service: an unknown sender must not inherit
@@ -95,6 +102,7 @@ const CLASS_BY_TYPE = new Map([
   ['template-reminder', CLASS_MARKETING],
   ['template-document', CLASS_UTILITY],
   ['template-text', CLASS_UTILITY],
+  ['template-otp', CLASS_AUTH],
   ['document', CLASS_UTILITY],
   ['text', CLASS_SERVICE],
 ]);
@@ -107,9 +115,10 @@ const CLASS_BY_REF = new Map([
   ['birthday', CLASS_MARKETING],
   ['reminder', CLASS_MARKETING],
   ['seller_reminder', CLASS_MARKETING],
+  ['portal_otp', CLASS_AUTH],
 ]);
 
-// → 'marketing' | 'utility' | 'service'
+// → 'marketing' | 'utility' | 'service' | 'auth'
 function classify(msgType, refType) {
   const r = String(refType || '').trim().toLowerCase();
   if (CLASS_BY_REF.has(r)) return CLASS_BY_REF.get(r);
@@ -252,6 +261,7 @@ function config(db) {
     paused: getSettingBool(db, 'wa_sending_paused'),
     marketingGapDays: num('wa_marketing_gap_days', 30),
     maxPerContactDay: num('wa_max_per_contact_day', 3),
+    maxOtpPerDay: num('wa_max_otp_per_day', 10),
     // Treat every party already on the masters as having opted in. OFF, and
     // it must stay off: that switch is precisely the assumption Meta
     // disabled the account over. It exists only because an install that has
@@ -466,15 +476,24 @@ function daysSinceLastMarketing(db, phone) {
   } catch (_) { return null; }
 }
 
-function sentToContactToday(db, phone) {
+// How many messages this contact has had in the last 24 hours.
+//
+// `onlyClass` narrows it to ONE class, which is what the AUTH ceiling needs:
+// sign-in codes are counted against their own limit and must not be made
+// unreachable by a morning's invoices, nor consume the allowance those need.
+// Scoped by msg_type rather than by re-running classify() over every row —
+// the one msg_type that maps to AUTH is the one the portal writes.
+function sentToContactToday(db, phone, onlyClass) {
   const k = consentKey(phone);
   if (!k) return 0;
+  const authOnly = onlyClass === CLASS_AUTH;
   try {
     const row = db.get(
       `SELECT COUNT(*) AS n FROM whatsapp_messages
         WHERE direction = 'out'
           AND phone_key = ?
           AND status IN ${DELIVERED_SQL}
+          ${authOnly ? "AND msg_type = 'template-otp'" : "AND COALESCE(msg_type,'') <> 'template-otp'"}
           AND created_at >= datetime('now','localtime','-24 hours')`,
       [k]);
     return (row && Number(row.n)) || 0;
@@ -590,7 +609,22 @@ function gate(db, opts = {}) {
   }
 
   // 5. Per-contact daily ceiling, across all classes.
-  if (cls !== CLASS_SERVICE) {
+  //
+  // AUTH is counted on its own meter. Sign-in codes are requested, one at a
+  // time, by the person receiving them — they are not the pattern anybody
+  // reports as spam, and sharing the general ceiling with invoices means a
+  // seller who mistypes a code twice cannot reach his own documents for the
+  // rest of the day. The portal has its own tighter throttle in front of
+  // this (3 requests per number per 15 minutes), so this is a backstop
+  // against a loop, not the primary brake.
+  if (cls === CLASS_AUTH) {
+    const today = sentToContactToday(db, phone, CLASS_AUTH);
+    if (today >= cfg.maxOtpPerDay) {
+      return deny('otp_cap',
+        `This number has already been sent ${today} sign-in codes today, which is the daily limit. `
+        + 'If they still cannot sign in, the number or the link is wrong — check Customer Access rather than sending more.');
+    }
+  } else if (cls !== CLASS_SERVICE) {
     const today = sentToContactToday(db, phone);
     if (today >= cfg.maxPerContactDay) {
       return deny('contact_cap',
@@ -768,7 +802,7 @@ function applyHistoricOptOuts(db, { by } = {}) {
 }
 
 module.exports = {
-  CLASS_MARKETING, CLASS_UTILITY, CLASS_SERVICE,
+  CLASS_MARKETING, CLASS_UTILITY, CLASS_SERVICE, CLASS_AUTH,
   classify, consentKey, detectIntent, buttonIsOptOut,
   config, configWithFallbacks,
   readConsent, setConsent, recordInbound, noteMetaError,

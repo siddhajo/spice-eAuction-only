@@ -91,6 +91,9 @@ function cleanup() {
     spices_board_addr_tn: 'SPICES BOARD E-AUCTION CENTRE\nBODINAYAKANUR\nTHENI-625513',
     spices_board_addr_kl: 'SPICES BOARD E-AUCTION CENTRE\nPUTTADY\nIDUKKI-685551',
     spices_board_gstin_tn: '33AAAGS1234F1Z5', spices_board_gstin_kl: '32AAAGS1234F1Z7',
+    // What physically goes to the Board, per lot — not the bill's
+    // refund + trader pair, which stays 0.400 + 0.100 above.
+    chalan_sb_sample_kg: '1.5',
     // The challan's SAMPLES row is lots x (refund + trader sample), the same
     // two boxes the Commission Bill deducts — NOT the lots' own sample_wt.
     sb_refund: '0.400', sb_trader_sample: '0.100',
@@ -778,7 +781,10 @@ function cleanup() {
         && sb.lines[0].desc === 'SAMPLES', JSON.stringify(sb.lines));
   check('…so there is no net-weight line and no kilo field',
         sb.qty === '' && sb.qtyShown === 'none', JSON.stringify({ qty: sb.qty, shown: sb.qtyShown }));
-  check('the sample draw is over all four lots', sb.sampleQty === '2.000', sb.sampleQty);
+  // 4 lots x 1.500 (the Board's own per-lot draw) — NOT 4 x 0.500, which is
+  // what the Commission Bill deducts from the seller.
+  check('the sample draw is the BOARD\'s figure over all four lots',
+        sb.sampleQty === '6.000', sb.sampleQty);
   // Bags is left for the operator: nothing records how many sample bags were
   // made up.
   check('bags are left for the operator to count', sb.bags === '', JSON.stringify(sb.bags));
@@ -949,6 +955,56 @@ function cleanup() {
         order.screen.join(',') === 'dc-qty,dc-rate', JSON.stringify(order.screen));
   check('…and in the dialog too',
         order.dialog.join(',') === 'le-chalan-qty,le-chalan-rate', JSON.stringify(order.dialog));
+
+  console.log('\n[14] A Board challan carries the BOARD\'s own numbers');
+  const boardNums = await page.evaluate(async () => {
+    const cfg = await j('/api/company-settings/flat');
+    const lots4 = _dc.all;
+    const out = {
+      // The draw: the Board's setting for a Board challan, the bill's pair
+      // for a branch one.
+      board:  leChalanSampleQty(lots4, cfg, true),
+      branch: leChalanSampleQty(lots4, cfg, false),
+      // Blank falls back to the bill's pair — what it did before the setting.
+      blank:  leChalanSampleQty(lots4, { ...cfg, chalan_sb_sample_kg: '' }, true),
+      // And it is a SETTING, not a constant.
+      changed: leChalanSampleQty(lots4, { ...cfg, chalan_sb_sample_kg: '2.25' }, true),
+    };
+    // The masthead GSTIN, on a challan the Board SENDS.
+    const el = document.getElementById('dc-branch');
+    el.value = '__SB_TN__'; el.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 300));
+    dcToggleSwap();
+    await new Promise(r => setTimeout(r, 400));
+    out.tnHtml = document.getElementById('dc-preview').contentDocument.body.innerHTML;
+    el.value = '__SB_KL__'; el.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 400));
+    out.klHtml = document.getElementById('dc-preview').contentDocument.body.innerHTML;
+    dcToggleSwap();
+    await new Promise(r => setTimeout(r, 300));
+    out.outwardHtml = document.getElementById('dc-preview').contentDocument.body.innerHTML;
+    el.value = 'BODI'; el.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 300));
+    return out;
+  });
+  check('the Board draw is its own setting', boardNums.board === 6, String(boardNums.board));
+  check('…a branch challan still uses the bill\'s pair', boardNums.branch === 2,
+        String(boardNums.branch));
+  check('…blank falls back to that pair', boardNums.blank === 2, String(boardNums.blank));
+  check('…and it really is configurable', boardNums.changed === 9, String(boardNums.changed));
+
+  // The masthead GSTIN: whoever is SENDING. It was printing this firm's
+  // registration under the Board's name.
+  const headGstin = (h) => ((h.match(/GSTIN<\/span><span>: ([0-9A-Z]+)/) || [])[1] || '');
+  check('a TN Board challan carries the TN Board GSTIN',
+        headGstin(boardNums.tnHtml) === '33AAAGS1234F1Z5', headGstin(boardNums.tnHtml));
+  check('…and a KL one the KL Board GSTIN',
+        headGstin(boardNums.klHtml) === '32AAAGS1234F1Z7', headGstin(boardNums.klHtml));
+  check('…not this company\'s own registration',
+        headGstin(boardNums.tnHtml) !== '33AAACR1234A1Z9', 'the company GSTIN must not head a Board challan');
+  // Pointing outwards the company IS the sender, so its own GSTIN heads it.
+  check('an outward challan still heads with the company GSTIN',
+        headGstin(boardNums.outwardHtml) === '33AAACR1234A1Z9', headGstin(boardNums.outwardHtml));
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   if (fail) console.log('--- server log tail ---\n' + srvLog.split('\n').slice(-15).join('\n'));
