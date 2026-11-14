@@ -108,6 +108,61 @@ const SESSION_TTL_HRS  = 12;   // a portal sign-in lasts a working day
 // the message is not told off for asking twice.
 const RESEND_COOLDOWN_SEC = 45;
 
+// ── Auto-enrolment ────────────────────────────────────────────────────────
+//
+// Called when a document is RAISED for a party. Without it the portal is a
+// snapshot: the one-time seed enrols whoever held a document that day, and
+// every planter onboarded afterwards silently cannot sign in — they get the
+// same cheerful "code sent" as a stranger and nothing arrives, with nothing
+// anywhere saying why.
+//
+// Raising a document for somebody IS the deliberate act that a link is meant
+// to record, so this does not weaken the default-deny rule; it just stops it
+// needing a human to remember.
+//
+// Three deliberate restrictions:
+//
+//   1. Only when the party has NO active link at all. If an admin has bound
+//      them to a corrected number, the stale one on the master must not come
+//      creeping back the next time a bill is raised — that would silently
+//      undo the correction, and on a shared handset it would hand their
+//      documents back to the previous holder.
+//   2. Only a clean ten-digit number. A blank or malformed `tel` is not a
+//      grant to anybody.
+//   3. Runs whether or not `flag_customer_portal` is on. A link grants
+//      nothing by itself — every portal route 404s while the flag is off —
+//      and enrolling only while it happens to be on would leave a hole for
+//      every document raised before somebody flipped it.
+//
+// Never throws: a failure here must not fail an invoice.
+function autoEnrol(db, partyKind, partyId, rawPhone) {
+  try {
+    const id = Number(partyId);
+    if (!Number.isFinite(id) || id <= 0) return false;
+    if (partyKind !== 'seller' && partyKind !== 'buyer') return false;
+    const pkey = phoneKey(rawPhone);
+    if (!pkey) return false;
+
+    const held = db.get(
+      `SELECT 1 AS x FROM party_links
+        WHERE party_kind = ? AND party_id = ? AND status = 'active' LIMIT 1`,
+      [partyKind, id]);
+    if (held) return false;
+
+    db.run(
+      `INSERT INTO party_links (party_kind, party_id, phone_key, status, source, created_by)
+       VALUES (?,?,?,'active','auto','document raised')`,
+      [partyKind, id, pkey]);
+    return true;
+  } catch (e) {
+    // A UNIQUE collision is a double-raise, not a problem.
+    if (!/UNIQUE/i.test((e && e.message) || '')) {
+      console.warn('[portal] auto-enrol failed for %s %s: %s', partyKind, partyId, e && e.message);
+    }
+    return false;
+  }
+}
+
 function mountPortal(app, deps) {
   const {
     getDb,
@@ -804,4 +859,4 @@ function mountPortal(app, deps) {
   return { phoneKey, partiesFor };
 }
 
-module.exports = { mountPortal, phoneKey };
+module.exports = { mountPortal, phoneKey, autoEnrol };

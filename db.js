@@ -1275,6 +1275,8 @@ async function initDb() {
     status TEXT NOT NULL DEFAULT 'active',
     -- 'seeded'  the one-time import from the phone on the master
     -- 'admin'   bound by hand on the Customer Access screen
+    -- 'auto'    created when a document was raised for a party that had no
+    --           link yet (see autoEnrol in customer-portal.js)
     -- 'claim'   bound by the party themselves (reserved; not yet built)
     source TEXT NOT NULL DEFAULT 'admin',
     created_at TEXT DEFAULT (datetime('now','localtime')),

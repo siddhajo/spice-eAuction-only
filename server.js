@@ -42,7 +42,7 @@ const { safeFilePart, exportFileName, anoForFilename,
         anoLabelForRows, anoLabelForIds, scopeParts } = require('./export-filename');
 const { PIPELINE } = require('./transaction-pipeline');
 const { mountMobile } = require('./mobile-bridge');
-const { mountPortal } = require('./customer-portal');
+const { mountPortal, autoEnrol: _portalAutoEnrol } = require('./customer-portal');
 let { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
 // ── Inconsistent-build guard ─────────────────────────────────────────
 // These two moved out of server.js/mobile-bridge.js into trader-lot-sync.js.
@@ -13282,6 +13282,28 @@ app.get('/api/invoices/templates/:docType', requireView, (req, res) => {
 // master row, so it carries the id), then the buyer CODE, then name+GSTIN.
 // Returns null rather than guessing when two buyers would match equally —
 // a NULL is invisible in the portal, which is the safe way to be wrong.
+// Give a party access to their own documents in the portal the moment one is
+// raised for them. The phone comes from the MASTER, not from the document —
+// a bill carries a snapshot of the seller taken at generation time, and on an
+// invoiced lot that snapshot goes stale (see trader-lot-sync). Looks the
+// number up fresh so a corrected phone is the one that gets enrolled.
+//
+// Fire-and-forget: never throws, never blocks the document.
+function portalEnrolSeller(db, traderId) {
+  try {
+    if (!traderId) return;
+    const t = db.get('SELECT tel FROM traders WHERE id = ?', [traderId]);
+    if (t) _portalAutoEnrol(db, 'seller', traderId, t.tel);
+  } catch (_) {}
+}
+function portalEnrolBuyer(db, buyerId) {
+  try {
+    if (!buyerId) return;
+    const b = db.get('SELECT tel FROM buyers WHERE id = ?', [buyerId]);
+    if (b) _portalAutoEnrol(db, 'buyer', buyerId, b.tel);
+  } catch (_) {}
+}
+
 function invoiceBuyerId(db, invoice, buyerCode) {
   const fromBuild = invoice && invoice.buyer && Number(invoice.buyer.id);
   if (Number.isFinite(fromBuild) && fromBuild > 0) return fromBuild;
@@ -13401,6 +13423,7 @@ app.post('/api/invoices/generate/:auctionId',
      invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
      s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',effNoTI,isProforma,
      JSON.stringify(invoice.lineItems||[]), invoiceBuyerId(db, invoice, buyerCode)]);
+  portalEnrolBuyer(db, invoiceBuyerId(db, invoice, buyerCode));
 
   if (isProforma) {
     // Proforma: stamp lots.proforma_invo ONLY — never invo/asp_invo/sale, so
@@ -13848,6 +13871,7 @@ app.post('/api/invoices/generate-all/:auctionId',
          invoice.buyer.gstin||'',invoice.buyer.pla||'',s.totalBags,s.totalQty,s.totalAmount,s.gunnyCost,s.transportCost,s.insuranceCost,
          s.cgst,s.sgst,s.igst,s.tdsAmount||0,s.roundDiff,s.grandTotal,s.addlCharge||0,s.addlChargeName||'',effNoTI,isProforma,
          JSON.stringify(invoice.lineItems||[]), invoiceBuyerId(db, invoice, row.buyer)]);
+      portalEnrolBuyer(db, invoiceBuyerId(db, invoice, row.buyer));
       if (isProforma) {
         // Proforma: stamp lots.proforma_invo ONLY (leave invo/asp_invo/sale).
         for (const li of invoice.lineItems) {
@@ -13954,6 +13978,7 @@ app.post('/api/invoices/:id/raise-original', requireInvoiceWrite, (req, res) => 
      invoice.buyer.gstin||'', invoice.buyer.pla||'', s.totalBags, s.totalQty, s.totalAmount, s.gunnyCost, s.transportCost, s.insuranceCost,
      s.cgst, s.sgst, s.igst, s.tdsAmount||0, s.roundDiff, s.grandTotal, s.addlCharge||0, s.addlChargeName||'', Number(pf.no_ti)||0,
      invoiceBuyerId(db, invoice, pf.buyer)]);
+  portalEnrolBuyer(db, invoiceBuyerId(db, invoice, pf.buyer));
 
   const isASPState = String(cfg.business_state || '').toUpperCase() === 'KERALA';
   for (const li of invoice.lineItems) {
@@ -16016,6 +16041,7 @@ app.post('/api/bills/generate/:auctionId',
          bill.seller.trader_id || null,
      // Empty lot_no is what marks this row seller-wise, for every future reader.
      bill.lotNo || '', bill.lotId]);
+  portalEnrolSeller(db, bill.seller.trader_id);
 
   res.json({ success: true, bill: s, mode: wantsLotWise ? 'lot' : 'seller', lotNo: bill.lotNo || '' });
 });
@@ -16129,6 +16155,7 @@ app.post('/api/bills/generate-all/:auctionId',
          s.totalQty,s.totalPuramt,0,s.netAmount,JSON.stringify(bill.lineItems||[]),
          bill.seller.trader_id || null,
          bill.lotNo || '', bill.lotId]);
+      portalEnrolSeller(db, bill.seller.trader_id);
       results.push({ seller: row.name, lotNo: lotWise ? row.lot_no : '', billNo: nextNo, netAmount: s.netAmount });
       nextNo++;
     } catch (e) { errors.push({ seller: label, error: e.message }); }
