@@ -703,6 +703,22 @@ const S = [
     'To put a party on a number the master does not hold — a son\'s phone, a second handset — bind it by hand on **Customer Access**. A number bound by hand is then left alone: later edits to the master will not pull it back.',
     'Changed numbers **outside the app** (a bulk import, direct database work)? Run **Enrol everyone** afterwards; it reports how many links it repaired.',
   ],
+  note:'**Settings → Flags → Customer portal screensaver** covers the page after a few quiet minutes, showing only your logo and the time — no name, no amounts. Any touch clears it. It is a curtain against a glance at a phone left on a bench, not a lock: whoever is holding the handset taps straight through. **0 = never**, which is how it ships.' },
+
+{ id:'portalhidden', g:'admin', ic:'🙈', name:'Why a customer sees nothing', flag:1,
+  purpose:'The four reasons a party signs in to an empty screen.',
+  mock:{ title:'Customer Access',
+    body:{table:{head:['Why','What to do'],rows:[
+      ['No document has been raised for them yet','Nothing — access arrives with their first bill or invoice'],
+      ['Their only documents are debit notes','Expected — sellers are not shown debit notes'],
+      ['Their documents predate the portal','Run Enrol everyone once'],
+      ['Wrong number on the master','Fix it on the seller / buyer; access moves with it'],
+    ]}} },
+  steps:[
+    'Check **Customer Access** first — if the party is not listed, they have no access and the reason is one of the four above.',
+    'A seller sees their **commission bills**; a registered dealer (with a GSTIN) sees their **purchase invoices**; a buyer sees their **tax invoices**. Nobody is shown debit notes, proforma drafts or stopped invoices.',
+    'Nothing before the portal existed is listed unless it was raised **in this app** — a trade whose paperwork came from your previous system has lots here but no documents, so there is nothing to show.',
+  ],
   warn:'**A number left pointing at the wrong party is the one mistake that matters here.** It locks the real customer out AND lets whoever holds the old number read their paperwork. If somebody says "I can\'t sign in", look at their number on Customer Access before anything else.' },
 
 { id:'users', g:'admin', ic:'👥', name:'Users', purpose:'Staff logins and roles.',

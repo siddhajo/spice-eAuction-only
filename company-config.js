@@ -430,6 +430,14 @@ const DEFAULTS = [
   //               two templates whatsapp_config currently holds.
   // There is no SMS option because no SMS provider is integrated.
   { key: 'portal_otp_channel',       value: 'log',   category: 'flags', label: 'Portal sign-in code channel',         type: 'text' },
+  // Covers the customer portal after a few quiet minutes. The office
+  // screensaver exists because a machine sits on a lot grid in a room people
+  // walk through; this one is for a PHONE left face-up on a bench showing a
+  // season's earnings. Separate from `screensaver_minutes` so an install can
+  // cover the counter without covering the customer, or the other way round.
+  // 0 = never, matching the office default: a new cover appearing over
+  // somebody's screen on upgrade would be a surprise, not a feature.
+  { key: 'portal_screensaver_minutes', value: '0', category: 'flags', label: 'Customer portal screensaver (minutes; 0 = never)', type: 'number' },
   // Sign-in codes are counted on their OWN daily meter, not the shared
   // per-contact ceiling: a code is asked for by the person receiving it, and
   // sharing the invoice allowance means two mistyped codes lock a seller out

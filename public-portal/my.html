@@ -345,6 +345,27 @@
 
   .empty{color:var(--muted);font-size:15.5px;padding:20px 4px;text-align:center}
   .foot{color:var(--muted);font-size:13.5px;text-align:center;padding:14px 0 4px}
+  /* ── Screensaver ──────────────────────────────────────────────────────
+     A curtain, not a lock. The office version covers a machine sitting on a
+     lot grid in a room people walk through; this covers a PHONE left face
+     up on a bench showing a season's earnings. It shows the company mark
+     and NOTHING else — no name, no amounts, no document numbers — because
+     the whole point is that the next person to glance at it learns nothing.
+     Any touch clears it. */
+  #saver{position:fixed;inset:0;z-index:9000;display:none;align-items:center;
+         justify-content:center;user-select:none;-webkit-user-select:none;
+         background:linear-gradient(160deg,var(--accent-dark) 0%,#06281d 55%,var(--accent-dark) 100%)}
+  #saver.on{display:flex}
+  #saver .inner{text-align:center;color:#fff;padding:26px}
+  #saver .plate{width:92px;height:92px;border-radius:24px;background:rgba(255,255,255,.94);
+                display:grid;place-items:center;margin:0 auto 20px;
+                box-shadow:0 10px 30px rgba(0,0,0,.3)}
+  #saver .plate img{width:74px;height:74px;object-fit:contain}
+  #saver .plate svg{width:46px;height:46px;color:var(--accent)}
+  #saver h3{margin:0;font-size:22px;font-weight:700;letter-spacing:.01em}
+  #saver .clock{margin-top:14px;font-size:40px;font-weight:300;letter-spacing:.02em;
+                font-variant-numeric:tabular-nums;opacity:.92}
+  #saver .hint{margin-top:18px;font-size:13.5px;color:rgba(255,255,255,.62)}
   [hidden]{display:none!important}
 
   /* ── Dark-theme overrides ─────────────────────────────────────────────
@@ -541,6 +562,17 @@
   <div class="help" id="help" hidden></div>
 </div>
 
+<!-- Scenery: aria-hidden so it never enters the tab order, and it carries
+     no customer data at all. -->
+<div id="saver" aria-hidden="true">
+  <div class="inner">
+    <div class="plate" id="saver-plate"><svg><use href="#i-leaf"/></svg></div>
+    <h3 id="saver-name"></h3>
+    <div class="clock" id="saver-clock"></div>
+    <div class="hint">Touch the screen to continue</div>
+  </div>
+</div>
+
 <script>
 (function(){
   'use strict';
@@ -726,6 +758,7 @@
   function enter(){
     show('docs');
     $('out').hidden = false;
+    saverArm();
     var who = $('who');
     who.innerHTML = '';
     if (parties.length > 1) {
@@ -1078,6 +1111,8 @@
   // phone found the previous one's mobile number waiting in the box.
   function resetToSignIn(message){
     stopClock();
+    saverHide();
+    if (SAVER.timer) { clearTimeout(SAVER.timer); SAVER.timer = null; }
     token = ''; sessionStorage.removeItem('portal_token');
     parties = []; active = null; myPhone = '';
     allDocs = []; totals = {}; fyPick = ''; moPick = ''; selMode = false; sel = {};
@@ -1096,6 +1131,77 @@
     show('phone');
     if (message) err('err-phone', message);
   }
+
+  // ── Screensaver ──────────────────────────────────────────────────────
+  //
+  // Only while SIGNED IN: the sign-in screen holds nothing worth covering,
+  // and a curtain over an empty form is just something to tap through.
+  //
+  // It is a curtain, NOT a lock. Anyone holding the phone clears it with one
+  // touch — what it buys is that a passer-by, or the next person to pick the
+  // handset up off a bench, does not read a season's earnings off it. Ending
+  // the session is a different thing and deliberately not done here (see the
+  // note to the office about idle sign-out).
+  var SAVER = { minutes: 0, timer: null, tick: null, on: false };
+
+  function saverArm(){
+    if (SAVER.timer) { clearTimeout(SAVER.timer); SAVER.timer = null; }
+    if (!SAVER.minutes || !token) return;
+    // Never shorter than 20s, however the setting is typed — a cover that
+    // lands while somebody is still reading is worse than none.
+    SAVER.timer = setTimeout(saverShow, Math.max(20000, SAVER.minutes * 60 * 1000));
+  }
+
+  function saverShow(){
+    if (!SAVER.minutes || !token || SAVER.on) return;
+    var el = $('saver');
+    $('saver-name').textContent = CO.company || '';
+    if (CO.logoUrl) {
+      var plate = $('saver-plate');
+      if (!plate.querySelector('img')) {
+        var im = new Image();
+        im.alt = ''; im.src = CO.logoUrl;
+        im.onload = function(){ plate.innerHTML = ''; plate.appendChild(im); };
+      }
+    }
+    saverClock();
+    if (SAVER.tick) clearInterval(SAVER.tick);
+    SAVER.tick = setInterval(saverClock, 1000);
+    el.classList.add('on');
+    SAVER.on = true;
+  }
+
+  function saverClock(){
+    var d = new Date();
+    var h = d.getHours(), m = d.getMinutes();
+    var ap = h < 12 ? 'am' : 'pm';
+    h = h % 12; if (!h) h = 12;
+    $('saver-clock').textContent = h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+  }
+
+  function saverHide(){
+    if (SAVER.tick) { clearInterval(SAVER.tick); SAVER.tick = null; }
+    $('saver').classList.remove('on');
+    SAVER.on = false;
+  }
+
+  // One set of listeners, in capture phase, so a tap that dismisses the
+  // cover does NOT also land on whatever button sits underneath it.
+  function saverPoke(ev){
+    if (SAVER.on) {
+      if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+      saverHide();
+    }
+    saverArm();
+  }
+  ['pointerdown','keydown','touchstart','wheel'].forEach(function(evt){
+    document.addEventListener(evt, saverPoke, { capture: true, passive: false });
+  });
+  // A phone that goes to sleep in a pocket should come back covered.
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) { if (SAVER.minutes && token) saverShow(); }
+    else saverArm();
+  });
 
   function signedOut(){
     resetToSignIn('Your sign-in has expired. Please sign in again.');
@@ -1132,6 +1238,7 @@
       // outside the signed-in section — a customer who CANNOT sign in is
       // exactly the one who needs the office's number.
       drawHelp();
+      SAVER.minutes = Number(CO.screensaverMinutes) || 0;
     } catch(_){}
     if (token) {
       try {

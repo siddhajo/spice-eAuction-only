@@ -364,6 +364,10 @@ function mountPortal(app, deps) {
       phone: co.phone || '',
       email: co.email || '',
       gstin: co.gstin || '',
+      // Minutes of quiet before the page covers itself. Public because the
+      // page needs it before anyone signs in, and it discloses nothing —
+      // it is a number of minutes, not data.
+      screensaverMinutes: Math.max(0, Math.min(1440, parseFloat(cfg.portal_screensaver_minutes) || 0)),
     });
   });
 
