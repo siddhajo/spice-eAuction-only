@@ -1472,6 +1472,7 @@ mountPortal(app, {
   // caller that wants the statutory form.
   renderBillOfSupplyPdf:     (db, row)  => renderCommissionBoSPdf(db, [row]),
   renderBillOfSupplyPdfMany: (db, rows) => renderCommissionBoSPdf(db, rows),
+  renderPurchaseInvoicePdf:  (db, row)  => renderStoredPurchaseInvoicePdf(db, { storedRow: row }),
   commissionNettForBills:    (db, rows) => commissionNettByBillId(db, rows),
   renderPlainBillOfSupplyPdf:(db, row) => renderStoredBillOfSupplyPdf(db, { storedRow: row }),
   renderDebitNotePlanterPdf: (db, row) => renderStoredDebitNotePlanterPdf(db, row),
@@ -14961,6 +14962,7 @@ app.post('/api/purchases/generate/:auctionId',
      invoice.seller.trader_id || null,
      // Empty lot_no is what marks this row seller-wise, for every future reader.
      invoice.lotNo || '', invoice.lotId]);
+  portalEnrolSeller(db, invoice.seller.trader_id);
   res.json({ success: true, invoice: s, mode: wantsLotWise ? 'lot' : 'seller', lotNo: invoice.lotNo || '' });
 });
 
@@ -15241,6 +15243,7 @@ app.post('/api/purchases/generate-all/:auctionId',
          s.totalCgst,s.totalSgst,s.totalIgst,s.roundDiff,s.grandTotal,s.tdsAmount,
      invoice.seller.trader_id || null,
      invoice.lotNo || '', invoice.lotId]);
+      portalEnrolSeller(db, invoice.seller.trader_id);
       results.push({ seller: row.name, lotNo: lotWise ? row.lot_no : '', invoiceNo: invoNo, grandTotal: s.grandTotal });
       nextNo++;
     } catch (e) { errors.push({ seller: label, error: e.message }); }
@@ -15281,19 +15284,29 @@ app.delete('/api/purchases/:id', requireDelete, (req, res) => {
 });
 
 // ── Purchase Invoice PDF ─────────────────────────────────────
-app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, res) => {
-  try {
-    const db = getDb();
-    const cfg = getSettingsFlat(db);
-    const sellerName = decodeURIComponent(req.params.sellerName);
-    const auctionId = req.params.auctionId;
-    const invoiceNo = req.query.invoiceNo || '001';
-    
+// ── Purchase invoice PDF, extracted from its route ──────────────────────
+// Shared with the customer portal so a REGISTERED DEALER gets the same
+// document the office prints. Dealers get a purchase invoice instead of a
+// bill of supply, so without this they were the one party type the portal
+// could show nothing to — 57 of them on this install, silently.
+//
+// Same rule as the other three renderers: extracted, never reimplemented.
+async function renderStoredPurchaseInvoicePdf(db, args = {}) {
+  const cfg = getSettingsFlat(db);
+  const stored0    = args.storedRow || null;
+  const sellerName = args.sellerName != null ? args.sellerName : (stored0 ? stored0.name : '');
+  const auctionId  = args.auctionId  != null ? args.auctionId  : (stored0 ? stored0.auction_id : null);
+  const invoiceNo  = args.invoiceNo  != null ? String(args.invoiceNo) : (stored0 ? String(stored0.invo) : '001');
+  const req = { query: { template: args.template || '' } };
+
     // Find the stored invoice FIRST — its trader_id says which of two
     // same-named dealers this document belongs to, and the live rebuild below
     // needs that to pull the right dealer's lots. (Try auction_id, then fall
     // back to name+invo for older records that predate the column.)
-    let stored = db.get(
+    // The portal already holds the row; the route looks it up by
+    // (auction, name, invo). trader_id is what tells two same-named dealers
+    // apart, so the caller's row always wins when it has one.
+    let stored = stored0 || db.get(
       `SELECT * FROM purchases WHERE auction_id = ? AND name = ? AND invo = ? LIMIT 1`,
       [auctionId, sellerName, String(invoiceNo)]
     ) || db.get(
@@ -15310,9 +15323,11 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
     // Fallback: if lots data missing, rebuild from stored purchase record
     if (!invoice) {
       if (!stored) {
-        return res.status(404).json({ 
-          error: `No purchase data found for seller "${sellerName}" with invoice ${invoiceNo}. Lots may have been deleted.` 
-        });
+        // Thrown, not returned: this has two callers now and only they own
+        // the wire format. The route maps e.status back to a 404.
+        const e404 = new Error(`No purchase data found for seller "${sellerName}" with invoice ${invoiceNo}. Lots may have been deleted.`);
+        e404.status = 404;
+        throw e404;
       }
       // Reconstruct minimal invoice object from stored data. Imported
       // rows often arrive WITHOUT cgst/sgst/igst (the source XLSX rarely
@@ -15368,10 +15383,25 @@ app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, re
     } else {
       pdf = await generatePurchaseInvoicePDF(enriched, cfg, invoiceNo);
     }
+  return {
+    pdf,
+    filename: `${exportFileName('PurchaseInvoice', anoForFilename(db, auctionId), String(sellerName).replace(/[^\w]/g, '_'), invoiceNo)}.pdf`,
+  };
+}
+
+app.get('/api/purchases/pdf/:auctionId/:sellerName', requireView, async (req, res) => {
+  try {
+    const { pdf, filename } = await renderStoredPurchaseInvoicePdf(getDb(), {
+      sellerName: decodeURIComponent(req.params.sellerName),
+      auctionId: req.params.auctionId,
+      invoiceNo: req.query.invoiceNo || '001',
+      template: req.query.template,
+    });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PurchaseInvoice', anoForFilename(db, auctionId), sellerName.replace(/[^\w]/g, '_'), invoiceNo)}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.send(pdf);
   } catch (e) {
+    if (e && e.status === 404) return res.status(404).json({ error: e.message });
     console.error('PDF generation error:', e);
     res.status(500).json({ error: 'PDF generation failed: ' + e.message });
   }

@@ -94,8 +94,13 @@ setInterval(() => {
 // in ONE place and applied to the download as well as the list: a kind that
 // is not listed must not be reachable by typing its URL either, or "we don't
 // show that" is decoration.
+// A seller gets ONE of two documents depending on who they are: an
+// agriculturist gets a commission bill, a registered dealer gets a purchase
+// invoice. Both belong on their side of the portal — before `purchase` was
+// here, every GSTIN-holding seller signed in to an empty screen with nothing
+// saying why.
 const VISIBLE_KINDS = {
-  seller: ['bill'],
+  seller: ['bill', 'purchase'],
   buyer:  ['invoice'],
 };
 
@@ -207,6 +212,8 @@ function mountPortal(app, deps) {
     // The same commission renderer over MANY bills at once — it already
     // paginates one A4 page per lot, so a period download is one call.
     renderBillOfSupplyPdfMany,
+    // A registered dealer's document. See VISIBLE_KINDS.
+    renderPurchaseInvoicePdf,
     // Map(bill id -> the NETT its commission bill prints). Injected rather
     // than recomputed here: a second implementation of this number is a
     // second number.
@@ -521,6 +528,20 @@ function mountPortal(app, deps) {
       for (const r of rows)
         out.push({ kind: 'bill', id: r.id, ano: r.ano, date: r.date, no: String(r.bil || ''),
                    amount: nett.has(r.id) ? nett.get(r.id) : r.net, label: 'Commission Bill' });
+
+      // Registered dealers are billed by purchase invoice instead. The
+      // amount is `total - tds`, which is what the document prints as its
+      // Grand Total (render-purchase-html: invoiceAmount = grandTotal -
+      // tdsAmount). `total` alone is the SUBTOTAL above the 194Q line, so a
+      // row showing it would differ from the paper by the TDS — ₹628 on the
+      // first dealer this was checked against.
+      for (const r of db.all(
+        `SELECT id, ano, date, invo AS no,
+                (COALESCE(total,0) - COALESCE(tds,0)) AS amount
+           FROM purchases
+          WHERE trader_id = ?${win} ORDER BY date DESC, id DESC`, [party.id, ...span]))
+        out.push({ kind: 'purchase', id: r.id, ano: r.ano, date: r.date, no: String(r.no || ''),
+                   amount: r.amount, label: 'Purchase Invoice' });
     } else {
       for (const r of db.all(
         `SELECT i.id, i.ano, i.date, i.invo AS no, i.tot AS amount
@@ -558,18 +579,24 @@ function mountPortal(app, deps) {
       return start + '-' + String((start + 1) % 100).padStart(2, '0');
     };
 
-    const ids = documents.map(d => d.id);
-    let qtyById = new Map();
-    if (ids.length) {
+    // Quantities come from each document's OWN table — a seller can hold
+    // both commission bills and purchase invoices (an agriculturist who
+    // later registered), and reading only `bills` left a dealer's headline
+    // saying 0 kg next to a ₹59 lakh total.
+    const TABLE = { bill: 'bills', purchase: 'purchases', invoice: 'invoices' };
+    const qtyById = new Map();
+    for (const kind of Object.keys(TABLE)) {
+      const ids = documents.filter(d => d.kind === kind).map(d => d.id);
+      if (!ids.length) continue;
       const ph = ids.map(() => '?').join(',');
-      const rows = party.kind === 'seller'
-        ? db.all(`SELECT id, qty, 0 AS bag FROM bills WHERE id IN (${ph})`, ids)
-        : db.all(`SELECT id, qty, bag FROM invoices WHERE id IN (${ph})`, ids);
-      qtyById = new Map(rows.map(r => [r.id, r]));
+      const bagCol = kind === 'invoice' ? 'bag' : '0 AS bag';
+      for (const r of db.all(`SELECT id, qty, ${bagCol} FROM ${TABLE[kind]} WHERE id IN (${ph})`, ids)) {
+        qtyById.set(kind + ':' + r.id, r);
+      }
     }
     for (const d of documents) {
       const fy = fyOf(d.date);
-      const extra = qtyById.get(d.id) || {};
+      const extra = qtyById.get(d.kind + ':' + d.id) || {};
       bump(fy, 'documents', 1);
       bump(fy, 'amount', d.amount);
       bump(fy, 'qty', extra.qty);
@@ -645,12 +672,23 @@ function mountPortal(app, deps) {
     try {
       let pdf;
       if (party.kind === 'seller') {
-        // The commission renderer already lays out one A4 page per lot across
-        // many bills, so hand it the whole set rather than merging N files.
-        const rows = db.all(
-          `SELECT * FROM bills WHERE id IN (${docs.map(() => '?').join(',')}) ORDER BY date DESC, id DESC`,
-          docs.map(d => d.id));
-        ({ pdf } = await renderBillOfSupplyPdfMany(db, rows));
+        // A seller may hold BOTH kinds (an agriculturist who later
+        // registered). The commission renderer lays out many bills in one
+        // pass; purchase invoices render singly and are merged on the end,
+        // so a mixed bundle still arrives as one file.
+        const billIds = docs.filter(d => d.kind === 'bill').map(d => d.id);
+        const parts = [];
+        if (billIds.length) {
+          const rows = db.all(
+            `SELECT * FROM bills WHERE id IN (${billIds.map(() => '?').join(',')}) ORDER BY date DESC, id DESC`,
+            billIds);
+          parts.push((await renderBillOfSupplyPdfMany(db, rows)).pdf);
+        }
+        for (const d of docs.filter(x => x.kind === 'purchase')) {
+          const row = db.get('SELECT * FROM purchases WHERE id = ?', [d.id]);
+          if (row) parts.push((await renderPurchaseInvoicePdf(db, row)).pdf);
+        }
+        pdf = await require('./pdf/merge-pdf').mergePdfs(parts);
       } else {
         const parts = [];
         for (const d of docs) {
@@ -706,6 +744,15 @@ function mountPortal(app, deps) {
         if (!party) return res.status(403).json({ error: 'Not your document.' });
         docNo = String(row.bil || '');
         ({ pdf, filename } = await renderBillOfSupplyPdf(db, row));
+
+      } else if (req.params.kind === 'purchase') {
+        if (!kindOk('seller')) return res.status(404).json({ error: 'Unknown document type.' });
+        const row = db.get('SELECT * FROM purchases WHERE id = ?', [id]);
+        if (!row) return res.status(404).json({ error: 'Not found.' });
+        party = claimParty(req, 'seller', row.trader_id);
+        if (!party) return res.status(403).json({ error: 'Not your document.' });
+        docNo = String(row.invo || '');
+        ({ pdf, filename } = await renderPurchaseInvoicePdf(db, row));
 
       } else if (req.params.kind === 'invoice') {
         if (!kindOk('buyer')) return res.status(404).json({ error: 'Unknown document type.' });
@@ -831,11 +878,15 @@ function mountPortal(app, deps) {
     const commit = !!(req.body && req.body.commit);
     const CLEAN = (c) => `substr(replace(replace(replace(replace(replace(IFNULL(${c},''),' ',''),'-',''),'+',''),'(',''),')',''), -10)`;
 
+    // Holds a document the portal can actually SHOW: a commission bill, or
+    // a purchase invoice for a registered dealer. Debit notes are
+    // deliberately absent — a seller is not shown those, so enrolling on one
+    // alone used to let somebody sign in to an empty screen.
     const sellers = db.all(
       `SELECT t.id, ${CLEAN('t.tel')} AS pkey FROM traders t
         WHERE LENGTH(${CLEAN('t.tel')}) = 10
           AND EXISTS (SELECT 1 FROM bills b WHERE b.trader_id = t.id
-                      UNION ALL SELECT 1 FROM debit_notes_planter d WHERE d.trader_id = t.id)`);
+                      UNION ALL SELECT 1 FROM purchases p WHERE p.trader_id = t.id)`);
     const buyers = db.all(
       `SELECT b.id, ${CLEAN('b.tel')} AS pkey FROM buyers b
         WHERE LENGTH(${CLEAN('b.tel')}) = 10

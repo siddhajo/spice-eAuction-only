@@ -64,6 +64,32 @@
      bar with a third of a page of nothing below them. */
   #step-phone,#step-code{overflow-y:auto;flex:1;min-height:0;
                          display:flex;flex-direction:column;justify-content:center}
+  /* ── Cardamom, scattered behind the sign-in ───────────────────────────
+     The screen was a white box on an empty field. These sit BEHIND
+     everything (pointer-events off, aria-hidden) at low opacity, so the
+     page has a subject without competing with the one input on it. Sized
+     in vmin so the arrangement holds from a 5-inch phone to a desktop. */
+  .pods{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+  .pods svg{position:absolute;color:var(--accent)}
+  .pods .p1{top:4%;left:-8%;width:26vmin;opacity:.10;transform:rotate(-24deg)}
+  .pods .p2{top:1%;right:-6%;width:20vmin;opacity:.13;transform:rotate(18deg)}
+  .pods .p3{bottom:15%;left:2%;width:15vmin;opacity:.11;transform:rotate(12deg)}
+  .pods .p4{bottom:7%;right:-7%;width:24vmin;opacity:.09;transform:rotate(-14deg)}
+  .pods .p5{top:43%;right:5%;width:10vmin;opacity:.08;transform:rotate(34deg)}
+  @media (prefers-color-scheme:dark){
+    .pods .p1{opacity:.15} .pods .p2{opacity:.18} .pods .p3{opacity:.15}
+    .pods .p4{opacity:.13} .pods .p5{opacity:.12}
+  }
+  #step-phone,#step-code{position:relative}
+  #step-phone > div:not(.pods),#step-code > div{position:relative;z-index:1}
+
+  /* A cluster above the headline - the one place a pod is meant to be
+     looked AT rather than felt. */
+  .crest{display:flex;align-items:flex-end;justify-content:center;gap:4px;
+         margin-bottom:13px;color:var(--accent)}
+  .crest svg{width:30px;opacity:.8}
+  .crest .mid{width:42px;opacity:1}
+
   .lead{text-align:center;margin:0 4px 18px}
   .lead h2{margin:0 0 7px;font-size:21px;font-weight:700;letter-spacing:-.015em}
   .lead p{margin:0;font-size:15px;color:var(--muted);line-height:1.5}
@@ -342,6 +368,21 @@
 
 <!-- One sprite sheet; every icon below is a <use> of it. -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <!-- A cardamom pod. The first attempt was 26x46 and read as a LEAF: a
+       pod is plump, roughly two-thirds as wide as it is tall, widest below
+       the middle, tapering to a point at the stalk end. Three ribs, because
+       the pod is three-sided. Drawn once as a symbol so the sign-in can
+       scatter a dozen for about a kilobyte - a photograph is the obvious
+       alternative and the wrong one on a grower's mobile data. -->
+  <symbol id="i-pod" viewBox="0 0 34 44">
+    <path d="M17 2.5c7.8 6.2 12.5 15 12.5 23.2 0 8.4-5.4 15.3-12.5 15.3S4.5 34.1 4.5 25.7C4.5 17.5 9.2 8.7 17 2.5Z"
+          fill="currentColor" fill-opacity=".92"/>
+    <path d="M17 6.5V39" fill="none" stroke="#fff" stroke-opacity=".30" stroke-width="1.2"/>
+    <path d="M10.6 12.5c-2.4 6-3 13.2-1 20.2" fill="none" stroke="#fff" stroke-opacity=".20" stroke-width="1.1"/>
+    <path d="M23.4 12.5c2.4 6 3 13.2 1 20.2" fill="none" stroke="#fff" stroke-opacity=".20" stroke-width="1.1"/>
+    <path d="M17 2.5C17 1.4 16.3 0.6 15 0" fill="none" stroke="currentColor"
+          stroke-width="1.6" stroke-linecap="round"/>
+  </symbol>
   <symbol id="i-leaf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
     <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>
   </symbol>
@@ -421,7 +462,19 @@
 
   <!-- ── Step 1: phone ── -->
   <section id="step-phone">
+   <div class="pods" aria-hidden="true">
+     <svg class="p1" viewBox="0 0 34 44"><use href="#i-pod"/></svg>
+     <svg class="p2" viewBox="0 0 34 44"><use href="#i-pod"/></svg>
+     <svg class="p3" viewBox="0 0 34 44"><use href="#i-pod"/></svg>
+     <svg class="p4" viewBox="0 0 34 44"><use href="#i-pod"/></svg>
+     <svg class="p5" viewBox="0 0 34 44"><use href="#i-pod"/></svg>
+   </div>
    <div>
+    <div class="crest" aria-hidden="true">
+      <svg viewBox="0 0 26 46" style="transform:rotate(-20deg)"><use href="#i-pod"/></svg>
+      <svg class="mid" viewBox="0 0 34 44"><use href="#i-pod"/></svg>
+      <svg viewBox="0 0 26 46" style="transform:rotate(20deg)"><use href="#i-pod"/></svg>
+    </div>
     <div class="lead">
       <h2>Your documents</h2>
       <p>Sign in with the mobile number the office has for you.</p>
