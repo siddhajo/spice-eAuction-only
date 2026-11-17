@@ -1738,6 +1738,15 @@ function mountMobile(app, deps) {
     updated.banks = db.all(
       'SELECT * FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id', [id]
     );
+    // Customer-portal access follows a corrected phone number AT THE EDIT,
+    // not at the next bill. Waiting for the next document meant a number
+    // fixed today kept the PREVIOUS holder able to read this seller's
+    // paperwork until the next trade — which is usually the very reason
+    // the number was being corrected. `onlyIfLinked` keeps this to MOVING
+    // an existing grant; typing a phone number never creates one.
+    try {
+      require('./customer-portal').autoEnrol(db, 'seller', id, updated.tel, { onlyIfLinked: true });
+    } catch (_) { /* never fail a seller save over the portal */ }
     res.json({ success: true, trader: updated, lots: lotSync,
                warning: bankWarning || undefined });
   });

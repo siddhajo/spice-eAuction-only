@@ -20,6 +20,13 @@
      same page. Text contrast went UP at the same time — vibrancy is no use
      to someone who cannot read the number. */
   :root{
+    /* Tell the BROWSER which theme to draw native widgets in. Without this
+       the page picks its palette from prefers-color-scheme while the OS
+       keeps drawing <select> popups, scrollbars and form controls to its
+       own default — which is how a light page ended up opening a dark grey
+       dropdown with a blue highlight in it. CSS cannot style a native
+       select popup; declaring the scheme is the whole of the fix. */
+    color-scheme: light;
     --bg:#eff4f1; --card:#fff; --ink:#0c1a12; --muted:#56685d;
     --line:#d7e3da; --accent:#0f8b4c; --accent-ink:#fff;
     --accent-dark:#0a6b3a; --accent-soft:#d9f0e2; --stripe:#f2f9f5;
@@ -27,7 +34,8 @@
     --shadow:0 1px 3px rgba(12,26,18,.10), 0 1px 2px rgba(12,26,18,.06);
   }
   @media (prefers-color-scheme:dark){
-    :root{ --bg:#0d1711; --card:#17241c; --ink:#e8f3ec; --muted:#93ab9d;
+    :root{ color-scheme: dark;
+           --bg:#0d1711; --card:#17241c; --ink:#e8f3ec; --muted:#93ab9d;
            --line:#27382d; --accent:#2ecc71; --accent-ink:#04240f;
            --accent-dark:#1f9e55; --accent-soft:#143024; --stripe:#1c2a22;
            --danger:#ff7f6e;
@@ -40,7 +48,32 @@
   body{margin:0;background:var(--bg);color:var(--ink);
        font:18px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
        -webkit-text-size-adjust:100%}
-  .wrap{max-width:720px;margin:0 auto;padding:16px 16px 32px}
+  /* ── One screen, one scroller ─────────────────────────────────────────
+     The page itself does not scroll: the shell is exactly the viewport
+     tall, the chrome is fixed, and the document list takes whatever is
+     left and scrolls inside itself. 100dvh (not vh) so the mobile address
+     bar collapsing does not leave a dead strip at the bottom. */
+  html,body{height:100%}
+  body{display:flex;flex-direction:column;overflow:hidden}
+  @supports (height:100dvh){ body{height:100dvh} }
+  .wrap{max-width:720px;width:100%;margin:0 auto;padding:12px 16px 0;
+        flex:1;min-height:0;display:flex;flex-direction:column}
+  /* The sign-in cards are short; let them sit at the top and scroll if a
+     small landscape screen cannot take them. */
+  /* The sign-in cards sit in the MIDDLE of the screen, not pinned under the
+     bar with a third of a page of nothing below them. */
+  #step-phone,#step-code{overflow-y:auto;flex:1;min-height:0;
+                         display:flex;flex-direction:column;justify-content:center}
+  .lead{text-align:center;margin:0 4px 18px}
+  .lead h2{margin:0 0 7px;font-size:21px;font-weight:700;letter-spacing:-.015em}
+  .lead p{margin:0;font-size:15px;color:var(--muted);line-height:1.5}
+  /* Three plain facts, because the first thing a grower wants to know about
+     a login screen he has never seen is what is behind it. */
+  .assure{display:flex;flex-direction:column;gap:9px;margin:16px 2px 0}
+  .assure div{display:flex;align-items:flex-start;gap:10px;font-size:14px;
+              color:var(--muted);line-height:1.45}
+  .assure svg{flex:none;margin-top:2px;color:var(--accent)}
+  #step-docs{flex:1;min-height:0;display:flex;flex-direction:column}
 
   /* A real app bar: pinned to the top, full-bleed, and NOT a rounded card.
      Sticking a rounded card to top:0 leaves a transparent sliver above it
@@ -50,13 +83,21 @@
          background:linear-gradient(135deg,var(--accent) 0%,var(--accent-dark) 100%);
          box-shadow:0 2px 12px rgba(12,26,18,.18);
          padding-top:env(safe-area-inset-top,0px)}
-  header .hwrap{max-width:720px;margin:0 auto;padding:13px 16px;
-                display:flex;align-items:center;gap:12px}
-  header .mark{width:38px;height:38px;border-radius:11px;flex:none;
+  header .hwrap{max-width:720px;margin:0 auto;padding:10px 16px;
+                display:flex;align-items:center;gap:11px}
+  header .grow{flex:1;min-width:0}
+  /* Sign out lives in the bar now — it was an 80px block at the bottom of
+     a page that should not need a bottom. */
+  header .out{flex:none;width:38px;height:38px;border-radius:10px;border:0;
+              background:rgba(255,255,255,.16);color:#fff;display:grid;
+              place-items:center;cursor:pointer;margin:0;padding:0}
+  header .mark{width:36px;height:36px;border-radius:10px;flex:none;
                background:rgba(255,255,255,.92);color:var(--accent);
                display:grid;place-items:center}
-  header h1{font-size:21px;margin:0;font-weight:700;letter-spacing:-.015em;color:#fff}
-  header .co{font-size:14px;margin-top:0;color:rgba(255,255,255,.85);font-weight:500}
+  header h1{font-size:19px;margin:0;font-weight:700;letter-spacing:-.015em;color:#fff;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  header .co{font-size:13px;margin-top:0;color:rgba(255,255,255,.85);font-weight:500;
+             white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
         padding:18px;margin-bottom:14px;box-shadow:var(--shadow)}
@@ -73,6 +114,10 @@
        border:1px solid var(--line);border-radius:10px;background:var(--bg);
        color:var(--ink);appearance:none}
   input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
+  /* Honoured on Android and Windows; macOS draws its own menu and ignores
+     these, which is why color-scheme above is the part that matters. */
+  select option{background:var(--card);color:var(--ink)}
+  select option:checked{background:var(--accent-soft)}
   /* 17px is not taste: iOS Safari zooms the whole page on focus below 16px. */
   .field input{padding-left:40px}
   input:not([type=checkbox]):focus,select:focus{outline:2px solid var(--accent);
@@ -109,7 +154,7 @@
      parties here; as tiles that is a wall of buttons that pushes the
      documents off the screen, and on a phone the native picker is both
      smaller and easier to use than anything we could draw. */
-  .who{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .who{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex:none}
   .who .sel{flex:1;position:relative}
   .who select{padding:12px 38px 12px 42px;font-size:17px;font-weight:700;
               background:var(--card);border-radius:11px;color:var(--ink);
@@ -118,12 +163,15 @@
                color:var(--accent);pointer-events:none}
   .who .chev{position:absolute;right:12px;top:50%;transform:translateY(-50%);
              color:var(--muted);pointer-events:none}
-  .who .one{flex:1;display:flex;align-items:center;gap:10px;font-weight:700;font-size:17.5px}
+  .who .one{flex:1;min-width:0;display:flex;align-items:center;gap:9px;font-weight:700;
+            font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
   /* Whose sign-in is this? On a shared handset the party name alone does not
      answer that — the NUMBER is the account. */
-  .signed{display:flex;align-items:center;gap:7px;font-size:14px;color:var(--muted);
-          margin:-6px 2px 12px}
+  /* The number rides on the same line as the name — two lines to say who
+     is signed in is one more than it needs. */
+  .signed{font-size:13.5px;color:var(--muted);font-weight:500;flex:none;
+          white-space:nowrap}
   .signed b{font-weight:700;color:var(--accent-dark);font-variant-numeric:tabular-nums;letter-spacing:.02em}
 
   /* Count on the left, financial-year picker on the right — the year is a
@@ -133,10 +181,10 @@
      "show me October" and "show me this year" are the two ways a grower
      asks for their papers. The count and the bulk button share the row
      below them. */
-  .period{display:flex;gap:8px;margin:0 0 10px}
+  .period{display:flex;gap:8px;margin:0 0 9px}
   .period .yr{flex:1}
   .period .yr select{width:100%}
-  .bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 8px}
+  .bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 9px}
   /* Download-everything-shown. Sized as a link rather than a block button:
      it belongs to the list under it, not to the page. */
   .grab{display:inline-flex;align-items:center;gap:7px;font-size:14.5px;font-weight:650;
@@ -163,10 +211,54 @@
   /* The app bar wins any overlap with the list's own sticky header. */
   .selall input{width:24px;height:24px;flex:none;margin:0;accent-color:var(--accent)}
   .count{font-size:14px;color:var(--muted)}
+
+  /* ── The headline band ────────────────────────────────────────────────
+     What a seller actually came to find out: how much, over how much
+     cardamom, and when they last traded. Money first and largest — the
+     rest is context for it. */
+  /* One band, three facts, ~56px — the three-tile grid was 290px of a
+     screen that should mostly be documents. */
+  .band{display:flex;align-items:center;gap:14px;flex:none;margin-bottom:10px;
+        padding:11px 15px;border-radius:14px;color:#fff;
+        background:linear-gradient(135deg,var(--accent) 0%,var(--accent-dark) 100%);
+        box-shadow:0 3px 12px rgba(15,139,76,.22)}
+  .band .big{flex:1;min-width:0}
+  .band .k{font-size:11px;letter-spacing:.04em;text-transform:uppercase;
+           color:rgba(255,255,255,.8);font-weight:650}
+  .band .v{font-size:23px;font-weight:700;letter-spacing:-.02em;line-height:1.15;
+           font-variant-numeric:tabular-nums}
+  .band .side{text-align:right;flex:none}
+  .band .side .v{font-size:15px}
+
+  /* ── Who to ring ──────────────────────────────────────────────────────
+     A statement with no way to query it is a complaint waiting to happen.
+     The number is a tel: link, because the point is to be rung. */
+  /* A strip, not a card. The address and GSTIN are a tap away rather than
+     290px of every screen — what a customer needs at a glance is the
+     office's number. */
+  .help{flex:none;margin-top:auto;margin-bottom:10px}
+  .help .strip{display:flex;align-items:center;gap:10px;width:100%;
+               background:var(--card);border:1px solid var(--line);border-radius:12px;
+               padding:11px 14px;font-size:14px;font-weight:600;color:var(--ink);
+               cursor:pointer;box-shadow:var(--shadow);margin:0}
+  .help .strip .nm{flex:1;min-width:0;text-align:left;white-space:nowrap;
+                   overflow:hidden;text-overflow:ellipsis}
+  .help .strip .call{color:var(--accent)}
+  .help .more{display:none;padding:12px 14px 2px;font-size:13.5px;color:var(--muted);
+              line-height:1.55}
+  .help.open .more{display:block}
+  .help .more .addr{margin-bottom:2px}
+  .help .more .links{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .help .more a{display:inline-flex;align-items:center;gap:7px;text-decoration:none;
+                font-size:14px;font-weight:600;color:var(--accent);
+                background:var(--accent-soft);border-radius:9px;padding:8px 12px}
+  .help .gst{font-size:12px;color:var(--muted);margin-top:9px;
+             font-variant-numeric:tabular-nums}
+  header .mark img{width:100%;height:100%;object-fit:contain;border-radius:9px}
   .yr{position:relative;flex:none}
-  .yr select{width:auto;padding:9px 32px 9px 13px;font-size:14.5px;font-weight:650;
+  .yr select{width:auto;padding:8px 30px 8px 12px;font-size:14px;font-weight:650;
              background:var(--card);border-radius:10px;color:var(--ink);
-             border-color:var(--accent-soft);box-shadow:var(--shadow)}
+             border-color:var(--accent-soft);box-shadow:none}
   .yr .chev{position:absolute;right:9px;top:50%;transform:translateY(-50%);
             color:var(--muted);pointer-events:none}
 
@@ -174,40 +266,56 @@
      picker and the year stay put while a grower with forty bills scrolls
      through them. Capped against the viewport so it is never taller than
      the screen on a phone, and never a stub on a desktop. */
-  #doclist{max-height:min(58vh,460px);overflow-y:auto;overscroll-behavior:contain;
-           -webkit-overflow-scrolling:touch;padding:0;overflow-x:hidden}
+  /* `flex:0 1 auto`, not `flex:1`: the card takes the height its rows need
+     and shrinks to fit when there are too many — a seller with ONE bill was
+     getting a card stretched down the whole screen with a single line in
+     it. The contact strip is pushed to the bottom by its own auto margin
+     instead, so the layout still reaches the foot of the screen. */
+  #doclist{flex:0 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+           -webkit-overflow-scrolling:touch;padding:0;overflow-x:hidden;
+           margin-bottom:10px}
   #doclist::-webkit-scrollbar{width:9px}
   #doclist::-webkit-scrollbar-thumb{background:var(--line);border-radius:9px;
            border:3px solid var(--card)}
 
-  /* The amount sits on the META line, not in a third column. Competing for
-     width with the title is what truncated "Commission Bill 2873" to
-     "Commission …" on a 414px phone — and the document number is the one
-     thing on the row the reader is actually looking for. */
-  /* Zebra rows instead of hairline separators — one device or the other,
-     never both, or the list reads as a grid. The stripe runs the full width
-     of the card (the card's own side padding moved onto the rows) so the
-     bands do not float with a white gutter either side of them. */
-  .doc{display:flex;align-items:center;gap:12px;padding:12px 18px}
+  /* ── A statement row ──────────────────────────────────────────────────
+     Title and amount share the top line, date and auction sit under it.
+     The amount is a right-aligned column again — a column of figures is
+     scannable in a way a figure buried mid-sentence is not — and there is
+     room for it because the row ITSELF now opens the document, so the
+     green "view" square is gone. Fourteen heavy buttons down a list is
+     what made the page feel like a form. */
+  .doc{display:flex;align-items:center;gap:12px;padding:11px 16px;cursor:pointer;
+       transition:background .12s ease}
   .doc.alt{background:var(--stripe)}
-  /* No per-row type icon. Each party now sees exactly ONE kind of document
-     — a seller only commission bills, a buyer only invoices — so the glyph
-     was identical on every row: 52px of width that said nothing, and at
-     18px base type that width is the difference between "Auction 19" and
-     "Auc…". The kind is already in the title of each row. */
+  .doc:active{background:var(--accent-soft)}
   .doc .grow{flex:1;min-width:0}
-  .doc .t{font-weight:650;font-size:16.5px;line-height:1.35;
+  .doc .top{display:flex;align-items:baseline;gap:10px}
+  .doc .t{flex:1;min-width:0;font-weight:650;font-size:16px;line-height:1.3;
           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .doc .s{font-size:14.5px;color:var(--muted);line-height:1.4;
+  .doc .amt{flex:none;font-size:15.5px;font-weight:700;color:var(--accent-dark);
+            font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .doc .s{font-size:13.5px;color:var(--muted);line-height:1.45;margin-top:1px;
           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .doc .s b{font-weight:700;color:var(--accent-dark);font-variant-numeric:tabular-nums}
+  /* A disclosure arrow. Making the whole row tappable looks better than a
+     green square on every line, but without a cue that it IS tappable it
+     is just a prettier dead end — and the people reading this will not go
+     prodding a list to find out. */
+  .doc .go{flex:none;color:var(--line);display:grid;place-items:center;
+           margin-left:-4px;transition:color .12s ease}
+  .doc:active .go{color:var(--accent)}
   .acts{display:flex;gap:6px;flex:none}
-  .acts a{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;
+  .acts a{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
           border:1.5px solid var(--accent-soft);color:var(--accent);
-          text-decoration:none;background:var(--card)}
-  .acts a.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
-             box-shadow:0 1px 3px rgba(15,139,76,.3)}
-  .acts a:active{transform:scale(.94)}
+          text-decoration:none;background:var(--card);transition:transform .1s ease}
+  .acts a:active{transform:scale(.92)}
+  .doc.on{background:var(--accent-soft)}
+  .doc .pick{width:24px;height:24px;flex:none;margin:0;accent-color:var(--accent)}
+  .selall{display:flex;align-items:center;gap:11px;padding:11px 16px;
+          border-bottom:1px solid var(--line);font-size:15px;font-weight:600;
+          color:var(--muted);cursor:pointer;position:sticky;top:0;
+          background:var(--card);z-index:1}
+  .selall input{width:24px;height:24px;flex:none;margin:0;accent-color:var(--accent)}
 
   .empty{color:var(--muted);font-size:15.5px;padding:20px 4px;text-align:center}
   .foot{color:var(--muted);font-size:13.5px;text-align:center;padding:14px 0 4px}
@@ -243,6 +351,12 @@
   <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3"/><path d="m16 5 3 3"/><path d="m19 2 3 3"/>
   </symbol>
+  <symbol id="i-call" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/>
+  </symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="4" width="20" height="16" rx="2.5"/><path d="m2.5 6.5 9.5 7 9.5-7"/>
+  </symbol>
   <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
     <rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
   </symbol>
@@ -257,6 +371,9 @@
   </symbol>
   <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
     <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+  </symbol>
+  <symbol id="i-go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m9 18 6-6-6-6"/>
   </symbol>
   <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="m6 9 6 6 6-6"/>
@@ -290,17 +407,26 @@
 <header>
   <div class="hwrap">
     <span class="mark"><svg width="19" height="19"><use href="#i-leaf"/></svg></span>
-    <span>
+    <span class="grow">
       <h1>My Documents</h1>
       <div class="co" id="co"></div>
     </span>
+    <button class="out" id="out" title="Sign out" aria-label="Sign out" hidden>
+      <svg width="17" height="17"><use href="#i-out"/></svg>
+    </button>
   </div>
 </header>
 
 <div class="wrap">
 
   <!-- ── Step 1: phone ── -->
-  <section class="card" id="step-phone">
+  <section id="step-phone">
+   <div>
+    <div class="lead">
+      <h2>Your documents</h2>
+      <p>Sign in with the mobile number the office has for you.</p>
+    </div>
+   <div class="card">
     <label for="phone">Your mobile number</label>
     <div class="field">
       <span class="ico"><svg width="18" height="18"><use href="#i-phone"/></svg></span>
@@ -309,10 +435,21 @@
     </div>
     <button id="send"><svg width="16" height="16"><use href="#i-send"/></svg> Send code</button>
     <div class="msg err" id="err-phone" hidden></div>
+   </div>
+    <div class="assure">
+      <div><svg width="17" height="17"><use href="#i-receipt"/></svg>
+           <span>Every bill and invoice raised in your name, any year.</span></div>
+      <div><svg width="17" height="17"><use href="#i-dl"/></svg>
+           <span>View or save them as PDF — one at a time, or a whole year together.</span></div>
+      <div><svg width="17" height="17"><use href="#i-lock"/></svg>
+           <span>Only yours. We send a 6-digit code to that number to be sure it is you.</span></div>
+    </div>
+   </div>
   </section>
 
   <!-- ── Step 2: code ── -->
-  <section class="card" id="step-code" hidden>
+  <section id="step-code" hidden>
+   <div class="card">
     <label for="code">Enter the 6-digit code sent to <span id="to"></span></label>
     <div class="field">
       <span class="ico"><svg width="18" height="18"><use href="#i-lock"/></svg></span>
@@ -324,12 +461,13 @@
     <button class="ghost" id="resend"></button>
     <button class="ghost" id="back">Use a different number</button>
     <div class="msg err" id="err-code" hidden></div>
+   </div>
   </section>
 
   <!-- ── Step 3: documents ── -->
   <section id="step-docs" hidden>
     <div class="who" id="who"></div>
-    <div class="signed" id="signed" hidden></div>
+    <div class="band" id="band" hidden></div>
     <div class="period" id="period" hidden>
       <span class="yr" id="yr"></span>
       <span class="yr" id="mo"></span>
@@ -342,10 +480,12 @@
       </span>
     </div>
     <div class="card" id="doclist"></div>
-    <button class="leave" id="out"><svg width="16" height="16"><use href="#i-out"/></svg> Sign out</button>
   </section>
 
   <div class="foot" id="foot"></div>
+  <!-- Outside the signed-in section on purpose: a customer who CANNOT sign
+       in is exactly the one who needs the office's number. -->
+  <div class="help" id="help" hidden></div>
 </div>
 
 <script>
@@ -357,6 +497,7 @@
   var allDocs = [], fyPick = '', moPick = '';   // moPick '' = the whole year
   var selMode = false, sel = {};                // id → true, only while selecting
   var ticker = null, expiresAt = 0, resendAt = 0;
+  var CO = {}, totals = {};
 
 
   function svg(id, size){
@@ -373,6 +514,17 @@
     e.innerHTML = svg('#i-alert', 16) + '<span></span>';
     e.lastChild.textContent = m;
     e.hidden = false;
+  }
+  // Rupees 23.4 L / 1.23 Cr on the headline tile. A grower reads
+  // "Rs 2,34,12,050" as a wall of digits; the lakh/crore shorthand is how
+  // the amount is actually said out loud, and the exact figure sits right
+  // underneath it anyway.
+  function shortMoney(n){
+    var v = Number(n) || 0;
+    var trim = function(x){ return x.toFixed(2).replace(/\.?0+$/, ''); };
+    if (v >= 1e7) return '\u20B9' + trim(v / 1e7) + ' Cr';
+    if (v >= 1e5) return '\u20B9' + trim(v / 1e5) + ' L';
+    return money(v);
   }
   function money(n){
     var v = Number(n);
@@ -489,7 +641,12 @@
   $('resend').onclick = function(){ requestCode(true); };
 
   $('back').onclick = function(){
-    stopClock(); err('err-code',''); $('foot').textContent=''; show('phone');
+    stopClock();
+    $('phone').value = ''; $('code').value = '';
+    err('err-code',''); err('err-phone','');
+    $('foot').textContent = '';
+    show('phone');
+    $('phone').focus();
   };
 
   // ── Step 2 ──
@@ -515,14 +672,7 @@
   // ── Step 3 ──
   function enter(){
     show('docs');
-    if (myPhone) {
-      var sg = $('signed');
-      sg.innerHTML = svg('#i-phone', 13) + '<span>Signed in as </span>';
-      var b = document.createElement('b');
-      b.textContent = myPhone;
-      sg.appendChild(b);
-      sg.hidden = false;
-    }
+    $('out').hidden = false;
     var who = $('who');
     who.innerHTML = '';
     if (parties.length > 1) {
@@ -551,6 +701,13 @@
       one.appendChild(nm);
       who.appendChild(one);
     }
+    // The signed-in number rides on the same line as the name.
+    if (myPhone) {
+      var sg = document.createElement('span');
+      sg.className = 'signed';
+      sg.textContent = myPhone;
+      who.appendChild(sg);
+    }
     select(0);
   }
 
@@ -562,11 +719,13 @@
     $('period').hidden = true;
     $('grab').hidden = true;
     $('pickbtn').hidden = true;
+    $('band').hidden = true;
     selMode = false; sel = {};
     list.innerHTML = '<div class="empty">Loading…</div>';
     try {
       var r = await api('/api/portal/documents?party=' + encodeURIComponent(active.kind + ':' + active.id));
       allDocs = r.documents || [];
+      totals = r.totals || {};
       fyPick = ''; moPick = '';  // a new party starts on its own latest year
       selMode = false; sel = {};
       buildPeriod();
@@ -631,6 +790,52 @@
     $('period').hidden = false;
   }
 
+  // The band above the list, scoped to the chosen YEAR — "how much did I
+  // make this season" is the question. A lifetime total answers one nobody
+  // asked and quietly changes meaning as the years roll.
+  function drawTiles(){
+    var box = $('band');
+    var t = totals[fyPick];
+    if (!t || !t.documents) { box.hidden = true; return; }
+    var noun = (active && active.kind === 'buyer') ? 'Paid' : 'Earned';
+    var qty = Number(t.qty) || 0;
+    var qtyTxt = qty >= 1000 ? (qty / 1000).toFixed(2) + ' t' : qty.toFixed(0) + ' kg';
+    box.innerHTML =
+        '<span class="big"><span class="k">' + noun + ' FY ' + fyPick + '</span>'
+      + '<div class="v">' + shortMoney(t.amount) + '</div></span>'
+      + '<span class="side"><span class="k">Cardamom</span>'
+      + '<div class="v">' + qtyTxt + '</div></span>'
+      + '<span class="side"><span class="k">Last</span>'
+      + '<div class="v">' + (when(t.lastDate) || '-') + '</div></span>';
+    box.hidden = false;
+  }
+
+  // Who to ring. A statement nobody can query is a complaint in waiting.
+  function drawHelp(){
+    var box = $('help');
+    if (!CO.company) { box.hidden = true; return; }
+    var strip = '<button class="strip" type="button" id="helpbtn">'
+      + '<span class="nm">' + CO.company + '</span>'
+      + (CO.phone ? '<span class="call">' + svg('#i-call', 16) + '</span>' : '')
+      + '<span style="color:var(--muted)">' + svg('#i-chev', 15) + '</span></button>';
+    var more = '<div class="more">';
+    // The address is a BLOCK of its own: inline-flex links flowing straight
+    // after it put "Call the office" alongside the last line of the address.
+    if (CO.address && CO.address.length) {
+      more += '<div class="addr">' + CO.address.join('<br>')
+            + (CO.state ? '<br>' + CO.state : '') + '</div>';
+    }
+    var links = '';
+    if (CO.phone) links += '<a href="tel:' + CO.phone + '">' + svg('#i-call', 15) + 'Call the office</a>';
+    if (CO.email) links += '<a href="mailto:' + CO.email + '">' + svg('#i-mail', 15) + 'Email</a>';
+    if (links) more += '<div class="links">' + links + '</div>';
+    if (CO.gstin) more += '<div class="gst">GSTIN ' + CO.gstin + '</div>';
+    more += '</div>';
+    box.innerHTML = strip + more;
+    box.hidden = false;
+    $('helpbtn').onclick = function(){ box.classList.toggle('open'); };
+  }
+
   function render(){
     var list = $('doclist');
     var docs = allDocs.filter(function(d){
@@ -648,11 +853,15 @@
       $('count').textContent = '';
       $('grab').hidden = true;
       $('pickbtn').hidden = true;
+      drawTiles();
+      drawHelp();
       return;
     }
     $('count').textContent = docs.length + ' document' + (docs.length === 1 ? '' : 's');
 
     drawBar(docs);
+    drawTiles();
+    drawHelp();
 
     // A "select all" header, sticky so it stays reachable in a long list.
     if (selMode) {
@@ -674,6 +883,7 @@
     docs.forEach(function(d, i){
       var row = document.createElement('div');
       row.className = (i % 2 ? 'doc alt' : 'doc') + (selMode && sel[d.id] ? ' on' : '');
+      var open = '/api/portal/documents/' + d.kind + '/' + d.id + '/pdf?token=' + encodeURIComponent(token);
 
       if (selMode) {
         var cb = document.createElement('input');
@@ -684,7 +894,6 @@
           if (cb.checked) sel[d.id] = true; else delete sel[d.id];
           row.className = (i % 2 ? 'doc alt' : 'doc') + (cb.checked ? ' on' : '');
           drawBar(docs);
-          // Keep the header's own tick honest without a full redraw.
           var head = list.querySelector('.selall input');
           if (head) {
             head.checked = docs.every(function(x){ return sel[x.id]; });
@@ -692,44 +901,43 @@
           }
         };
         row.appendChild(cb);
-        // The whole row toggles, not just the 24px box — a thumb on a phone
-        // is wider than the control.
+        // The whole row toggles, not just the 24px box — a thumb is wider
+        // than the control.
         row.onclick = function(ev){ if (ev.target !== cb) { cb.checked = !cb.checked; cb.onchange(); } };
       }
 
       var g = document.createElement('div'); g.className = 'grow';
+      var top = document.createElement('div'); top.className = 'top';
       var t = document.createElement('div'); t.className = 't';
       t.textContent = d.label + ' ' + (d.no || '');
-      // Amount FIRST on the meta line. A seven-figure sum plus a date plus a
-      // trade number does not fit a 414px phone, so something has to give —
-      // and the one thing a grower is looking for is the money. Putting it
-      // in front means the trade number is what gets ellipsized, not ₹23,25,051.
-      var s = document.createElement('div'); s.className = 's';
-      var amt = document.createElement('b');
+      var amt = document.createElement('div'); amt.className = 'amt';
       amt.textContent = money(d.amount);
-      s.appendChild(amt);
-      s.appendChild(document.createTextNode(
-        ' · ' + when(d.date) + (d.ano ? ' · Auction ' + d.ano : '')));
-      g.appendChild(t); g.appendChild(s);
+      top.appendChild(t); top.appendChild(amt);
+      var sub = document.createElement('div'); sub.className = 's';
+      sub.textContent = when(d.date) + (d.ano ? ' \u00b7 Auction ' + d.ano : '');
+      g.appendChild(top); g.appendChild(sub);
+      row.appendChild(g);
 
-      // Two actions, because on a phone "look at it now" and "keep a copy"
-      // are different intentions, and burying the second in the browser's
-      // own menu is where it goes to die. The token rides the query string
-      // because a plain link cannot set a header.
-      var base = '/api/portal/documents/' + d.kind + '/' + d.id + '/pdf?token=' + encodeURIComponent(token);
-      var acts = document.createElement('div'); acts.className = 'acts';
-      if (selMode) acts.hidden = true;
-      var view = document.createElement('a');
-      view.href = base; view.target = '_blank'; view.rel = 'noopener';
-      view.className = 'go'; view.title = 'View'; view.setAttribute('aria-label','View ' + d.label);
-      view.innerHTML = svg('#i-eye', 17);
-      var dl = document.createElement('a');
-      dl.href = base + '&dl=1';
-      dl.title = 'Download'; dl.setAttribute('aria-label','Download ' + d.label);
-      dl.innerHTML = svg('#i-dl', 17);
-      acts.appendChild(view); acts.appendChild(dl);
+      if (!selMode) {
+        // Tapping the row opens the document; the one button left is SAVE.
+        // Two equal squares per row read as a toolbar, not a statement.
+        row.setAttribute('role', 'button');
+        row.setAttribute('aria-label', 'Open ' + d.label + ' ' + (d.no || ''));
+        row.onclick = function(){ window.open(open, '_blank', 'noopener'); };
+        var acts = document.createElement('div'); acts.className = 'acts';
+        var dl = document.createElement('a');
+        dl.href = open + '&dl=1';
+        dl.title = 'Save'; dl.setAttribute('aria-label', 'Download ' + d.label);
+        dl.innerHTML = svg('#i-dl', 17);
+        // The row's own tap would fire too and open a second copy.
+        dl.onclick = function(ev){ ev.stopPropagation(); };
+        acts.appendChild(dl);
+        row.appendChild(acts);
+        var go = document.createElement('span'); go.className = 'go';
+        go.innerHTML = svg('#i-go', 17);
+        row.appendChild(go);
+      }
 
-      row.appendChild(g); row.appendChild(acts);
       list.appendChild(row);
     });
   }
@@ -811,21 +1019,38 @@
     render();
   }
 
-  function signedOut(){
+  // Every way back to the sign-in screen goes through here. There were two
+  // of these — sign out, and session expired — and they had already drifted:
+  // neither cleared the number field, so the next person to pick up the
+  // phone found the previous one's mobile number waiting in the box.
+  function resetToSignIn(message){
     stopClock();
     token = ''; sessionStorage.removeItem('portal_token');
-    parties = []; active = null; myPhone = ''; allDocs = []; fyPick = ''; moPick = ''; selMode = false; sel = {};
-    $('signed').hidden = true;
+    parties = []; active = null; myPhone = '';
+    allDocs = []; totals = {}; fyPick = ''; moPick = ''; selMode = false; sel = {};
+    $('phone').value = '';
+    $('code').value = '';
+    $('to').textContent = '';
+    err('err-phone', ''); err('err-code', '');
+    $('foot').textContent = '';
+    $('out').hidden = true;
+    $('band').hidden = true;
+    $('period').hidden = true;
+    $('grab').hidden = true;
+    $('pickbtn').hidden = true;
+    $('count').textContent = '';
+    $('doclist').innerHTML = '';
     show('phone');
-    err('err-phone','Your sign-in has expired. Please sign in again.');
+    if (message) err('err-phone', message);
+  }
+
+  function signedOut(){
+    resetToSignIn('Your sign-in has expired. Please sign in again.');
   }
 
   $('out').onclick = async function(){
     try { await api('/api/portal/logout', { method:'POST' }); } catch(_){}
-    token=''; sessionStorage.removeItem('portal_token');
-    parties = []; active = null; myPhone = ''; allDocs = []; fyPick = ''; moPick = ''; selMode = false; sel = {};
-    $('signed').hidden = true;
-    show('phone');
+    resetToSignIn();
   };
 
   $('phone').addEventListener('keydown', function(e){ if (e.key === 'Enter') $('send').click(); });
@@ -834,8 +1059,26 @@
   // Boot: name the company, and resume a session that is still good.
   (async function(){
     try {
-      var c = await fetch('/api/portal/config').then(function(r){ return r.json(); });
-      if (c && c.company) $('co').textContent = c.company;
+      CO = (await fetch('/api/portal/config').then(function(r){ return r.json(); })) || {};
+      if (CO.company) {
+        // The company's name leads and "My Documents" becomes the subtitle:
+        // the page should say WHOSE it is before it says what it is.
+        document.querySelector('header h1').textContent = CO.company;
+        $('co').textContent = 'My Documents';
+        document.title = CO.company + ' - My Documents';
+      }
+      if (CO.logoUrl) {
+        var mark = document.querySelector('header .mark');
+        var img = new Image();
+        img.alt = ''; img.src = CO.logoUrl;
+        // Swap the leaf out only once the real logo has loaded - a broken
+        // image icon in the bar is worse than the placeholder.
+        img.onload = function(){ mark.innerHTML = ''; mark.appendChild(img); };
+      }
+      // The contact strip is drawn once, at boot, because it now sits
+      // outside the signed-in section — a customer who CANNOT sign in is
+      // exactly the one who needs the office's number.
+      drawHelp();
     } catch(_){}
     if (token) {
       try {

@@ -1472,6 +1472,7 @@ mountPortal(app, {
   // caller that wants the statutory form.
   renderBillOfSupplyPdf:     (db, row)  => renderCommissionBoSPdf(db, [row]),
   renderBillOfSupplyPdfMany: (db, rows) => renderCommissionBoSPdf(db, rows),
+  commissionNettForBills:    (db, rows) => commissionNettByBillId(db, rows),
   renderPlainBillOfSupplyPdf:(db, row) => renderStoredBillOfSupplyPdf(db, { storedRow: row }),
   renderDebitNotePlanterPdf: (db, row) => renderStoredDebitNotePlanterPdf(db, row),
   // Sign-in codes over WhatsApp. Defined later in this file (hoisted).
@@ -6095,6 +6096,13 @@ app.put('/api/buyers/:id', requireBuyerWrite, (req, res) => {
      b.cbuyer1||'', b.cadd1||'', b.cadd2||'', b.cpla||'', b.cpin||'', b.cstate||'', b.cst_code||'', b.cgstin||'',
      b.csbl||'', b.cpan||'',
      req.params.id]);
+  // Portal access follows a corrected phone at the EDIT — see the matching
+  // hook on the seller route in mobile-bridge.js for why the next invoice
+  // is too late.
+  try {
+    const row = db.get('SELECT tel FROM buyers WHERE id = ?', [req.params.id]);
+    if (row) require('./customer-portal').autoEnrol(db, 'buyer', Number(req.params.id), row.tel, { onlyIfLinked: true });
+  } catch (_) { /* never fail a buyer save over the portal */ }
   res.json({ success: true });
 });
 app.delete('/api/buyers/:id', requireDelete, (req, res) => {
@@ -16685,7 +16693,12 @@ function commissionPagesFromLots(db, cfg, lots, opts) {
       line: { lot: l.lot_no, qty, bags: l.bags || 0, rate, cardamomCost,
               refundQty: sbRefundKg, refundRate: rate, refundAmount,
               traderSampleQty: sbTraderSampleKg, traderSampleAmount },
-      purchaser: commissionPurchaserForLot(db, cfg, l, opts),
+      // The purchaser block is for the PRINTED page. A caller that only
+      // wants the money (the customer portal's list and its year totals)
+      // passes totalsOnly and skips a per-lot buyer lookup it would throw
+      // away - the NETT does not depend on it.
+      purchaser: opts.totalsOnly ? Object.assign({}, EMPTY_COMMISSION_PURCHASER)
+                                 : commissionPurchaserForLot(db, cfg, l, opts),
       commission: com, cgst: cg, sgst: sg, igst: ig,
       interState: !!(l.sale && l.sale !== 'L'),
       nett: round2(cardamomCost + refundAmount - com - cg - sg - ig),
@@ -16731,9 +16744,21 @@ function commissionInvoiceNoOpts(db, cfg, req) {
 // Split in two because the two callers need different halves: the payload
 // builder is pure (one A4 page per LOT, per bill), and the renderer picks
 // the engine and names the file.
-function commissionBillPayloads(db, cfg, ordered, invoOpts) {
+function commissionBillPayloads(db, cfg, ordered, invoOpts, opts) {
+  const payloads = [];
+  for (const b of ordered) payloads.push(...commissionPayloadsForBill(db, cfg, b, invoOpts, opts));
+  return payloads;
+}
+
+// ONE bill -> one payload per lot. Split out of the loop above so the
+// customer portal can ask "what is this bill worth?" and get the figure the
+// document will print, from the same arithmetic, rather than a near-miss
+// computed another way. (bills.net minus the debit note lands a rupee out,
+// because the planter DN ceils.)
+function commissionPayloadsForBill(db, cfg, b, invoOpts, opts) {
+    opts = opts || {};
     const payloads = [];
-    for (const b of ordered) {
+    {
       // Resolve the auction record (id + ano + date) so we can pull the
       // matching lots and format the eAuction strip.
       // A stored auction_id can go stale when the trade was deleted and
@@ -16835,7 +16860,8 @@ function commissionBillPayloads(db, cfg, ordered, invoOpts) {
       const emptyPurchaser = { ...EMPTY_COMMISSION_PURCHASER };
       const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-      const perLot = commissionPagesFromLots(db, cfg, lots, invoOpts);
+      const perLot = commissionPagesFromLots(db, cfg, lots,
+        Object.assign({}, invoOpts, { totalsOnly: !!opts.totalsOnly }));
       if (!lots.length) {
         // Live lots are gone (e.g. deleted after generation). Rebuild from
         // the per-lot snapshot stored on the bill row at generation time
@@ -16921,6 +16947,41 @@ function commissionBillPayloads(db, cfg, ordered, invoOpts) {
     }
 
     return payloads;
+}
+
+// What each of these bills is actually worth to the seller: the sum of the
+// NETT figures its commission-bill pages print. The portal's list rows and
+// its year totals both read this, so the headline, the row and the PDF in
+// the grower's hand agree to the rupee.
+//
+// Returns Map(bill id -> nett). A bill whose lots have vanished is left out,
+// and the caller falls back to the stored total.
+function commissionNettByBillId(db, rows) {
+  const out = new Map();
+  if (!rows || !rows.length) return out;
+  let cfg, invoOpts;
+  try {
+    cfg = getSettingsFlat(db);
+    invoOpts = commissionInvoiceNoOpts(db, cfg, { body: {} });
+  } catch (_) { return out; }
+  for (const b of rows) {
+    try {
+      const pages = commissionPayloadsForBill(db, cfg, b, invoOpts, { totalsOnly: true });
+      if (!pages.length) continue;
+      // Round each PAGE the way the renderer does — Grand Total is the
+      // page's nett taken to the whole rupee, with the paise printed as
+      // "Round Off" (render-commission-html.js). Summing the raw netts and
+      // rounding once at the end would land a few paise off a multi-lot
+      // bill, which on a money page is its own phone call.
+      const nett = pages.reduce((a, pg) => {
+        const n = Number(pg.billData && pg.billData.nett) || 0;
+        const rd = pg.billData && pg.billData.roundDiff;
+        return a + (rd != null ? n + Number(rd) : Math.round(n));
+      }, 0);
+      out.set(b.id, Math.round(nett * 100) / 100);
+    } catch (_) { /* leave it out */ }
+  }
+  return out;
 }
 
 async function renderCommissionBoSPdf(db, bills, opts = {}) {

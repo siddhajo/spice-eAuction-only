@@ -122,11 +122,12 @@ const RESEND_COOLDOWN_SEC = 45;
 //
 // Three deliberate restrictions:
 //
-//   1. Only when the party has NO active link at all. If an admin has bound
-//      them to a corrected number, the stale one on the master must not come
-//      creeping back the next time a bill is raised — that would silently
-//      undo the correction, and on a shared handset it would hand their
-//      documents back to the previous holder.
+//   1. A HAND-MADE link ('admin' / 'claim') is never touched: an admin who
+//      bound a corrected number has said something the master does not
+//      know, and overwriting it would undo the correction and, on a shared
+//      handset, hand the documents back to the previous holder. A link this
+//      code created ITSELF follows the master instead — if the office fixes
+//      a phone number, the grant moves with it and the old row is retired.
 //   2. Only a clean ten-digit number. A blank or malformed `tel` is not a
 //      grant to anybody.
 //   3. Runs whether or not `flag_customer_portal` is on. A link grants
@@ -135,7 +136,8 @@ const RESEND_COOLDOWN_SEC = 45;
 //      every document raised before somebody flipped it.
 //
 // Never throws: a failure here must not fail an invoice.
-function autoEnrol(db, partyKind, partyId, rawPhone) {
+function autoEnrol(db, partyKind, partyId, rawPhone, opts) {
+  opts = opts || {};
   try {
     const id = Number(partyId);
     if (!Number.isFinite(id) || id <= 0) return false;
@@ -143,11 +145,40 @@ function autoEnrol(db, partyKind, partyId, rawPhone) {
     const pkey = phoneKey(rawPhone);
     if (!pkey) return false;
 
-    const held = db.get(
-      `SELECT 1 AS x FROM party_links
-        WHERE party_kind = ? AND party_id = ? AND status = 'active' LIMIT 1`,
+    const live = db.all(
+      `SELECT id, phone_key, source FROM party_links
+        WHERE party_kind = ? AND party_id = ? AND status = 'active'`,
       [partyKind, id]);
-    if (held) return false;
+
+    // Already reachable on this number.
+    if (live.some(l => String(l.phone_key) === pkey)) return false;
+
+    // `onlyIfLinked` is for the MASTER-EDIT hook: moving an existing grant
+    // to a corrected number is right, but creating one because somebody
+    // typed a phone number is not — enrolment still waits for a document.
+    if (opts.onlyIfLinked && !live.length) return false;
+
+    // A HAND-MADE grant is never touched. An admin who bound a corrected
+    // number, or a party who claimed one, has said something the master
+    // does not know; pulling the master's value back over it would undo
+    // the correction and, on a shared handset, hand the documents back to
+    // whoever held the old number.
+    if (live.some(l => l.source === 'admin' || l.source === 'claim')) return false;
+
+    // What is left is a link this code created ITSELF from a master value
+    // that has since changed — the office corrected the number and the
+    // grant stayed on the old one. Two things were wrong at once: the party
+    // could not sign in with their real number, and whoever now holds the
+    // OLD number could still read their documents. The master is the
+    // authority for a link this code owns, so follow it and retire the
+    // stale row. Retired, not deleted: who could once see what is exactly
+    // the question asked after a dispute.
+    for (const l of live) {
+      db.run(`UPDATE party_links
+                 SET status = 'revoked', revoked_at = datetime('now','localtime'),
+                     revoked_by = 'master phone changed'
+               WHERE id = ?`, [l.id]);
+    }
 
     db.run(
       `INSERT INTO party_links (party_kind, party_id, phone_key, status, source, created_by)
@@ -155,7 +186,6 @@ function autoEnrol(db, partyKind, partyId, rawPhone) {
       [partyKind, id, pkey]);
     return true;
   } catch (e) {
-    // A UNIQUE collision is a double-raise, not a problem.
     if (!/UNIQUE/i.test((e && e.message) || '')) {
       console.warn('[portal] auto-enrol failed for %s %s: %s', partyKind, partyId, e && e.message);
     }
@@ -177,6 +207,10 @@ function mountPortal(app, deps) {
     // The same commission renderer over MANY bills at once — it already
     // paginates one A4 page per lot, so a period download is one call.
     renderBillOfSupplyPdfMany,
+    // Map(bill id -> the NETT its commission bill prints). Injected rather
+    // than recomputed here: a second implementation of this number is a
+    // second number.
+    commissionNettForBills,
     // Injected but currently unreachable: sellers are not shown their debit
     // notes (see VISIBLE_KINDS). Kept wired so re-enabling them is a one-word
     // change to that table rather than a re-plumb.
@@ -303,11 +337,27 @@ function mountPortal(app, deps) {
   app.get('/api/portal/config', requirePortalOn, (req, res) => {
     const cfg = getSettingsFlat(getDb());
     res.set('Cache-Control', 'no-store');
-    // Company name only. The OTP channel used to be here, which told an
-    // unauthenticated caller whether codes are actually deliverable on this
-    // install — i.e. whether the door is worth attacking. Admins read it
-    // from Settings instead.
-    res.json({ company: cfg.trade_name || cfg.company_name || 'Spice e-Auction' });
+    // The company block the DOCUMENTS print, resolved by the same helper
+    // (effectiveCompany) so the page and the paperwork can never disagree
+    // about the address or the GSTIN. All of it is already on every invoice
+    // the customer holds, so none of it is a disclosure.
+    //
+    // The OTP channel used to be here and is deliberately gone: it told an
+    // unauthenticated caller whether codes are deliverable on this install,
+    // i.e. whether the door is worth attacking.
+    let co = {};
+    try { co = require('./invoice-pdf').effectiveCompany(cfg) || {}; } catch (_) {}
+    const logo = path.join(__dirname, 'public', 'logo-ispl.png');
+    res.json({
+      company: co.name || cfg.trade_name || 'Spice e-Auction',
+      logoUrl: fs.existsSync(logo) ? '/logo-ispl.png' : null,
+      address: [co.address1, co.address2, [co.place, co.pin].filter(Boolean).join(' - ')]
+                 .map(x => String(x || '').trim()).filter(Boolean),
+      state: co.stateName || '',
+      phone: co.phone || '',
+      email: co.email || '',
+      gstin: co.gstin || '',
+    });
   });
 
   app.post('/api/portal/otp/request', requirePortalOn, async (req, res) => {
@@ -458,10 +508,19 @@ function mountPortal(app, deps) {
     const span = range ? [range.from, range.to] : [];
     const out = [];
     if (party.kind === 'seller') {
-      for (const r of db.all(
-        `SELECT id, ano, date, bil AS no, net AS amount FROM bills
-          WHERE trader_id = ?${win} ORDER BY date DESC, id DESC`, [party.id, ...span]))
-        out.push({ kind: 'bill', id: r.id, ano: r.ano, date: r.date, no: String(r.no || ''), amount: r.amount, label: 'Commission Bill' });
+      const rows = db.all(
+        `SELECT * FROM bills WHERE trader_id = ?${win} ORDER BY date DESC, id DESC`,
+        [party.id, ...span]);
+      // The amount shown is the NETT the commission bill PRINTS — cardamom
+      // cost plus sample refund, less commission and GST — not bills.net,
+      // which is the gross bill-of-supply value. They differ by the
+      // commission, so showing `net` here put a figure on the row that the
+      // document the grower then opens does not contain.
+      const nett = (typeof commissionNettForBills === 'function')
+        ? commissionNettForBills(db, rows) : new Map();
+      for (const r of rows)
+        out.push({ kind: 'bill', id: r.id, ano: r.ano, date: r.date, no: String(r.bil || ''),
+                   amount: nett.has(r.id) ? nett.get(r.id) : r.net, label: 'Commission Bill' });
     } else {
       for (const r of db.all(
         `SELECT i.id, i.ano, i.date, i.invo AS no, i.tot AS amount
@@ -480,6 +539,46 @@ function mountPortal(app, deps) {
     return out;
   }
 
+  // What a party has done with us, per financial year. Money first: it is
+  // the number they opened the page for. Quantities come from the document
+  // rows rather than from the lots, so a re-stamped lot can never make the
+  // page disagree with the paperwork in the customer's hand.
+  function totalsFor(db, party, documents) {
+    const byFy = {};
+    const bump = (fy, k, v) => {
+      if (!fy) return;
+      byFy[fy] = byFy[fy] || { documents: 0, amount: 0, qty: 0, bags: 0, lastDate: '' };
+      byFy[fy][k] += Number(v) || 0;
+    };
+    // 1 April → 31 March, the same window the page's picker uses.
+    const fyOf = (d) => {
+      const m = String(d || '').match(/^(\d{4})-(\d{2})/);
+      if (!m) return '';
+      const start = Number(m[2]) >= 4 ? Number(m[1]) : Number(m[1]) - 1;
+      return start + '-' + String((start + 1) % 100).padStart(2, '0');
+    };
+
+    const ids = documents.map(d => d.id);
+    let qtyById = new Map();
+    if (ids.length) {
+      const ph = ids.map(() => '?').join(',');
+      const rows = party.kind === 'seller'
+        ? db.all(`SELECT id, qty, 0 AS bag FROM bills WHERE id IN (${ph})`, ids)
+        : db.all(`SELECT id, qty, bag FROM invoices WHERE id IN (${ph})`, ids);
+      qtyById = new Map(rows.map(r => [r.id, r]));
+    }
+    for (const d of documents) {
+      const fy = fyOf(d.date);
+      const extra = qtyById.get(d.id) || {};
+      bump(fy, 'documents', 1);
+      bump(fy, 'amount', d.amount);
+      bump(fy, 'qty', extra.qty);
+      bump(fy, 'bags', extra.bag);
+      if (fy && (!byFy[fy].lastDate || d.date > byFy[fy].lastDate)) byFy[fy].lastDate = d.date;
+    }
+    return byFy;
+  }
+
   // ── 5. THE DOCUMENT LIST ────────────────────────────────────────────────
   // One party at a time, always scoped on an id the caller has been proven
   // to hold. `ano` is the trade NUMBER — never auctions.id — because that is
@@ -489,8 +588,13 @@ function mountPortal(app, deps) {
     const [kind, idRaw] = String(req.query.party || '').split(':');
     const party = claimParty(req, kind, idRaw);
     if (!party) return res.status(403).json({ error: 'Not your record.' });
+    const documents = documentsFor(db, party);
     res.set('Cache-Control', 'no-store');
-    res.json({ party, documents: documentsFor(db, party) });
+    // A roll-up the page can show per financial year. Computed from the same
+    // rows the list returns, so the headline and the list can never tell two
+    // different stories — and so the figures honour every exclusion
+    // (proforma, stopped invoices) without repeating a single filter.
+    res.json({ party, documents, totals: totalsFor(db, party, documents) });
   });
 
   // ── 5b. EVERYTHING FOR A PERIOD, AS ONE PDF ─────────────────────────────
@@ -747,13 +851,11 @@ function mountPortal(app, deps) {
     let written = 0;
     if (commit) {
       const by = (req.user && req.user.username) || '';
-      const put = (kind, id, pkey) => {
-        try {
-          db.run(`INSERT INTO party_links (party_kind, party_id, phone_key, status, source, created_by)
-                  VALUES (?,?,?,'active','seeded',?)`, [kind, id, pkey, by]);
-          written += 1;
-        } catch (e) { if (!/UNIQUE/i.test(e.message || '')) throw e; }
-      };
+      // Goes through autoEnrol so the seed and the document path obey ONE
+      // rule — including the reconciliation: a re-run repairs a link left
+      // pointing at a number the master no longer holds, which a plain
+      // INSERT…catch(UNIQUE) silently left broken.
+      const put = (kind, id, pkey) => { if (autoEnrol(db, kind, id, pkey)) written += 1; };
       sellers.forEach(r => put('seller', r.id, r.pkey));
       buyers.forEach(r => put('buyer', r.id, r.pkey));
     }

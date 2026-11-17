@@ -125,6 +125,16 @@
   .warn{display:flex;align-items:flex-start;gap:11px;background:var(--red-soft);border:1px solid var(--red-line);border-radius:13px;padding:13px 15px;margin-top:14px;color:var(--red-ink);font-weight:600;font-size:.92rem;line-height:1.5}
   .warn .w{font-size:1.25rem;line-height:1}
   .warn b{font-weight:800}
+  /* A NOTE is context, not a warning. Several sections had facts that are
+     important but not alarming — how a shared handset behaves, what a
+     test-only setting does — and before this they had nowhere to go but
+     the red box, which cries wolf, or the step list, which buries them. */
+  .note{display:flex;align-items:flex-start;gap:11px;background:var(--green-soft);
+        border:1px solid var(--line);border-left:4px solid var(--green);
+        border-radius:13px;padding:13px 15px;margin-top:14px;color:var(--ink);
+        font-size:.92rem;line-height:1.5}
+  .note .w{font-size:1.1rem;line-height:1;color:var(--green-deep)}
+  .note b{font-weight:800}
   .banner-demo{display:flex;align-items:center;gap:10px;background:var(--red-soft);border:1px solid var(--red-line);border-radius:10px;padding:10px 12px;color:var(--red-ink);font-weight:700;font-size:.82rem}
   .banner-demo .w{font-size:1.15rem}
   .foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:.82rem}
@@ -641,6 +651,60 @@ const S = [
   ],
   warn:'**The expensive one.** Reminders are *marketing* messages to WhatsApp — several times the price of an invoice send — and they go to people who did not ask to hear from you. They also share the 250-recipients-per-24-hours limit with your invoices, so a big run can stall the day\'s invoicing. Tighten the minimum-auctions setting before widening the day window.' },
 
+{ id:'portalcodes', g:'admin', ic:'🔑', name:'Portal sign-in codes', flag:1,
+  purpose:'How a customer receives the 6-digit code, and what to set up first.',
+  mock:{ title:'Settings → WhatsApp',
+    body:{table:{head:['Field','What goes in it'],rows:[
+      ['Sign-in code template name','portal_login_code'],
+      ['Sign-in code template language','en'],
+      ['Sign-in code button','copy'],
+      ['Portal sign-in code channel','whatsapp'],
+    ]}} },
+  steps:[
+    'In **WhatsApp Manager**, create a template with category **Authentication**. Meta writes the wording itself and adds a **Copy code** button — these usually approve in minutes, unlike a normal template.',
+    'Put its name in **Settings → WhatsApp → Sign-in code template name**. It must be an *Authentication* template; the invoice and payment-notice ones are a different category and must not carry a login code.',
+    '**Test before switching over** — Customer Access → **Send a test code** to a number that is already enrolled. It shows Meta\'s own reply, so "template name does not exist" means it is not approved yet.',
+    'Only once that works, set **Settings → Flags → Portal sign-in code channel** to **whatsapp**.',
+    'A code lasts **10 minutes**, is good for one sign-in, and dies after 5 wrong tries. Asking for a new one cancels the old one. A customer can ask for 3 codes in 15 minutes, and 10 in a day.',
+  ],
+  note:'The channel ships as **log**, which writes the code to the server log instead of sending it. That is for your own testing — **no customer can sign in while it is set to log.**',
+  warn:'**If sending fails, nothing is written anywhere as a fallback** — the customer simply gets no code and taps again. Check **Settings → WhatsApp → Send log** for the reason. A contact who has opted out of WhatsApp will not receive a code either; bind them to a different number on Customer Access.' },
+
+{ id:'portal', g:'admin', ic:'📱', name:'Customer Portal', flag:1, hot:true,
+  purpose:'Let sellers and buyers sign in with their own phone and download their own documents.',
+  mock:{ title:'What the customer sees at /my',
+    toolbar:[chip('FY 2026-27'),chip('Whole year'),chip('Select'),chip('⤓ Download all 10',{green:1})],
+    body:{table:{head:['Document','Amount','When',''],rows:[
+      ['Commission Bill 3493','₹14,97,374','28 Oct · Auction 21','⤓'],
+      ['Commission Bill 3492','₹14,99,136','28 Oct · Auction 21','⤓'],
+    ]}} },
+  steps:[
+    'Turn it on: **Settings → Flags → Customer Portal (/my)**. The address customers use is your site address followed by **/my** — nothing else about the app is reachable from there.',
+    '**Enrolment is automatic from now on.** The first time a bill or an invoice is raised for a party, they can sign in. Adding a seller does NOT give access on its own — there would be nothing to show them.',
+    '**Once per install, catch up on history.** Parties whose documents predate the portal need one import: **Customer Access → Enrol everyone** (or `POST /api/portal/admin/seed`). It reports how many it linked. Safe to run again — it only fills gaps.',
+    'Do it separately on every install. Your office copy and the online one have **separate databases**; enrolling on one does nothing for the other.',
+    'A customer types their mobile number, gets a 6-digit code, and sees only their own papers. See **Portal sign-in codes** for setting that up.',
+  ],
+  note:'**One number can open more than one party** — in this trade a household or a group of planters often shares a handset, so the sign-in lists everyone linked to it and the customer picks. That is deliberate. Whoever holds the phone sees every party on it, so check the **opens N parties** column on Customer Access if a number looks wrong, and revoke any single link without touching the others.',
+  warn:'**They only ever see their own, and only what was actually issued.** A seller gets their commission bills; a buyer gets their tax invoices. Debit notes, proforma drafts and stopped invoices are never shown. Every download is recorded — **Customer Access → Downloads** answers "who took that bill".' },
+
+{ id:'portalphone', g:'admin', ic:'☎️', name:'Customer phone numbers', flag:1,
+  purpose:'What happens to portal access when a phone number changes.',
+  mock:{ title:'Customer Access',
+    toolbar:[search('9447728371'),chip('🔄 Refresh')],
+    body:{table:{head:['Number','Party','Opens','Source'],rows:[
+      ['94477 28371','RINCE JOSEPH','3 parties','auto'],
+      ['94477 28371','SPICES BOARD-CSR','3 parties','auto'],
+      ['98765 43210','ABDUL BASITH R','1 party','admin'],
+    ]}} },
+  steps:[
+    '**Correct the number on the seller or buyer as usual.** Portal access moves with it the moment you save — the old number stops working on the customer\'s next tap.',
+    'Editing a phone number never *gives* anyone access. If that party holds no documents, nothing happens.',
+    'To put a party on a number the master does not hold — a son\'s phone, a second handset — bind it by hand on **Customer Access**. A number bound by hand is then left alone: later edits to the master will not pull it back.',
+    'Changed numbers **outside the app** (a bulk import, direct database work)? Run **Enrol everyone** afterwards; it reports how many links it repaired.',
+  ],
+  warn:'**A number left pointing at the wrong party is the one mistake that matters here.** It locks the real customer out AND lets whoever holds the old number read their paperwork. If somebody says "I can\'t sign in", look at their number on Customer Access before anything else.' },
+
 { id:'users', g:'admin', ic:'👥', name:'Users', purpose:'Staff logins and roles.',
   mock:{ title:'Users',
     toolbar:[chip('+ Add User',{green:1,pin:1})],
@@ -762,6 +826,7 @@ function openPoster(id){
     +'<div id="coach-hint"></div>'
     +'<div class="coach-nav"><button class="cbtn" id="coach-back" onclick="tourPrev()">← Back</button><button class="cbtn primary" id="coach-next" onclick="tourNext()">Next →</button></div>'
     +'</div>'
+    +(s.note?'<div class="note"><span class="w">ℹ</span><span>'+md(s.note)+'</span></div>':'')
     +(s.warn?'<div class="warn"><span class="w">⚠</span><span>'+md(s.warn)+'</span></div>':'');
 
   const bodyHtml = s.mock
