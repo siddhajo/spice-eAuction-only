@@ -438,6 +438,12 @@ const DEFAULTS = [
   // 0 = never, matching the office default: a new cover appearing over
   // somebody's screen on upgrade would be a surprise, not a feature.
   { key: 'portal_screensaver_minutes', value: '0', category: 'flags', label: 'Customer portal screensaver (minutes; 0 = never)', type: 'number' },
+  // The address a CUSTOMER types to reach the portal, printed on the lot
+  // receipt so a seller leaves the depot knowing their bills are online.
+  // It has to be typed in: the app only ever sees the host the OFFICE
+  // reached it on, which on a LAN is an address no customer can open.
+  // Blank, or the portal flag off, prints nothing.
+  { key: 'portal_public_url',        value: '',      category: 'flags', label: 'Customer portal web address (printed on receipts)', type: 'text' },
   // Sign-in codes are counted on their OWN daily meter, not the shared
   // per-contact ceiling: a code is asked for by the person receiving it, and
   // sharing the invoice allowance means two mistyped codes lock a seller out

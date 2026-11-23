@@ -101,6 +101,9 @@ const signIn = async (phone) => {
   // [F2] needs a number with its throttle budget untouched: the per-phone
   // limit is three requests a quarter hour, and [B]/[F] spend the others.
   const WAP    = '9790700004';
+  // Holds no document and never will: the only way left to observe the
+  // un-enrolled case now that raising a bill enrols a seller on its own.
+  const NODOC  = '9790700009';
 
   const mk = (name, tel) => api('POST', '/api/traders',
     { name, tel, ppla: 'BODIMETTU', pstate: 'TAMIL NADU' }).then(r => r.d.trader);
@@ -108,6 +111,7 @@ const signIn = async (phone) => {
   const sB = await mk('SON PLANTER', SHARED);
   const sC = await mk('OTHER PLANTER', SOLO);
   const sD = await mk('WA PLANTER', WAP);
+  await mk('NO DOCS PLANTER', NODOC);        // deliberately gets no lots
   await api('POST', '/api/buyers',
     { buyer: 'BUY1', code: 'BUY1', buyer1: 'BUYER ONE', sale: 'L', tel: BUYERP });
 
@@ -150,15 +154,127 @@ const signIn = async (phone) => {
 
   // ───────────────────────────────────────────────────────────────────────
   console.log('\n[B] Nothing is visible until a link grants it');
-  r = await portal('POST', '/api/portal/otp/request', { phone: SOLO });
+  r = await portal('POST', '/api/portal/otp/request', { phone: NODOC });
   check('an un-enrolled number is accepted without complaint', r.s === 200, r.d);
-  check('…and no code is issued for it', codeFor(SOLO) === '', codeFor(SOLO));
+  check('…and no code is issued for it', codeFor(NODOC) === '', codeFor(NODOC));
 
+  // The fixture already raised bills and invoices, and raising a document
+  // enrols its party (see [B2]) — so by now the seed has nothing left to do.
+  // Its remaining job is BACKFILL: parties whose documents predate the
+  // feature. That is what the revoke-then-reseed below actually tests.
   r = await api('POST', '/api/portal/admin/seed', {});
   check('seed dry run writes nothing', r.s === 200 && r.d.written === 0, r.d);
-  check('…and counts the shared handset', r.d.sharedPhones === 1 && r.d.partiesOnSharedPhones === 2, r.d);
+  check('…and sees every party holding a document',
+        r.d.sellers === 4 && r.d.buyers === 1, r.d);
+  check('…counting the shared handset', r.d.sharedPhones === 1 && r.d.partiesOnSharedPhones === 2, r.d);
   r = await api('POST', '/api/portal/admin/seed', { commit: true });
-  check('seed commit enrols every party holding a document', r.s === 200 && r.d.written === 5, r.d);
+  check('…and committing is a no-op once auto-enrolment has run',
+        r.s === 200 && r.d.written === 0, r.d);
+
+  // Backfill: revoke one party, re-seed, and it comes back.
+  const someLink = (await api('GET', '/api/portal/admin/links')).d.rows
+    .find(x => x.party_kind === 'seller');
+  await api('POST', `/api/portal/admin/links/${someLink.id}/revoke`);
+  r = await api('POST', '/api/portal/admin/seed', { commit: true });
+  check('seed backfills a party that has no link', r.s === 200 && r.d.written === 1, r.d);
+
+  // ───────────────────────────────────────────────────────────────────────
+  console.log('\n[B2] A party enrolled later is picked up on its own');
+  // The seed is a snapshot. Without auto-enrolment every planter onboarded
+  // afterwards silently cannot sign in — same cheerful "code sent", nothing
+  // arrives, nothing anywhere says why.
+  const LATE = '9790700007';
+  const sLate = await mk('LATE PLANTER', LATE);
+  r = await api('GET', '/api/portal/admin/links');
+  check('a brand-new seller is not enrolled by merely existing',
+        !r.d.rows.some(x => x.party_id === sLate.id && x.party_kind === 'seller'),
+        r.d.rows.filter(x => x.party_id === sLate.id));
+
+  const lateLot = await addLot(sLate);
+  let lateLots = (await api('GET', `/api/lots/${A}`)).d.filter(l => String(l.lot_no) === lateLot);
+  await api('POST', '/api/lots/bulk-set-buyer',
+    { ids: lateLots.map(l => l.id), code: 'BUY1', buyer: 'BUY1', buyer1: 'BUYER ONE', sale: 'L' });
+  await api('POST', '/api/lots/bulk-price', { items: lateLots.map(l => ({ id: l.id, price: 3000 })) });
+  await api('POST', `/api/lots/calculate/${A}`, {});
+  await api('POST', `/api/bills/generate-all/${A}`, { startBillNo: 90 });
+
+  r = await api('GET', '/api/portal/admin/links');
+  const lateLink = r.d.rows.find(x => x.party_kind === 'seller' && x.party_id === sLate.id);
+  check('…but raising their first bill enrols them', !!lateLink, r.d.total);
+  check('…recorded as automatic, not as a hand-made grant',
+        lateLink && lateLink.source === 'auto', lateLink && lateLink.source);
+
+  const vLate = await signIn(LATE);
+  const lastLateCode = codeFor(LATE);
+  check('…and they can sign in straight away', vLate.s === 200 && !!vLate.d.token, vLate.d);
+  r = await portal('GET', `/api/portal/documents?party=seller:${sLate.id}`, null, vLate.d.token);
+  check('…to exactly their own bill', r.s === 200 && r.d.documents.length === 1, r.d.documents);
+
+  // The rule that keeps auto-enrolment from being destructive.
+  const CORRECTED = '9790700008';
+  await api('POST', '/api/portal/admin/links/' + lateLink.id + '/revoke');
+  await api('POST', '/api/portal/admin/links',
+    { party_kind: 'seller', party_id: sLate.id, phone: CORRECTED });
+  await api('POST', `/api/bills/generate-all/${A}`, { startBillNo: 95 });
+  r = await api('GET', '/api/portal/admin/links');
+  const nowLinks = r.d.rows.filter(x => x.party_kind === 'seller' && x.party_id === sLate.id);
+  // ── A link this code OWNS follows the master ──
+  // These two rules pull in opposite directions and both matter: a grant an
+  // admin made by hand is sacred, a grant auto-enrolment made is only ever
+  // a copy of the master and must track it. Live data had two sellers whose
+  // number was corrected on the master after enrolment: they could not sign
+  // in, and whoever held the OLD number still could.
+  const MOVED = '9790700011';
+  const sMoved = await mk('MOVED PLANTER', '9790700010');
+  const movedLot = await addLot(sMoved);
+  let ml = (await api('GET', `/api/lots/${A}`)).d.filter(l => String(l.lot_no) === movedLot);
+  await api('POST', '/api/lots/bulk-set-buyer',
+    { ids: ml.map(l => l.id), code: 'BUY1', buyer: 'BUY1', buyer1: 'BUYER ONE', sale: 'L' });
+  await api('POST', '/api/lots/bulk-price', { items: ml.map(l => ({ id: l.id, price: 3000 })) });
+  await api('POST', `/api/lots/calculate/${A}`, {});
+  await api('POST', `/api/bills/generate-all/${A}`, { startBillNo: 120 });
+  let mlink = (await api('GET', '/api/portal/admin/links')).d.rows
+    .find(x => x.party_kind === 'seller' && x.party_id === sMoved.id);
+  check('auto-enrolled on the number the master held', mlink && mlink.phone_key === '9790700010', mlink);
+
+  // The office corrects the number on the master. Both repair paths run
+  // the SAME autoEnrol, so the seed is the one exercised here — it is also
+  // the realistic fix for links already stale in a live database. (A bill
+  // cannot be the trigger in this fixture: bills are seller-wise, so the
+  // seller already has one and generate-all raises no second.)
+  const upd = await api('PUT', `/api/traders/${sMoved.id}`, { name: 'MOVED PLANTER', tel: MOVED });
+  check('fixture: the master number was changed', upd.s === 200, upd.d);
+  // AT THE EDIT, not at the next bill. Waiting for the next document left
+  // the previous holder reading this seller's paperwork until the next
+  // trade — usually the exact reason the number was being corrected.
+  const atEdit = (await api('GET', '/api/portal/admin/links')).d.rows
+    .filter(x => x.party_kind === 'seller' && x.party_id === sMoved.id);
+  check('the grant moves the moment the master is corrected',
+        atEdit.length === 1 && atEdit[0].phone_key === MOVED, atEdit.map(x => x.phone_key));
+  // …and the seed is then a no-op, because the edit already fixed it.
+  r = await api('POST', '/api/portal/admin/seed', { commit: true });
+  check('a re-seed then has nothing left to repair', r.s === 200 && r.d.written === 0, r.d);
+
+  // Editing a phone must never CREATE access: enrolment waits for a document.
+  const sIdle = await mk('NEVER TRADED', '9790700012');
+  await api('PUT', `/api/traders/${sIdle.id}`, { name: 'NEVER TRADED', tel: '9790700013' });
+  check('…but editing a phone never enrols someone who holds no document',
+        !(await api('GET', '/api/portal/admin/links')).d.rows
+          .some(x => x.party_kind === 'seller' && x.party_id === sIdle.id));
+
+  const after2 = (await api('GET', '/api/portal/admin/links')).d.rows
+    .filter(x => x.party_kind === 'seller' && x.party_id === sMoved.id);
+  check('…and the grant FOLLOWS a corrected master number',
+        after2.length === 1 && after2[0].phone_key === MOVED, after2.map(x => x.phone_key));
+  check('…so the old number is locked out',
+        (await signIn('9790700010')).s !== 200, 'old number still signs in');
+
+  check("a corrected number is NOT undone by the next bill",
+        nowLinks.length === 1 && nowLinks[0].phone_key === CORRECTED,
+        nowLinks.map(x => x.phone_key));
+  check('…so the stale master number stays locked out',
+        (await portal('POST', '/api/portal/otp/request', { phone: LATE })).s === 200
+        && codeFor(LATE) === lastLateCode, 'a new code was issued to the old number');
 
   // ───────────────────────────────────────────────────────────────────────
   console.log('\n[C] A seller signs in and sees their own documents');
@@ -172,6 +288,44 @@ const signIn = async (phone) => {
   const myBill = r.d.documents.find(d => d.kind === 'bill');
   check('…labelled as a Commission Bill, not a Bill of Supply',
         myBill && myBill.label === 'Commission Bill', myBill && myBill.label);
+
+  // ── The row says what the document says ──
+  // The list used to show bills.net (the gross bill-of-supply value) while
+  // the document it opens prints the NETT after commission and GST. A row
+  // whose figure is absent from the PDF behind it is a phone call.
+  const billRow = billRows.find(x => x.id === myBill.id);
+  const dnFor = (await api('GET', '/api/debit-notes-planter?ano=30')).d;
+  const dnRows2 = Array.isArray(dnFor) ? dnFor : (dnFor && dnFor.rows) || [];
+  const myDn = dnRows2.find(x => x.trader_id === idC);
+  check('fixture: this bill really does carry a commission',
+        !!myDn && Number(myDn.total) > 0, myDn && myDn.total);
+  check('the row shows the NETT, not the gross bill value',
+        Number(myBill.amount) < Number(billRow.net),
+        { row: myBill.amount, grossNet: billRow.net });
+  check('…short by the commission, to the rupee',
+        Math.abs((Number(billRow.net) - Number(myBill.amount)) - Number(myDn.total)) <= 1,
+        { gross: billRow.net, row: myBill.amount, commission: myDn.total });
+  const snap = (await portal('GET', `/api/portal/documents?party=seller:${idC}`, null, tokC)).d;
+  const yearTotal = snap.totals['2026-27'];
+  check('…and the year headline adds up those same rows',
+        yearTotal && Math.abs(yearTotal.amount
+          - snap.documents.filter(d => d.date >= '2026-04-01')
+              .reduce((a, d) => a + d.amount, 0)) < 0.01,
+        yearTotal);
+
+  // ── Lot numbers on the row ──
+  // A grower checks a bill against the lots they brought, so the row names
+  // them. Each document kind keeps them somewhere different, which is the
+  // thing most likely to rot: bills and invoices in line_items, purchases
+  // nowhere at all (seller-wise, lot_no blank) so they come from `lots`.
+  check('a commission bill names its lot', Array.isArray(myBill.lots) && myBill.lots.length >= 1,
+        myBill && myBill.lots);
+  const billLots = (await api('GET', `/api/bills?auction_id=${A}`)).d;
+  const billRow2 = (Array.isArray(billLots) ? billLots : billLots.rows || []).find(x => x.id === myBill.id);
+  check('…the same lot the bill was raised for',
+        !billRow2 || !String(billRow2.lot_no || '').trim()
+          || myBill.lots.includes(String(billRow2.lot_no).trim()),
+        { row: myBill.lots, billLotNo: billRow2 && billRow2.lot_no });
 
   const pdf = await raw(`/api/portal/documents/bill/${myBill.id}/pdf?token=${tokC}`);
   check('…and downloads as a real PDF', pdf.s === 200 && pdf.buf.slice(0, 4).toString() === '%PDF',
@@ -290,6 +444,61 @@ const signIn = async (phone) => {
         audit.filter(x => x.party_id === idC).length);
 
   // ───────────────────────────────────────────────────────────────────────
+  console.log('\n[C3] A registered dealer gets their purchase invoice');
+  // A seller with a GSTIN is billed by PURCHASE INVOICE, not a bill of
+  // supply. Until these were added, every dealer signed in to an empty
+  // screen with nothing saying why — 57 of them on the live install.
+  let dealerPurchaseId = null;
+  const DEALER = '9790700020';
+  const sDealer = await mk('DEALER SPICES', DEALER);
+  await api('PUT', `/api/traders/${sDealer.id}`,
+    { name: 'DEALER SPICES', tel: DEALER, cr: '33AAAAA0000A1Z5' });
+  const dLot = await addLot(sDealer);
+  let dl = (await api('GET', `/api/lots/${A}`)).d.filter(l => String(l.lot_no) === dLot);
+  await api('POST', '/api/lots/bulk-set-buyer',
+    { ids: dl.map(l => l.id), code: 'BUY1', buyer: 'BUY1', buyer1: 'BUYER ONE', sale: 'L' });
+  await api('POST', '/api/lots/bulk-price', { items: dl.map(l => ({ id: l.id, price: 3000 })) });
+  await api('POST', `/api/lots/calculate/${A}`, {});
+  r = await api('POST', `/api/purchases/generate-all/${A}`, { startInvoiceNo: 500 });
+  const purAll = (await api('GET', `/api/purchases?auction_id=${A}`)).d;
+  const purRows = Array.isArray(purAll) ? purAll : (purAll && purAll.rows) || [];
+  const myPur = purRows.find(x => x.trader_id === sDealer.id);
+  check('fixture: a purchase invoice was raised for the dealer', !!myPur, purRows.length);
+
+  if (myPur) {
+    const linkD = (await api('GET', '/api/portal/admin/links')).d.rows
+      .find(x => x.party_kind === 'seller' && x.party_id === sDealer.id);
+    check('raising it enrolled them, like a bill does', !!linkD, linkD);
+
+    const vD2 = await signIn(DEALER);
+    const tokD2 = vD2.d && vD2.d.token;
+    check('the dealer can sign in', vD2.s === 200 && !!tokD2, vD2.d);
+    r = await portal('GET', `/api/portal/documents?party=seller:${sDealer.id}`, null, tokD2);
+    const purDoc = r.d.documents.find(x => x.kind === 'purchase');
+    check('…and sees their purchase invoice', !!purDoc, r.d.documents.map(x => x.kind));
+    check('…labelled as one', purDoc && purDoc.label === 'Purchase Invoice', purDoc && purDoc.label);
+
+    // The document prints total MINUS the 194Q deduction; the row must too.
+    check('…priced at the Grand Total the document prints, not the subtotal',
+          purDoc && Math.abs(purDoc.amount - (Number(myPur.total) - Number(myPur.tds || 0))) < 0.01,
+          { row: purDoc && purDoc.amount, total: myPur.total, tds: myPur.tds });
+
+    const pPdf = await raw(`/api/portal/documents/purchase/${purDoc.id}/pdf?token=${tokD2}`);
+    check('…and it downloads as a real PDF',
+          pPdf.s === 200 && pPdf.buf.slice(0, 4).toString() === '%PDF', pPdf.s);
+
+    // Another dealer's invoice is still refused.
+    const theirPur = purRows.find(x => x.trader_id !== sDealer.id);
+    if (theirPur) {
+      r = await portal('GET', `/api/portal/documents/purchase/${theirPur.id}/pdf`, null, tokD2);
+      check("…while another dealer's is refused", r.s === 403, r.s);
+    }
+    // A buyer must not reach the purchase kind either — checked in [E],
+    // where a buyer token exists.
+    dealerPurchaseId = purDoc.id;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
   console.log('\n[D] One handset, two parties — the shared-phone decision');
   const vD = await signIn(SHARED);
   check('both sellers come back on one sign-in', vD.d.parties.length === 2,
@@ -327,11 +536,27 @@ const signIn = async (phone) => {
   r = await portal('GET', `/api/portal/documents?party=buyer:${idE}`, null, tokE);
   const inv = r.d.documents.find(d => d.kind === 'invoice');
   check('their tax invoice is listed', !!inv, r.d.documents);
+  // An invoice spans many lots — up to 57 on live data — so the page shows a
+  // count that reveals the list. The SERVER's job is to return them all.
+  check('…and carries every lot number on it',
+        inv && Array.isArray(inv.lots) && inv.lots.length >= 1, inv && inv.lots);
+  const invLotRows = (await api('GET', `/api/lots/${A}`)).d
+    .filter(l => String(l.invo || '') === String(inv.no)).map(l => String(l.lot_no));
+  check('…matching the lots actually invoiced',
+        inv && invLotRows.length && invLotRows.every(n => inv.lots.includes(n)),
+        { row: inv && inv.lots, lots: invLotRows });
+  check('…sorted numerically, not as text',
+        inv && inv.lots.slice().sort((a, b) => parseInt(a, 10) - parseInt(b, 10)).join() === inv.lots.join(),
+        inv && inv.lots);
 
   // A proforma raised over the remaining stock must never surface.
   await api('PUT', '/api/company-settings', { settings: { flag_proforma_invoice: 'true' } });
   const before = (await portal('GET', `/api/portal/documents?party=buyer:${idE}`, null, tokE)).d.documents.length;
-  await api('POST', `/api/invoices/generate-all/${A}`, { startInvoiceNo: 90, is_proforma: 1 });
+  // docType, NOT is_proforma — the route reads req.body.docType (see
+  // wantsProformaDoc). With the wrong key this quietly raises ORIGINALS,
+  // and the check below passes only because there is nothing left to bill.
+  r = await api('POST', `/api/invoices/generate-all/${A}`, { startInvoiceNo: 90, docType: 'proforma' });
+  check('fixture: a proforma was actually raised', r.s === 200 && (r.d.generated || 0) > 0, r.d);
   const after = (await portal('GET', `/api/portal/documents?party=buyer:${idE}`, null, tokE)).d.documents;
   check('a proforma draft does not appear', after.length === before, { before, after: after.length });
   const allInv = (await api('GET', `/api/invoices?auction_id=${A}`)).d;
@@ -352,6 +577,11 @@ const signIn = async (phone) => {
         !r.d.documents.some(d => d.kind === 'invoice' && d.id === inv.id), r.d.documents);
   r = await portal('GET', `/api/portal/documents/invoice/${inv.id}/pdf`, null, tokE);
   check('…and is withheld on a direct fetch', r.s === 403, { s: r.s, d: r.d });
+  // A buyer has no business in the seller-side kinds.
+  if (dealerPurchaseId) {
+    r = await portal('GET', `/api/portal/documents/purchase/${dealerPurchaseId}/pdf`, null, tokE);
+    check('a buyer cannot reach a purchase invoice', r.s === 403 || r.s === 404, r.s);
+  }
   await api('POST', '/api/lots/bulk-set-buyer', { ids: invLots.map(l => l.id), hold: false });
   r = await portal('GET', `/api/portal/documents?party=buyer:${idE}`, null, tokE);
   check('…and comes back when the hold is released',
@@ -462,6 +692,22 @@ const signIn = async (phone) => {
   check('…and the OTP row says the channel failed',
         st && st.otp && /failed/.test(st.otp.channel || ''), st && st.otp);
   await api('PUT', '/api/company-settings', { settings: { portal_otp_channel: 'log' } });
+
+  // ───────────────────────────────────────────────────────────────────────
+  console.log('\n[F3] Signing out really ends the session');
+  // The PAGE clearing its number box is a browser concern, but the server
+  // half has to hold too: the token must stop working the instant someone
+  // signs out, or "sign out" on a shared handset means nothing.
+  const vOut = await signIn(SOLO);
+  check('signed in again', vOut.s === 200 && !!vOut.d.token, vOut.d);
+  const tOut = vOut.d.token;
+  check('…the session works', (await portal('GET', '/api/portal/me', null, tOut)).s === 200);
+  r = await portal('POST', '/api/portal/logout', null, tOut);
+  check('…sign out is accepted', r.s === 200, r.d);
+  check('…and the token is dead immediately',
+        (await portal('GET', '/api/portal/me', null, tOut)).s === 401);
+  check('…including for a document it could fetch a second ago',
+        (await raw(`/api/portal/documents/bill/${myBill.id}/pdf?token=${tOut}`)).s === 401);
 
   // ───────────────────────────────────────────────────────────────────────
   console.log('\n[G] The flag is a real kill switch, and downloads are logged');

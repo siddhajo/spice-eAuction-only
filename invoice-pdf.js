@@ -17,6 +17,10 @@ const { formatDateForDisplay } = require('./report-formatters');
 // Shared NAME / ADDRESS / PLACE / STATE+CODE / details-two-per-row layout
 // for the party boxes on the Bill of Supply and the Commission Bill.
 const { partyBlock } = require('./party-block');
+// The "download your bills" line on the lot receipt. Shared with the mobile
+// and thermal receipt renderers in mobile-bridge.js so all three print the
+// same address, and silent when the portal is off — see receipt-footer.js.
+const { portalFooterUrlText } = require('./receipt-footer');
 // Faint company-logo watermark, shared with the HTML engine so both print the
 // same mark from the same file. See pdf/watermark.js.
 const { attachPdfkitWatermark } = require('./pdf/watermark');
@@ -641,7 +645,10 @@ function generateCropReceiptPDF(lot, cfg) {
 
   const w = 545; const x = 25; let y = 25;
 
-  doc.rect(x, y, w, 370).stroke();
+  // Named so the portal footer at the end can anchor to the box's bottom
+  // edge instead of guessing at the flowing `y`.
+  const y0Box = y, boxH = 370;
+  doc.rect(x, y, w, boxH).stroke();
   y += 10;
   doc.fontSize(16).font('Helvetica-Bold').text('RECEIPT', x, y, { align: 'center', width: w });
   y += 20;
@@ -753,6 +760,23 @@ function generateCropReceiptPDF(lot, cfg) {
   for (const s of slots) {
     doc.lineWidth(0.5).moveTo(s.cx, sigY).lineTo(s.cx + sigW, sigY).stroke();
     doc.text(s.label, s.cx, sigY + 3, { width: sigW, align: 'center' });
+  }
+
+  // ── Customer portal pointer ──
+  // The receipt is the one piece of paper every seller is handed, so it
+  // carries the portal address. Anchored to the BOTTOM of the slip box
+  // rather than the flowing `y`, so a company name that wraps to two lines
+  // pushes the body down without dragging this into the signatures.
+  // The company email is already in the header contact line, so only the
+  // address is repeated here.
+  const _portalUrl = portalFooterUrlText(cfg);
+  if (_portalUrl) {
+    const fy = y0Box + boxH - 28;
+    doc.lineWidth(0.5).strokeColor('#000').moveTo(x + 10, fy).lineTo(x + w - 10, fy).stroke();
+    doc.font('Helvetica').fontSize(7).fillColor('#555')
+       .text('Download your bills anytime at', x + 10, fy + 5, { width: w - 20, align: 'center' });
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#000')
+       .text(_portalUrl, x + 10, fy + 14, { width: w - 20, align: 'center' });
   }
 
   return new Promise((resolve) => {

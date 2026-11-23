@@ -27,6 +27,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const { formatDateForDisplay } = require('./report-formatters');
+// Lives in receipt-footer.js, because the DESKTOP slip
+// (invoice-pdf.js generateCropReceiptPDF) prints the same line from a
+// different config shape and was silently missing it.
+const { receiptFooterLines } = require('./receipt-footer');
 let { syncLotsFromTrader, syncTraderBanks } = require('./trader-lot-sync');
 // Same inconsistent-build guard as server.js — this file owns the
 // /api/traders writer that actually serves the desktop, so it needs its own
@@ -106,7 +110,13 @@ function getReceiptConfig(db) {
     // Company contact shown on the DETAILED receipt header (logo-to-the-side
     // letterhead). Kerala office is the primary; Tamil Nadu is the fallback.
     companyPhone: get('kl_phone', '') || get('tn_phone', ''),
+    companyEmail: get('kl_email', '') || get('tn_email', ''),
     companyGstin: get('kl_gstin', '') || get('tn_gstin', ''),
+    // The customer portal, printed at the foot of the slip. Only when the
+    // portal is actually switched on AND an address has been typed — a
+    // receipt pointing at a door that is shut is worse than no line.
+    portalUrl: getBool('flag_customer_portal', false)
+      ? String(get('portal_public_url', '')).trim() : '',
     showUser:     getBool('show_username', false),
     // Masking policy (Settings → Business Mode → Privacy & Masking). The
     // old code read a non-existent 'acct_mask' key with the wrong mode
@@ -372,6 +382,15 @@ function renderSellerReceipt(doc, sellerLots, cfg) {
   }
   doc.fillColor('#000').font('Helvetica-Bold').fontSize(fs(BODY))
      .text('** THANK YOU **', m, doc.y, { width: w, align: 'center' });
+  const foot = receiptFooterLines(cfg);
+  if (foot.length) {
+    doc.moveDown(0.3);
+    doc.moveTo(m, doc.y).lineTo(m + w, doc.y).dash(2, { space: 2 }).lineWidth(0.5).stroke().undash();
+    doc.moveDown(0.3);
+    doc.font('Helvetica').fontSize(fs(BODY - 0.5)).fillColor('#444')
+       .text(foot.join('\n'), m, doc.y, { width: w, align: 'center' });
+    doc.fillColor('#000');
+  }
 }
 
 // ── Logo → ESC/POS raster (thermal receipt header image) ─────────────
@@ -459,6 +478,15 @@ function _imgToRaster(img, maxW, maxH) {
     bytesPerRow & 0xff, (bytesPerRow >> 8) & 0xff, h & 0xff, (h >> 8) & 0xff]);
   return Buffer.concat([hdr, bits]);
 }
+
+// ── Receipt footer: where to get the paperwork afterwards ────────────
+// The seller walks away with this slip and nothing else. Telling them, on
+// it, that their bills are online is the cheapest way to stop the phone
+// call three weeks later — and the office email belongs next to the phone
+// number for the same reason.
+//
+// Returns [] when there is nothing to say, so each renderer can skip the
+// whole block (and its divider) rather than print an empty gap.
 
 // ── RENDERER (ESC/POS raw bytes, for Bluetooth thermal printers) ──
 // Produces a 58mm ESC/POS receipt from the same lot data + operator column
@@ -623,7 +651,13 @@ function buildEscposReceipt(lots, cfg, opts) {
   }
   boldOff();
   rule();
-  center(); boldOn(); line('** THANK YOU **'); boldOff(); left();
+  center(); boldOn(); line('** THANK YOU **'); boldOff();
+  const foot = receiptFooterLines(cfg);
+  if (foot.length) {
+    line('-'.repeat(WIDTH));
+    foot.forEach(function (t) { _wrapWords(t, WIDTH).forEach(function (sl) { line(sl); }); });
+  }
+  left();
   raw(0x0A, 0x0A, 0x0A, 0x0A);    // feed clear of the tear bar
   raw(GS, 0x56, 0x00);            // full cut (ignored by cutter-less printers)
   return Buffer.concat(chunks);
@@ -736,6 +770,15 @@ function renderSellerReceiptCompact(doc, sellerLots, cfg) {
   const line2 = seg2.join('   |   ');
   doc.fillColor('#000').font('Helvetica-Bold').fontSize(fs(BODY))
      .text(line1 + (line2 ? '\n' + line2 : ''), m, doc.y, { width: w, align: 'center' });
+  // Same footer as the full slip. This roll is only ~63mm, so it is set a
+  // size smaller and carries nothing the two lines above do not need.
+  const foot = receiptFooterLines(cfg);
+  if (foot.length) {
+    doc.moveDown(0.25);
+    doc.font('Helvetica').fontSize(Math.max(5.5, fs(BODY) - 1)).fillColor('#444')
+       .text(foot.join('\n'), m, doc.y, { width: w, align: 'center' });
+    doc.fillColor('#000');
+  }
 }
 
 // Receipt page WIDTH in points. Mirrors the desktop `lot_receipt_width_mm`

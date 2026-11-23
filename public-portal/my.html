@@ -323,6 +323,19 @@
             font-variant-numeric:tabular-nums;letter-spacing:-.01em}
   .doc .s{font-size:13.5px;color:var(--muted);line-height:1.45;margin-top:1px;
           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* "7 lots" when there are too many to name inline. A button, not a link:
+     it reveals the list in place, and must not look like it leaves the page
+     or opens the PDF — which is what tapping the ROW does. */
+  .doc .lots{background:none;border:0;padding:0;margin:0;font:inherit;color:var(--accent);
+             font-weight:650;cursor:pointer;text-decoration:underline;
+             text-underline-offset:2px;width:auto}
+  /* The revealed list, full width under the row. Chips rather than a comma
+     string so 57 numbers stay readable instead of becoming a paragraph. */
+  .lotlist{padding:0 16px 12px;display:flex;flex-wrap:wrap;gap:6px;background:var(--accent-soft)}
+  .lotlist .ttl{width:100%;font-size:12.5px;color:var(--muted);font-weight:600;padding-top:10px}
+  .lotlist span{font-size:13.5px;font-weight:650;color:var(--accent-dark);
+                background:var(--card);border:1px solid var(--line);border-radius:7px;
+                padding:3px 9px;font-variant-numeric:tabular-nums}
   /* A disclosure arrow. Making the whole row tappable looks better than a
      green square on every line, but without a cue that it IS tappable it
      is just a prettier dead end — and the people reading this will not go
@@ -1001,6 +1014,28 @@
       top.appendChild(t); top.appendChild(amt);
       var sub = document.createElement('div'); sub.className = 's';
       sub.textContent = when(d.date) + (d.ano ? ' \u00b7 Auction ' + d.ano : '');
+      // LOT NUMBERS. One or two are simply named — the common case, since
+      // every commission bill here covers a single lot. More than two become
+      // a tap that reveals the list under the row: a tax invoice can span 57,
+      // and naming those inline would push the date off a 414px screen.
+      var lots = d.lots || [];
+      if (lots.length === 1) {
+        sub.textContent += ' \u00b7 Lot ' + lots[0];
+      } else if (lots.length === 2) {
+        sub.textContent += ' \u00b7 Lots ' + lots.join(', ');
+      } else if (lots.length > 2) {
+        sub.appendChild(document.createTextNode(' \u00b7 '));
+        var lb = document.createElement('button');
+        lb.type = 'button'; lb.className = 'lots';
+        lb.textContent = lots.length + ' lots';
+        lb.setAttribute('aria-label',
+          'Show the ' + lots.length + ' lot numbers on ' + d.label + ' ' + (d.no || ''));
+        lb.onclick = function(ev){
+          ev.stopPropagation(); ev.preventDefault();   // the row opens the PDF
+          toggleLots(row, d, lots);
+        };
+        sub.appendChild(lb);
+      }
       g.appendChild(top); g.appendChild(sub);
       row.appendChild(g);
 
@@ -1202,6 +1237,23 @@
     if (document.hidden) { if (SAVER.minutes && token) saverShow(); }
     else saverArm();
   });
+
+  // Reveal / hide one row's lot numbers. Inserted as a SIBLING of the row so
+  // it spans the whole card instead of being squeezed into the text column
+  // beside the download button.
+  function toggleLots(row, d, lots){
+    var next = row.nextSibling;
+    if (next && next.classList && next.classList.contains('lotlist')) { next.remove(); return; }
+    var box = document.createElement('div');
+    box.className = 'lotlist';
+    var t = document.createElement('div'); t.className = 'ttl';
+    t.textContent = lots.length + ' lots on ' + d.label + ' ' + (d.no || '');
+    box.appendChild(t);
+    lots.forEach(function(n){
+      var c = document.createElement('span'); c.textContent = n; box.appendChild(c);
+    });
+    row.parentNode.insertBefore(box, row.nextSibling);
+  }
 
   function signedOut(){
     resetToSignIn('Your sign-in has expired. Please sign in again.');

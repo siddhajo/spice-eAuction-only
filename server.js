@@ -13102,72 +13102,7 @@ app.get('/api/invoices', requireView, (req, res) => {
   }
 
 
-  // Hydrate the resolved e-way bill distance per invoice. Resolution
-  // order matches the Tally generator (so what the user sees in the
-  // Sales tab is exactly what ships in the voucher):
-  //   1. invoices.distance_km — per-invoice override, wins if set
-  //   2. route_distances[(dispatch_pin, buyer_pin)] — saved route value
-  //   3. blank
-  //
-  // Done in JS rather than a JOIN because the (dispatch_pin → buyer_pin)
-  // pair varies per invoice (each buyer has a different PIN). A single
-  // JOIN would need a CTE for normalised pairs; cleaner to look up.
-  try {
-    const dispatchPin = String(
-      cfg.tally_dispatch_pin ||
-      cfg.s_pin ||
-      cfg.kl_pin ||
-      cfg.tn_pin ||
-      '685553'
-    ).trim();
-    const routeStmt = db.prepare(
-      // Routes are stored under a normalised (min, max) pair, so a
-      // lookup must match the OR of both directions. Without this the
-      // lookup would silently miss every route stored in the opposite
-      // order.
-      `SELECT km FROM route_distances
-       WHERE (from_pin = ? AND to_pin = ?)
-          OR (from_pin = ? AND to_pin = ?)
-       LIMIT 1`
-    );
-    // Per spec: SOURCE PINCODE PRIORITY
-    //   1. ship-to (consignee) PIN — buyers.cpin
-    //   2. bill-to (buyer) PIN     — buyers.pin
-    // The ship-to address is where the goods physically arrive (and
-    // therefore the correct e-way bill destination); bill-to is the
-    // legal billing address, which can differ for buyers with multiple
-    // delivery sites. Distance must be computed to the actual ship-to
-    // when one is registered. Falls back to bill-to so legacy buyers
-    // without a separate consignee block still resolve.
-    // PERF: the buyer PINs come from the shared buyerMaster built above (one
-    // query per chunk, not one per row); the route lookup is memoised per
-    // PIN, since many invoices share a buyer and many buyers share a
-    // destination.
-    const buyerPins = buyerMaster;
-    const routeCache = new Map(); // buyerPin -> km | null
-    for (const r of rows) {
-      // Per-invoice override always wins
-      if (r.distance_km != null && r.distance_km !== '') {
-        r.resolved_distance_km = Number(r.distance_km);
-        continue;
-      }
-      // Route table lookup: need the buyer's PIN
-      const b = r.buyer == null ? null : buyerPins.get(r.buyer);
-      const shipPin = b && b.cpin ? String(b.cpin).trim() : '';
-      const billPin = b && b.pin  ? String(b.pin ).trim() : '';
-      const buyerPin = shipPin || billPin;
-      if (!buyerPin || !dispatchPin) { r.resolved_distance_km = null; continue; }
-      if (!routeCache.has(buyerPin)) {
-        const hit = routeStmt.get(dispatchPin, buyerPin, buyerPin, dispatchPin);
-        routeCache.set(buyerPin, hit && hit.km != null ? Number(hit.km) : null);
-      }
-      r.resolved_distance_km = routeCache.get(buyerPin);
-    }
-  } catch (e) {
-    // route_distances table may be missing on a partially-migrated DB.
-    // Don't fail the whole endpoint — just leave resolved_distance_km null.
-    console.warn('[invoices] resolved distance hydration failed:', e.message);
-  }
+  resolveInvoiceDistances(db, cfg, rows, buyerMaster);
   if (wantPaged) return res.json({ rows, total, page, pageSize });
   res.json(rows);
 });
@@ -13311,6 +13246,105 @@ function portalEnrolBuyer(db, buyerId) {
     const b = db.get('SELECT tel FROM buyers WHERE id = ?', [buyerId]);
     if (b) _portalAutoEnrol(db, 'buyer', buyerId, b.tel);
   } catch (_) {}
+}
+
+// The e-way bill distance for a set of invoice rows, written onto each row
+// as `resolved_distance_km`.
+//
+// Extracted so the Sales tab, the Tally voucher and the lorry-wise EXPORTS
+// all answer the same way. The export used to read `invoices.distance_km`
+// straight out of the column and printed 0 for every row on this install —
+// that column is only the per-invoice OVERRIDE, and nobody had set one. The
+// figure people actually use comes from the route table.
+function _invoiceBuyerPins(db, rows) {
+  const m = new Map();
+  try {
+    const wanted = [...new Set((rows || []).filter(r => r.buyer != null).map(r => r.buyer))];
+    // Chunked here rather than through the list route's `_chunk`, which is
+    // declared INSIDE that handler. Borrowing it threw a ReferenceError that
+    // the catch below swallowed, and the only symptom was an empty DISTANCE
+    // column — a silent wrong answer, which is the worst kind.
+    for (let i = 0; i < wanted.length; i += 400) {
+      const buyers = wanted.slice(i, i + 400);
+      if (!buyers.length) continue;
+      const found = db.all(
+        `SELECT buyer, pin, cpin FROM buyers
+          WHERE buyer IN (${buyers.map(() => '?').join(',')}) ORDER BY id`, buyers);
+      for (const b of found) if (!m.has(b.buyer)) m.set(b.buyer, b);
+    }
+  } catch (e) {
+    console.warn('[invoices] buyer PIN lookup failed:', e && e.message);
+  }
+  return m;
+}
+
+function resolveInvoiceDistances(db, cfg, rows, buyerMaster) {
+  // Hydrate the resolved e-way bill distance per invoice. Resolution
+  // order matches the Tally generator (so what the user sees in the
+  // Sales tab is exactly what ships in the voucher):
+  //   1. invoices.distance_km — per-invoice override, wins if set
+  //   2. route_distances[(dispatch_pin, buyer_pin)] — saved route value
+  //   3. blank
+  //
+  // Done in JS rather than a JOIN because the (dispatch_pin → buyer_pin)
+  // pair varies per invoice (each buyer has a different PIN). A single
+  // JOIN would need a CTE for normalised pairs; cleaner to look up.
+  try {
+    const dispatchPin = String(
+      cfg.tally_dispatch_pin ||
+      cfg.s_pin ||
+      cfg.kl_pin ||
+      cfg.tn_pin ||
+      '685553'
+    ).trim();
+    const routeStmt = db.prepare(
+      // Routes are stored under a normalised (min, max) pair, so a
+      // lookup must match the OR of both directions. Without this the
+      // lookup would silently miss every route stored in the opposite
+      // order.
+      `SELECT km FROM route_distances
+       WHERE (from_pin = ? AND to_pin = ?)
+          OR (from_pin = ? AND to_pin = ?)
+       LIMIT 1`
+    );
+    // Per spec: SOURCE PINCODE PRIORITY
+    //   1. ship-to (consignee) PIN — buyers.cpin
+    //   2. bill-to (buyer) PIN     — buyers.pin
+    // The ship-to address is where the goods physically arrive (and
+    // therefore the correct e-way bill destination); bill-to is the
+    // legal billing address, which can differ for buyers with multiple
+    // delivery sites. Distance must be computed to the actual ship-to
+    // when one is registered. Falls back to bill-to so legacy buyers
+    // without a separate consignee block still resolve.
+    // PERF: the buyer PINs come from the shared buyerMaster built above (one
+    // query per chunk, not one per row); the route lookup is memoised per
+    // PIN, since many invoices share a buyer and many buyers share a
+    // destination.
+    const buyerPins = buyerMaster || _invoiceBuyerPins(db, rows);
+    const routeCache = new Map(); // buyerPin -> km | null
+    for (const r of rows) {
+      // Per-invoice override always wins
+      if (r.distance_km != null && r.distance_km !== '') {
+        r.resolved_distance_km = Number(r.distance_km);
+        continue;
+      }
+      // Route table lookup: need the buyer's PIN
+      const b = r.buyer == null ? null : buyerPins.get(r.buyer);
+      const shipPin = b && b.cpin ? String(b.cpin).trim() : '';
+      const billPin = b && b.pin  ? String(b.pin ).trim() : '';
+      const buyerPin = shipPin || billPin;
+      if (!buyerPin || !dispatchPin) { r.resolved_distance_km = null; continue; }
+      if (!routeCache.has(buyerPin)) {
+        const hit = routeStmt.get(dispatchPin, buyerPin, buyerPin, dispatchPin);
+        routeCache.set(buyerPin, hit && hit.km != null ? Number(hit.km) : null);
+      }
+      r.resolved_distance_km = routeCache.get(buyerPin);
+    }
+  } catch (e) {
+    // route_distances table may be missing on a partially-migrated DB.
+    // Don't fail the whole endpoint — just leave resolved_distance_km null.
+    console.warn('[invoices] resolved distance hydration failed:', e.message);
+  }
 }
 
 function invoiceBuyerId(db, invoice, buyerCode) {
@@ -19287,11 +19321,20 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
     const format = String(req.body.format || 'xlsx').toLowerCase();
 
     const placeholders = ids.map(() => '?').join(',');
+    // `buyer` is selected for the DISTANCE lookup, which keys on the buyer's
+    // ship-to / bill-to PIN; `buyer1` is only the printable trade name.
     const rows = db.all(
-      `SELECT ano, sale, invo, buyer1, gstin, bag, qty, tot, lorry_no
+      `SELECT ano, sale, invo, buyer, buyer1, gstin, bag, qty, tot, lorry_no, distance_km
          FROM invoices WHERE id IN (${placeholders})
         ORDER BY sale, invo`, ids);
     if (!rows.length) return res.status(404).json({ error: 'No matching invoices found' });
+
+    // Same resolution the Sales tab and the Tally voucher use: the
+    // per-invoice override if one is set, otherwise the saved route. Reading
+    // invoices.distance_km directly printed 0 on every row here, because an
+    // override is the exception and the route table is the rule.
+    resolveInvoiceDistances(db, getSettingsFlat(db), rows, null);
+    for (const r of rows) r.distance_km = (r.resolved_distance_km == null) ? '' : r.resolved_distance_km;
 
     const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
 
@@ -19322,6 +19365,9 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
         { header: 'GSTIN',       key: 'gstin',  width: 18 },
         { header: 'BAGS',        key: 'bag',    width: 8  },
         { header: 'QTY',         key: 'qty',    width: 12 },
+        // These exports are read lorry by lorry to settle freight, so the
+        // distance belongs beside the load, not on a second sheet.
+        { header: 'DIST (KM)',   key: 'distance_km', width: 11 },
         { header: 'BILL AMOUNT', key: 'tot',    width: 16 },
       ];
       // Flatten into section-banner rows + data rows. renderTablePdf draws a
@@ -19331,6 +19377,10 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
         pdfRows.push({ _isSection: true, label: `Lorry: ${g.no}` });
         for (const r of g.rows) pdfRows.push(r);
       }
+      // Distance is deliberately absent from the totals row. Adding up the
+      // kilometres of every invoice on a lorry would state a journey nobody
+      // drove — the same load goes to one place, and the figure that means
+      // something is the per-invoice one.
       const totals = { sale: 'TOTAL', bag: sum('bag'), qty: sum('qty'), tot: sum('tot') };
       const buffer = await renderTablePdf({
         title: 'Sales Invoices',
@@ -19351,6 +19401,7 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
       { header: 'GSTIN',       key: 'gstin',  width: 20 },
       { header: 'BAGS',        key: 'bag',    width: 8  },
       { header: 'QTY',         key: 'qty',    width: 12, numFmt: '#,##0.000' },
+      { header: 'DIST (KM)',   key: 'distance_km', width: 11, numFmt: '#,##0.0' },
       { header: 'BILL AMOUNT', key: 'tot',    width: 16, numFmt: '#,##0.00'  },
     ];
     // createExcelBuffer renders opts.sections as a titled group band then its

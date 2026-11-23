@@ -170,7 +170,8 @@ const cleanup = () => {
   // geometry — every line centred on the same axis, and the name INSIDE its
   // container — rather than that the CSS string says "center".
   await put({ screensaver_minutes: '1', app_name: 'SpiceFlow eAuction Suite',
-              app_credit: 'Powered by KJ & Co', app_contact: '9790745462 / 8248922434' });
+              app_credit: 'Powered by KJ & Co', app_contact: '9790745462 / 8248922434',
+              app_email: 'support@saaga.test' });
   await open();
   const lock = await page.evaluate(() => {
     idleHideWarning(); _ss.minutes = 1; ssShow();
@@ -185,6 +186,15 @@ const cleanup = () => {
     return {
       app: box('ss-app'),
       credit: box('ss-credit'), contact: box('ss-contact'), clock: box('ss-clock'),
+      // The contact lines are now ICON + TEXT pairs. The centred unit is the
+      // ROW; the text alone sits right of centre by half the glyph, which is
+      // the layout working, not drifting. So the axis check measures rows.
+      contactRow: box('ss-contact-row'), emailRow: box('ss-email-row'),
+      email: box('ss-email'),
+      icons: {
+        phone: !!document.querySelector('#ss-contact-row svg'),
+        email: !!document.querySelector('#ss-email-row svg'),
+      },
       colMid: Math.round(col.left + col.width / 2), colW: Math.round(col.width),
       lineH: parseFloat(getComputedStyle(document.getElementById('ss-app')).fontSize),
     };
@@ -196,7 +206,7 @@ const cleanup = () => {
   check('the full name renders unabbreviated',
         /SpiceFlow eAuction Suite/.test((lock.app || {}).text || ''), lock.app);
   // One axis: every line's midpoint within a pixel of the column's.
-  const axes = ['app', 'credit', 'contact', 'clock']
+  const axes = ['app', 'credit', 'contactRow', 'emailRow', 'clock']
     .map(k => ({ k, mid: (lock[k] || {}).mid })).filter(x => x.mid != null);
   const offAxis = axes.filter(x => Math.abs(x.mid - lock.colMid) > 1);
   check('every line sits on the same centre axis', offAxis.length === 0,
@@ -208,8 +218,40 @@ const cleanup = () => {
   check('…and does not wrap mid-name', (lock.app || {}).h < lock.lineH * 1.8,
         { h: (lock.app || {}).h, fontSize: lock.lineH });
 
+  console.log('\n[contacts] phone and email each carry their own glyph');
+  check('the phone line has an icon', lock.icons.phone, JSON.stringify(lock.icons));
+  check('the email line has an icon', lock.icons.email, JSON.stringify(lock.icons));
+  check('the email address is shown', /support@saaga\.test/.test((lock.email || {}).text || ''),
+        lock.email);
+  // Each row goes on its own when its setting is blank — a glyph left behind
+  // pointing at nothing is worse than no row.
+  const rowShown = async () => page.evaluate(() => {
+    idleHideWarning(); _ss.minutes = 1; ssShow();
+    // offsetParent, not style.display: a row whose own display is '' is still
+    // invisible when an ancestor is hidden, and reading the element's own
+    // style reported those as shown.
+    const vis = (id) => { const n = document.getElementById(id); return !!n && n.offsetParent !== null; };
+    return { phone: vis('ss-contact-row'), email: vis('ss-email-row'),
+             wrap: vis('ss-contacts'), by: vis('ss-by') };
+  });
+  await put({ app_email: '' });
+  await open();
+  let rows = await rowShown();
+  check('a blank email drops its row, phone stays',
+        rows.email === false && rows.phone === true, JSON.stringify(rows));
+  await put({ app_contact: '', app_email: 'support@saaga.test' });
+  await open();
+  rows = await rowShown();
+  check('…and the other way round', rows.phone === false && rows.email === true,
+        JSON.stringify(rows));
+  await put({ app_contact: '', app_email: '' });
+  await open();
+  rows = await rowShown();
+  check('both blank drops the contacts block, credit keeps the rule',
+        rows.wrap === false && rows.by === true, JSON.stringify(rows));
+
   console.log('\n[unbadged] a blank credit leaves no empty rule');
-  await put({ app_credit: '', app_contact: '' });
+  await put({ app_credit: '', app_contact: '', app_email: '' });
   await open();
   const bare = await page.evaluate(() => {
     idleHideWarning(); _ss.minutes = 1; ssShow();
@@ -330,6 +372,19 @@ const cleanup = () => {
   });
   check('the login page is what is on screen', login.loginShown === true, JSON.stringify(login));
   check('the app name prints on the login page', login.text === 'GreenGavel', login.text);
+  // The chip is styled for capitals, but what sits in it is a PRODUCT NAME
+  // with deliberate casing — "Saaga eAuction Suite", lowercase e. The chip's
+  // text-transform:uppercase printed SAAGA EAUCTION SUITE, which is a
+  // different word. Assert the COMPUTED transform, because the DOM text is
+  // right either way and only the rendering was wrong.
+  {
+    const chip = await page.evaluate(() => {
+      const n = document.getElementById('login-hero-app');
+      return n ? { text: n.textContent.trim(), transform: getComputedStyle(n).textTransform } : null;
+    });
+    check('the product name is not uppercased by the chip',
+          chip && chip.transform === 'none', JSON.stringify(chip));
+  }
   check('…in the product chip at the top, where it cannot be missed',
         login.inChip === true && login.visible === true, JSON.stringify(login));
   check('…and not buried in the footer small print',

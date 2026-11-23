@@ -531,7 +531,8 @@ function mountPortal(app, deps) {
         ? commissionNettForBills(db, rows) : new Map();
       for (const r of rows)
         out.push({ kind: 'bill', id: r.id, ano: r.ano, date: r.date, no: String(r.bil || ''),
-                   amount: nett.has(r.id) ? nett.get(r.id) : r.net, label: 'Commission Bill' });
+                   amount: nett.has(r.id) ? nett.get(r.id) : r.net, label: 'Commission Bill',
+                   _li: r.line_items, _lotNo: r.lot_no });
 
       // Registered dealers are billed by purchase invoice instead. The
       // amount is `total - tds`, which is what the document prints as its
@@ -540,15 +541,15 @@ function mountPortal(app, deps) {
       // row showing it would differ from the paper by the TDS — ₹628 on the
       // first dealer this was checked against.
       for (const r of db.all(
-        `SELECT id, ano, date, invo AS no,
+        `SELECT id, ano, date, invo AS no, lot_no,
                 (COALESCE(total,0) - COALESCE(tds,0)) AS amount
            FROM purchases
           WHERE trader_id = ?${win} ORDER BY date DESC, id DESC`, [party.id, ...span]))
         out.push({ kind: 'purchase', id: r.id, ano: r.ano, date: r.date, no: String(r.no || ''),
-                   amount: r.amount, label: 'Purchase Invoice' });
+                   amount: r.amount, label: 'Purchase Invoice', _lotNo: r.lot_no });
     } else {
       for (const r of db.all(
-        `SELECT i.id, i.ano, i.date, i.invo AS no, i.tot AS amount
+        `SELECT i.id, i.ano, i.date, i.invo AS no, i.tot AS amount, i.line_items
            FROM invoices i
           WHERE i.buyer_id = ?
             AND COALESCE(i.is_proforma,0) = 0
@@ -559,9 +560,77 @@ function mountPortal(app, deps) {
                      AND COALESCE(l.invoice_hold,0) = 1)
             ${range ? 'AND i.date BETWEEN ? AND ?' : ''}
           ORDER BY i.date DESC, i.id DESC`, [party.id, ...span]))
-        out.push({ kind: 'invoice', id: r.id, ano: r.ano, date: r.date, no: String(r.no || ''), amount: r.amount, label: 'Tax Invoice' });
+        out.push({ kind: 'invoice', id: r.id, ano: r.ano, date: r.date, no: String(r.no || ''),
+                   amount: r.amount, label: 'Tax Invoice', _li: r.line_items });
     }
-    return out;
+    return attachLotNos(db, party, out);
+  }
+
+  // The LOT NUMBERS behind a document.
+  //
+  // A grower checks a bill against the lots they brought and a buyer against
+  // what they bid on, so the row has to name them. Where they live differs by
+  // document, which is the whole reason this is one function:
+  //   bill      line_items JSON — every bill on this install is lot-wise,
+  //             so that is one lot
+  //   invoice   line_items JSON — one invoice spans up to 57 lots
+  //   purchase  NEITHER. Dealers are billed seller-wise with lot_no blank on
+  //             all 149 rows, so the lots have to come from the lots table.
+  //
+  // Sorted numerically: lot numbers are TEXT ('090', '127'), and a plain
+  // string sort puts '1000' before '99'.
+  function attachLotNos(db, party, docs) {
+    const byLot = (a, b) => {
+      const na = parseInt(a, 10), nb = parseInt(b, 10);
+      if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+      return String(a).localeCompare(String(b), undefined, { numeric: true });
+    };
+    const fromJson = (raw) => {
+      try {
+        const a = JSON.parse(raw || '[]');
+        if (!Array.isArray(a)) return [];
+        return [...new Set(a.map(x => String((x && x.lot) == null ? '' : x.lot).trim()).filter(Boolean))];
+      } catch (_) { return []; }
+    };
+
+    const needLookup = [];
+    for (const d of docs) {
+      let lots = d._li != null ? fromJson(d._li) : [];
+      if (!lots.length && d._lotNo != null && String(d._lotNo).trim()) lots = [String(d._lotNo).trim()];
+      d.lots = lots.sort(byLot);
+      if (!d.lots.length) needLookup.push(d);
+      delete d._li; delete d._lotNo;
+    }
+    if (!needLookup.length) return docs;
+
+    // ONE query for everything still missing, not one per row.
+    try {
+      if (party.kind === 'seller') {
+        const aucs = [...new Set(needLookup.map(d => String(d.ano == null ? '' : d.ano).trim()).filter(Boolean))];
+        if (!aucs.length) return docs;
+        const ph = aucs.map(() => '?').join(',');
+        const rows = db.all(
+          `SELECT TRIM(a.ano) AS ano, l.lot_no
+             FROM lots l JOIN auctions a ON a.id = l.auction_id
+            WHERE l.trader_id = ? AND TRIM(a.ano) IN (${ph})`, [party.id, ...aucs]);
+        const map = new Map();
+        for (const r of rows) {
+          const k = String(r.ano);
+          if (!map.has(k)) map.set(k, new Set());
+          const v = r.lot_no == null ? '' : String(r.lot_no).trim();
+          if (v) map.get(k).add(v);
+        }
+        for (const d of needLookup) {
+          const set = map.get(String(d.ano == null ? '' : d.ano).trim());
+          d.lots = set ? [...set].sort(byLot) : [];
+        }
+      }
+    } catch (e) {
+      // A document with no lot list still lists and still downloads; it just
+      // shows no lot line. Never fail the page over a label.
+      console.warn('[portal] lot-number lookup failed:', e && e.message);
+    }
+    return docs;
   }
 
   // What a party has done with us, per financial year. Money first: it is
