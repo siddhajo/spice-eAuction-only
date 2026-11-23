@@ -17311,15 +17311,9 @@ async function hubPdfOpen(id, print){
   const it = _hubItem(id);
   if (!it || !it.href || !it.href.pdf) { toast('No PDF available for that document'); return; }
   await withOverlay(`Preparing ${it.label}…`, async () => {
-    const r = await fetch(B + hubHref(it, 'pdf'), { headers: { 'Authorization': 'Bearer ' + T } });
-    if (!r.ok) {
-      const e = await r.json().catch(() => ({}));
-      alert(`Failed: ${e.error || 'HTTP ' + r.status}`);
-      return;
-    }
-    const url = URL.createObjectURL(await r.blob());
-    const w = window.open(url);
-    if (print && w) w.addEventListener('load', () => { try { w.focus(); w.print(); } catch(_) {} });
+    // Opens under the document's real filename where the endpoint supports
+    // a preview link, and falls back to the old blob tab where it does not.
+    await _openPdfInTab(B + hubHref(it, 'pdf'), { print: !!print });
   });
 }
 
@@ -36314,38 +36308,69 @@ function renderLorryActions(){
     + `<button class="btn feat-whatsapp" onclick="openLorryWhatsapp('${k}')" style="height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600" title="Send this report's PDF via WhatsApp">💬 WhatsApp</button>`
     : '';
 }
-// Fetch a lorry report PDF (inline) as an object URL, sending the auth
-// header the endpoint requires. Mirrors _expPdfBlobUrl. Returns null on
-// error (after toasting) so callers can bail cleanly.
-async function _lorryPdfBlobUrl(type){
-  const aid=document.getElementById('lorry-auction')?.value;
-  if(!aid){alert('Select an auction first');return null}
-  const r=await fetch(B+`/api/lorry-reports/${type}/${aid}?format=pdf&inline=1`,{headers:{'Authorization':'Bearer '+T}});
-  if(!r.ok){
-    let msg='Lorry report failed';
-    try{const e=await r.json();if(e.error)msg=e.error}catch(x){}
-    toast(msg);return null;
+// ── Opening a PDF in a tab, under its REAL name ──────────────────────
+// Preview used to fetch the PDF with the auth header, wrap it in a Blob and
+// open the object URL. That names the tab — and so the browser's Save As —
+// `blob:https://host/9a1281db-2001-4c06-9474-8cf409c0cc22`, because a blob
+// URL has no path and no headers for the viewer to read a name from. The
+// server had already sent the right name; the Blob discarded it.
+//
+// So ask the same endpoint for a LINK instead of the bytes. It parks the
+// rendered PDF for two minutes under a random id and answers with
+// `/p/<id>/<Real Name>.pdf` — an ordinary URL whose last segment is the
+// filename — and the tab opens that. Save now offers exactly the name the
+// direct export gives. See preview-links.js.
+//
+// Returns the opened window, or null (having reported why) so callers can
+// bail. `print:true` fires the print dialog once the document is up.
+async function _openPdfInTab(url, opts) {
+  opts = opts || {};
+  const sep = url.indexOf('?') > -1 ? '&' : '?';
+  let r;
+  try { r = await fetch(url + sep + 'previewlink=1', { headers: { 'Authorization': 'Bearer ' + T } }); }
+  catch (e) { toast('Could not reach the server'); return null; }
+  if (!r.ok) {
+    let msg = 'Could not open the document';
+    try { const e = await r.json(); if (e && e.error) msg = e.error; } catch (_) {}
+    toast(msg); return null;
   }
-  const blob=await r.blob();
-  return URL.createObjectURL(blob);
+  // An endpoint that has not learned about preview links ignores the query
+  // parameter and just sends the PDF. That is a valid answer: use the bytes
+  // we already have and fall back to the old blob tab, rather than failing
+  // in front of the operator. Such a tab still saves under a blob name —
+  // that endpoint needs sendPdfDocument() to fix it — but it WORKS.
+  const ctype = String(r.headers.get('Content-Type') || '');
+  let href = null;
+  if (ctype.indexOf('application/json') > -1) {
+    try { const jj = await r.json(); if (jj && jj.url) href = B + jj.url; } catch (_) {}
+    if (!href) { toast('Could not open the document'); return null; }
+  } else {
+    href = URL.createObjectURL(await r.blob());
+    setTimeout(() => { try { URL.revokeObjectURL(href); } catch (_) {} }, 120000);
+  }
+  const w = window.open(href);
+  if (!w) { toast('Allow pop-ups for this site to preview documents'); return null; }
+  if (opts.print) w.addEventListener('load', () => { try { w.focus(); w.print(); } catch (_) {} });
+  return w;
 }
+
 // Preview the lorry report PDF inline in a new tab (mirrors exportPreview).
 async function previewLorry(type){
   const label=LORRY_LABELS[type]||type;
+  const aid=document.getElementById('lorry-auction')?.value;
+  if(!aid){alert('Select an auction first');return}
   await withOverlay(`Preparing ${label} preview…`, async () => {
-    const blobUrl=await _lorryPdfBlobUrl(type);
-    if(blobUrl) window.open(blobUrl);
+    await _openPdfInTab(B+`/api/lorry-reports/${type}/${aid}?format=pdf&inline=1`);
   });
 }
 // Print the lorry report PDF — open in a new window and fire the browser
 // print dialog once it loads (mirrors exportPrint).
 async function printLorry(type){
   const label=LORRY_LABELS[type]||type;
+  const aid=document.getElementById('lorry-auction')?.value;
+  if(!aid){alert('Select an auction first');return}
   await withOverlay(`Preparing ${label} for print…`, async () => {
-    const blobUrl=await _lorryPdfBlobUrl(type);
-    if(!blobUrl) return;
-    const w=window.open(blobUrl);
-    if(w){ w.addEventListener('load', () => { try{ w.focus(); w.print(); }catch(_){} }); }
+    await _openPdfInTab(B+`/api/lorry-reports/${type}/${aid}?format=pdf&inline=1`, {print:true});
   });
 }
 async function downloadLorry(type,format){
@@ -36525,21 +36550,6 @@ function onSbTypeChange(){
   document.getElementById('sb-preview').innerHTML = '';
   document.getElementById('sb-meta').textContent = '';
 }
-// Fetch the selected Spice Board report as an inline-disposition PDF and
-// return an object URL. Mirrors _expPdfBlobUrl / _lorryPdfBlobUrl. Returns
-// null on error (toast already shown).
-async function _sbPdfBlobUrl(){
-  const t = sbCurrent();
-  const r = await fetch(B+`/api/spice-board-reports/${t}/export?${sbQueryString({format:'pdf', inline:'1'})}`,
-    {headers:{'Authorization':'Bearer '+T}});
-  if (!r.ok) {
-    let m = 'Preview failed';
-    try { const e = await r.json(); if (e.error) m = e.error; } catch(_){}
-    toast(m); return null;
-  }
-  const blob = await r.blob();
-  return URL.createObjectURL(blob);
-}
 // Object URL of the PDF currently embedded in the preview pane, kept so we
 // can revoke it before embedding the next one (avoids leaking blob URLs).
 let _sbPreviewUrl = null;
@@ -36561,11 +36571,12 @@ async function sbLoadPreview(){
     } catch(_) { if (meta) meta.textContent = ''; }
     // Embed the actual report PDF inline — the same document Excel / PDF /
     // Print produce — instead of an HTML approximation of it.
-    const blobUrl = await _sbPdfBlobUrl();
-    if (!blobUrl) return;
+    // A /p/ link rather than a blob, so saving the report out of the
+    // embedded viewer offers its real filename.
+    const link = await _sbPdfLink();
+    if (!link) return;
     _sbClearPreviewUrl();
-    _sbPreviewUrl = blobUrl;
-    if (root) root.innerHTML = `<iframe title="Report preview" src="${blobUrl}" style="width:100%;height:580px;border:0;border-radius:6px;background:#fff"></iframe>`;
+    if (root) root.innerHTML = `<iframe title="Report preview" src="${link}" style="width:100%;height:580px;border:0;border-radius:6px;background:#fff"></iframe>`;
     if (typeof hideNudge === 'function') hideNudge('spiceBoard');
   });
 }
@@ -36611,14 +36622,8 @@ async function sbPrint(){
   const t = sbCurrent();
   // Open the inline-disposition PDF in a new window so the browser's
   // print preview can fire directly on it (no save-then-open round-trip).
-  const url = B+`/api/spice-board-reports/${t}/export?${sbQueryString({format:'pdf', inline:'1'})}`;
   await withOverlay('Preparing print…', async () => {
-    const r = await fetch(url, {headers:{'Authorization':'Bearer '+T}});
-    if (!r.ok) { toast('Print failed'); return; }
-    const blob = await r.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const w = window.open(blobUrl);
-    if (w) { w.addEventListener('load', () => { try { w.focus(); w.print(); } catch(_){} }); }
+    await _openPdfInTab(_sbPdfUrl(), {print:true});
   });
 }
 
@@ -47440,41 +47445,30 @@ function _expSellersQs(type){
 }
 // Fetch an export as a PDF blob (shared by Preview + Print). Returns a blob
 // URL or null on failure (alert already shown).
-async function _expPdfBlobUrl(type, aidOverride){
-  // aidOverride lets non-Exports-tab callers (e.g. the Price Import modal's
-  // pre-trade snapshot Preview/Print, anchored to the Lots-tab auction) pass
-  // an explicit auction id. Falls through to the Exports/Payments selectors.
+// The export PDF's URL. Preview/Print hand this to _openPdfInTab rather
+// than fetching the bytes and wrapping them in a Blob — a blob tab cannot
+// carry the document's name.
+// Returns null (having told the operator why) when no auction is selected.
+function _expPdfUrl(type, aidOverride){
   const aid=aidOverride||document.getElementById('exp-auction')?.value||document.getElementById('pay-auction')?.value;
   if(!aid){alert('Select an auction first');return null}
-  const url = B+`/api/exports/${type}/${aid}?format=pdf${_expSellersQs(type)}`;
-  const r = await fetch(url,{headers:{'Authorization':'Bearer '+T}});
-  if(!r.ok){
-    const errBody = await r.json().catch(()=>({}));
-    alert(`Failed: ${errBody.error || 'HTTP '+r.status}`);
-    return null;
-  }
-  const blob = await r.blob();
-  return URL.createObjectURL(blob);
+  return B+`/api/exports/${type}/${aid}?format=pdf${_expSellersQs(type)}`;
 }
 // Preview an export's PDF inline in a new tab (mirrors the Spice Board
 // screen's Preview action).
 async function exportPreview(type, aidOverride){
   const label = (EXP_LABELS[type]||type);
-  await withOverlay(`Preparing ${label} preview…`, async () => {
-    const blobUrl = await _expPdfBlobUrl(type, aidOverride);
-    if (blobUrl) window.open(blobUrl);
-  });
+  const url = _expPdfUrl(type, aidOverride);
+  if (!url) return;
+  await withOverlay(`Preparing ${label} preview…`, async () => { await _openPdfInTab(url); });
 }
 // Print an export's PDF — opens the rendered PDF in a new window and fires the
 // browser print dialog (mirrors the Spice Board screen's Print action).
 async function exportPrint(type, aidOverride){
   const label = (EXP_LABELS[type]||type);
-  await withOverlay(`Preparing ${label} for print…`, async () => {
-    const blobUrl = await _expPdfBlobUrl(type, aidOverride);
-    if (!blobUrl) return;
-    const w = window.open(blobUrl);
-    if (w) { w.addEventListener('load', () => { try { w.focus(); w.print(); } catch(_){} }); }
-  });
+  const url = _expPdfUrl(type, aidOverride);
+  if (!url) return;
+  await withOverlay(`Preparing ${label} for print…`, async () => { await _openPdfInTab(url, {print:true}); });
 }
 
 // ── TDS ───────────────────────────────────────────────────

@@ -187,6 +187,52 @@ app.use(precompress.middleware(PUBLIC_DIR));
 
 app.use(express.static(PUBLIC_DIR));
 
+// ── Short-lived preview links ─────────────────────────────────────────
+// `/p/<id>/<Real Name>.pdf` serves a document parked by preview-links.js a
+// moment ago. Deliberately unauthenticated: the id is 128 random bits, good
+// for one document, and gone in two minutes. That is what lets a Preview tab
+// be a NORMAL URL — and a normal URL is the only thing Chrome's PDF viewer
+// will name a saved file after. See preview-links.js for the full why.
+//
+// The filename in the path is cosmetic; the id alone selects the document,
+// so a renamed link still resolves and cannot reach anything else.
+const previewLinks = require('./preview-links');
+app.get('/p/:id/:name', (req, res) => {
+  const doc = previewLinks.take(req.params.id);
+  // Unknown and expired are the same answer on purpose.
+  if (!doc) {
+    return res.status(404).type('text/plain').send(
+      'This preview has expired.\n\nPreview links last a couple of minutes. ' +
+      'Go back to the app and press Preview again.');
+  }
+  res.setHeader('Content-Type', doc.contentType);
+  res.setHeader('Content-Disposition', `inline; filename="${doc.filename}"`);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  return res.send(doc.buf);
+});
+
+// Send a rendered PDF — or, when the caller asked for one with
+// `?previewlink=1`, park it and hand back the URL to open instead. Every
+// Preview button goes through the second path so the tab it opens carries
+// the document's real name.
+function sendPdfDocument(req, res, buf, filename, inline) {
+  if (String(req.query.previewlink || '') === '1') {
+    // Express's res.json() leaves an already-set Content-Type alone, and a
+    // route that set 'application/pdf' before calling here would then ship
+    // this JSON labelled as a PDF — which the client would try to render.
+    // Set it outright rather than trusting every caller to have not.
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    const id = previewLinks.stash(buf, filename);
+    if (!id) return res.status(413).json({ error: 'Document is too large to preview' });
+    return res.json({ url: `/p/${id}/${encodeURIComponent(previewLinks.safeName(filename))}` });
+  }
+  // Unchanged behaviour for every existing caller: same header, same name.
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${filename}"`);
+  return res.send(buf);
+}
+
 // ══════════════════════════════════════════════════════════════
 // APP-WIDE ACTIVITY AUDIT (breadth) — feeds Backup → App Activity log
 // ══════════════════════════════════════════════════════════════
@@ -19530,9 +19576,9 @@ app.post('/api/invoices/preview-pdf/:auctionId', requireView, async (req, res) =
     } else {
       pdf = await generateSalesInvoicePDF(invoice, cfg, saleType, 'PREVIEW', invoiceDate);
     }
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PreInvoice', anoForFilename(db, req.params.auctionId), saleType, String(buyerCode).replace(/[^A-Za-z0-9]/g,''))}.pdf"`);
-    res.send(pdf);
+    return sendPdfDocument(req, res, pdf,
+      `${exportFileName('PreInvoice', anoForFilename(db, req.params.auctionId), saleType, String(buyerCode).replace(/[^A-Za-z0-9]/g,''))}.pdf`,
+      true);
   } catch (e) {
     console.error('Pre-invoice PDF error:', e);
     res.status(500).json({ error: 'Pre-invoice generation failed: ' + e.message });
@@ -20854,9 +20900,8 @@ app.get('/api/exports/:type/:auctionId', requireExport, async (req, res) => {
       // absent means "use the install default". Harmless to every other type.
       const buffer = await exportAnyPdf(db, type, auctionId, cfg, { state: req.query.state, by: req.query.by || '' });
       const niceName = (EXPORT_TYPES[type] && EXPORT_TYPES[type].name) || type;
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${niceName}_${anoForFilename(db, auctionId)}.pdf"`);
-      return res.send(buffer);
+      return sendPdfDocument(req, res, buffer,
+        `${niceName}_${anoForFilename(db, auctionId)}.pdf`, false);
     } catch (e) {
       return res.status(500).json({ error: e.message });
     }
@@ -21025,9 +21070,8 @@ app.get('/api/lorry-reports/:type/:auctionId', requireExport, async (req, res) =
       // new tab / print dialog) instead of forcing a download. Everything
       // else keeps the download-as-attachment behaviour.
       const inline = req.query.inline === '1' || req.query.inline === 'true';
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${exportFileName(def.name, anoForFilename(db, auctionId))}.pdf"`);
-      return res.send(buf);
+      return sendPdfDocument(req, res, buf,
+        `${exportFileName(def.name, anoForFilename(db, auctionId))}.pdf`, inline);
     }
     const buf = await def.xlsx(db, auctionId);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -21195,9 +21239,8 @@ app.get('/api/spice-board-reports/:type/export', requireExport, async (req, res)
     if (format === 'pdf') {
       if (!def.pdf) return res.status(400).json({ error: 'PDF not supported for this report' });
       const buf = await def.pdf(db, opts);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `${req.query.inline === '1' ? 'inline' : 'attachment'}; filename="${exportFileName(def.name, ...scopeParts(db, opts))}.pdf"`);
-      return res.send(buf);
+      return sendPdfDocument(req, res, buf,
+        `${exportFileName(def.name, ...scopeParts(db, opts))}.pdf`, req.query.inline === '1');
     }
     if (format === 'csv') {
       // A report with no native CSV builder still answers here by converting
