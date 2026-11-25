@@ -19411,10 +19411,12 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
         { header: 'GSTIN',       key: 'gstin',  width: 18 },
         { header: 'BAGS',        key: 'bag',    width: 8  },
         { header: 'QTY',         key: 'qty',    width: 12 },
-        // These exports are read lorry by lorry to settle freight, so the
-        // distance belongs beside the load, not on a second sheet.
-        { header: 'DIST (KM)',   key: 'distance_km', width: 11 },
         { header: 'BILL AMOUNT', key: 'tot',    width: 16 },
+        // These exports are read lorry by lorry to settle freight, so the
+        // distance travels with the load rather than sitting on a second
+        // sheet — but it is a reference figure, not part of the money
+        // running across the row, so it sits last of all.
+        { header: 'DIST (KM)',   key: 'distance_km', width: 11 },
       ];
       // Flatten into section-banner rows + data rows. renderTablePdf draws a
       // full-width banner for any row shaped { _isSection:true, label }.
@@ -19447,8 +19449,10 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
       { header: 'GSTIN',       key: 'gstin',  width: 20 },
       { header: 'BAGS',        key: 'bag',    width: 8  },
       { header: 'QTY',         key: 'qty',    width: 12, numFmt: '#,##0.000' },
-      { header: 'DIST (KM)',   key: 'distance_km', width: 11, numFmt: '#,##0.0' },
       { header: 'BILL AMOUNT', key: 'tot',    width: 16, numFmt: '#,##0.00'  },
+      // Last column, matching the PDF — a reference figure, kept clear of
+      // the money columns.
+      { header: 'DIST (KM)',   key: 'distance_km', width: 11, numFmt: '#,##0.0' },
     ];
     // createExcelBuffer renders opts.sections as a titled group band then its
     // rows. Pass one section per lorry.

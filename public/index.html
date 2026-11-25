@@ -5123,6 +5123,15 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
       <div id="topbar-trade-wrap" style="display:none;align-items:center;gap:6px;margin-left:14px;padding-left:14px;border-left:1px solid var(--spice-line)">
         <span style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Auction</span>
         <select id="topbar-trade" onchange="setSharedAucId(this.value, 'topbar')" title="Selected auction — applies to every tab that reads an auction" style="height:32px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:13px;font-weight:600;min-width:220px"></select>
+        <!-- Sticky PAST-trade marker. The app's default is the current
+             (newest) trade; this appears only while an older one is
+             selected, so raising a document against last month's trade by
+             accident takes ignoring a warning rather than just forgetting.
+             Hidden entirely on the current trade. -->
+        <span id="topbar-trade-past" style="display:none;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:#8B6508;background:var(--spice-turmeric-lt,#fef3c7);border:1px solid #e0c068;border-radius:6px;padding:3px 8px;white-space:nowrap">
+          <span>&#9888; PAST TRADE</span>
+          <button type="button" onclick="backToCurrentTrade('marker')" title="Switch back to the current trade" style="border:0;background:#8B6508;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;cursor:pointer">Back to <span id="topbar-trade-cur">current</span></button>
+        </span>
         <!-- Guided-flow escape hatch — admins (user-manage) only. When ON,
              every trade-stage-locked menu is revealed regardless of the
              current trade's progress. Gated by data-perm-user-manage. -->
@@ -11280,6 +11289,13 @@ const j = async (t, o) => {
       window._net.lastOkAt = Date.now();
       window._net.lastError = null;
       updateSyncIndicator();
+      // A successful WRITE is "the operator did something". If that
+      // happened while an older trade was selected, offer to go back to
+      // the current one. Reads are not offers — scrolling through last
+      // month's invoices is not a task you finish.
+      if (method !== 'GET' && typeof notePastTradeAction === 'function') {
+        try { notePastTradeAction(t); } catch (_) {}
+      }
       return result;
     } catch (err) {
       lastErr = err;
@@ -35434,6 +35450,138 @@ async function confirmLotValidate(){
 function getSharedAucId() {
   try { return sessionStorage.getItem('spice.sharedAucId') || ''; } catch(_) { return ''; }
 }
+
+// ── Current trade vs past trade ───────────────────────────────────────
+// The app's DEFAULT is the current trade, and "current" is simply the
+// newest one: /api/auctions comes back ORDER BY date DESC, ano DESC, so
+// it is the first row. There is no active/closed flag on auctions to read
+// instead, and inventing one would be a second source of truth.
+//
+// A fresh login already lands on it — the shared id lives in
+// sessionStorage precisely so last week's pick doesn't haunt the next
+// session. What was missing is the rest of the story: once somebody
+// picked an older trade to fix something, it stayed picked for the whole
+// session, with nothing on screen saying so. Two things close that:
+//
+//   1. a sticky marker in the topbar for as long as a past trade is live
+//   2. after each action on a past trade, an offer to go back
+//
+// Deliberately an OFFER. Moving the trade under someone who is still
+// working is how a document ends up on the wrong one, so nothing switches
+// without a click.
+let _currentAucId = '';          // newest trade; set by loadTopbarTradeSelector
+
+function getCurrentAucId() { return _currentAucId; }
+function isPastTradeSelected() {
+  const sel = getSharedAucId();
+  return !!(_currentAucId && sel && String(sel) !== String(_currentAucId));
+}
+// "#22 · 2026-11-06" from the topbar's own option text, so the prompt
+// names the trade the way the selector does.
+function tradeLabel(id) {
+  const sel = document.getElementById('topbar-trade');
+  const opt = sel && Array.from(sel.options).find(o => String(o.value) === String(id));
+  if (!opt) return id ? ('#' + id) : '';
+  return String(opt.textContent || '').split('·')[0].trim() || ('#' + id);
+}
+
+// Show/hide the sticky topbar marker. Called whenever the shared trade
+// changes and after the selector is (re)populated.
+function refreshPastTradeMarker() {
+  const mark = document.getElementById('topbar-trade-past');
+  if (!mark) return;
+  const past = isPastTradeSelected();
+  mark.style.display = past ? 'inline-flex' : 'none';
+  if (past) {
+    const cur = document.getElementById('topbar-trade-cur');
+    if (cur) cur.textContent = tradeLabel(_currentAucId);
+  }
+}
+
+// Switch back to the current trade. `why` only shapes the confirmation.
+function backToCurrentTrade(why) {
+  const from = getSharedAucId();
+  if (!_currentAucId || String(from) === String(_currentAucId)) return;
+  _dismissPastTradePrompt();
+  setSharedAucId(_currentAucId, null);
+  toast('Back on ' + tradeLabel(_currentAucId) + ' — the current trade.');
+}
+
+// ── "Done with the past trade?" ───────────────────────────────────────
+// Armed by a successful data change while a past trade is selected (see
+// the j() hook). Debounced, because one operator action is often several
+// writes — generate, then refresh, then stamp — and three prompts for one
+// click would be worse than none.
+let _pastTradePromptTimer = null;
+let _pastTradePromptOpen = false;
+
+// Paths that are not about the selected trade. Editing a seller master or
+// the company settings while an old trade happens to be open is not
+// "working on that trade", and prompting for it would train the operator
+// to dismiss the thing without reading it.
+const _TRADE_NEUTRAL_PATHS = [
+  '/api/login', '/api/logout', '/api/company-settings', '/api/users',
+  '/api/user-screen-flags', '/api/backup', '/api/activity', '/api/whatsapp',
+  '/api/traders', '/api/buyers', '/api/banks', '/api/portal',
+];
+
+function notePastTradeAction(path) {
+  if (!isPastTradeSelected()) return;
+  const p = String(path || '');
+  if (_TRADE_NEUTRAL_PATHS.some(x => p.indexOf(x) === 0)) return;
+  if (document.hidden) return;
+  clearTimeout(_pastTradePromptTimer);
+  _pastTradePromptTimer = setTimeout(_showPastTradePrompt, 1200);
+}
+
+function _dismissPastTradePrompt() {
+  const el = document.getElementById('past-trade-prompt');
+  if (el) el.remove();
+  _pastTradePromptOpen = false;
+}
+// "Stay" simply closes it. The next action on this trade arms it again,
+// which is the asked-for behaviour: offer after each action, never nag
+// between them.
+function stayOnPastTrade() {
+  _dismissPastTradePrompt();
+  toast('Staying on ' + tradeLabel(getSharedAucId()) + '.');
+}
+
+function _showPastTradePrompt() {
+  if (_pastTradePromptOpen || !isPastTradeSelected()) return;
+  _dismissPastTradePrompt();
+  const past = tradeLabel(getSharedAucId());
+  const cur  = tradeLabel(_currentAucId);
+  const el = document.createElement('div');
+  el.id = 'past-trade-prompt';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-live', 'polite');
+  el.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:9999;max-width:330px;'
+    // Floats on the PAGE, which flips in dark mode, so it is styled with the
+    // --spice-* tokens. --card / --text are resolved on :root and keep their
+    // LIGHT values under body[data-dark="1"] — using them here would leave a
+    // glaring white card on the dark ground.
+    + 'background:var(--spice-paper,#fff);color:var(--spice-text-main,#1a1a1a);'
+    + 'border:1px solid var(--spice-line,#e0c068);'
+    + 'border-left:5px solid #c79a2e;border-radius:10px;padding:13px 15px;'
+    + 'box-shadow:0 8px 28px rgba(0,0,0,.28);font-size:13px;line-height:1.45';
+  el.innerHTML =
+      '<div style="font-weight:700;margin-bottom:4px">Done with ' + esc(past) + '?</div>'
+    + '<div style="color:var(--spice-text-mute,#555);margin-bottom:11px">That is a past trade. The app works on '
+    + '<b>' + esc(cur) + '</b> unless you say otherwise.</div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+    + '<button type="button" onclick="stayOnPastTrade()" style="border:1px solid var(--spice-line,#ccc);'
+    + 'background:transparent;color:var(--spice-text-mute,#555);font-size:12px;font-weight:600;padding:6px 11px;'
+    + 'border-radius:6px;cursor:pointer">Stay on ' + esc(past) + '</button>'
+    + '<button type="button" onclick="backToCurrentTrade(\'prompt\')" style="border:0;'
+    + 'background:#9a7310;color:#fff;font-size:12px;font-weight:700;padding:6px 11px;'
+    + 'border-radius:6px;cursor:pointer">Back to ' + esc(cur) + '</button>'
+    + '</div>';
+  document.body.appendChild(el);
+  _pastTradePromptOpen = true;
+  // No auto-switch on timeout: silence means "leave me where I am".
+  setTimeout(() => { if (document.getElementById('past-trade-prompt') === el) _dismissPastTradePrompt(); }, 15000);
+}
 // Set of <select> elements that should mirror the shared state. Selects
 // registered via _wireAuctionSync are added here; topbar uses its own id.
 const _wiredAuctionSelects = new Set();
@@ -35477,6 +35625,12 @@ function setSharedAucId(id, source) {
   // Guided-flow gate follows the shared trade — re-evaluate the sidebar
   // stage whenever the current trade changes (any tab, or the topbar).
   if (typeof refreshTradeStage === 'function') { try { refreshTradeStage(); } catch (_) {} }
+  // The PAST-TRADE marker follows it too. Also drop any open "done with
+  // the past trade?" offer: whatever the answer was, the trade just moved.
+  if (typeof refreshPastTradeMarker === 'function') { try { refreshPastTradeMarker(); } catch (_) {} }
+  if (typeof _dismissPastTradePrompt === 'function' && !isPastTradeSelected()) {
+    try { _dismissPastTradePrompt(); } catch (_) {}
+  }
 }
 // Apply the shared selection to a freshly-populated <select> and wire
 // it to mirror user picks back to the shared store. Idempotent — safe
@@ -35523,6 +35677,11 @@ async function loadTopbarTradeSelector(){
       const lots = a.lot_count ? ` · ${a.lot_count} lots` : '';
       return `<option value="${a.id}">#${esc(a.ano)} · ${esc(dateFmt)}${lots}</option>`;
     }).join('');
+    // The list arrives newest-first, so the head of it IS the current
+    // trade. Captured here because this is the only place that sees the
+    // unfiltered list — individual tabs hide closed trades and would give
+    // a different answer.
+    _currentAucId = String(auctions[0].id);
     wrap.style.display = 'inline-flex';
     const shared = getSharedAucId();
     if (shared && Array.from(sel.options).some(o => o.value === shared)) {
@@ -35539,6 +35698,7 @@ async function loadTopbarTradeSelector(){
     const showAllCb = document.getElementById('topbar-showall');
     if (showAllCb) { try { showAllCb.checked = localStorage.getItem('tradeStageShowAll') === '1'; } catch (_) {} }
     if (typeof refreshTradeStage === 'function') { try { refreshTradeStage(true); } catch (_) {} }
+    refreshPastTradeMarker();
   } catch (_) { wrap.style.display = 'none'; }
 }
 async function fillAucSelect(selId){const d=await j('/api/auctions');const sel=document.getElementById(selId);

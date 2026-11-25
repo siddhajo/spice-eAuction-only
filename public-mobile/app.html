@@ -130,6 +130,10 @@ select:focus{border-color:var(--green)}
 .tc{background:var(--green-light);border-radius:var(--radius);border:1.5px solid var(--green);padding:10px 12px;margin-top:6px;display:flex;gap:8px;margin-bottom:6px;position:relative;overflow:hidden}
 .tc::before{content:'';position:absolute;top:0;right:0;width:60px;height:60px;background:radial-gradient(circle,rgba(13,124,95,.08) 0%,transparent 70%);pointer-events:none}
 .tc .ti{flex:1}.tc .tn{font-size:13px;font-weight:700;color:var(--green)}.tc .td{font-size:10px;color:var(--text2);line-height:1.5;margin-top:2px}
+/* The seller's PHONE, on its own line directly under the name. It is the
+   number the desk reads back to confirm it has the right person, so it is
+   a size up from the place/GSTIN line and in full-strength ink. */
+.tc .tph{font-size:12px;font-weight:700;color:var(--text);line-height:1.4;margin-top:2px;letter-spacing:.02em}
 .tc .tx{background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px}
 
 /* ── STATUS BAR ── */
@@ -1987,7 +1991,18 @@ var cr=(t.cr||'').trim();
 // invoice and debit-note eligibility use. A missing SBL is flagged separately
 // by the 'GSTIN, no SBL' validation warning.
 var grade=cr.toUpperCase().startsWith('GSTIN')?'2':'1';
-document.getElementById('le-tc').innerHTML='<div class="tc"><div class="ti"><div class="tn">'+t.name+'</div><div class="td">'+loc+(cr?' — '+cr:'')+'</div></div><button class="tx" onclick="clearTrader()">&#x2715;</button></div>';document.getElementById('le-tc').style.display='block';
+// PHONE first, then place + GSTIN. The operator confirms the seller by
+// reading the number back, so it should not be the thing they hunt for.
+// Escaped on the way in: every field here is operator-typed and this is
+// innerHTML — the old line concatenated the name straight in.
+var _e=function(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
+var _tel=String(t.tel||'').trim();
+document.getElementById('le-tc').innerHTML='<div class="tc"><div class="ti">'
+  +'<div class="tn">'+_e(t.name)+'</div>'
+  +(_tel?'<div class="tph">'+_e(_tel)+'</div>':'')
+  +'<div class="td">'+_e(loc)+(cr?' — '+_e(cr):'')+'</div>'
+  +'</div><button class="tx" onclick="clearTrader()">&#x2715;</button></div>';
+document.getElementById('le-tc').style.display='block';
 document.getElementById('le-grade').value=grade;
 document.getElementById('le-grade').dataset.ruleGrade=grade;
 cacheTrader(t);
