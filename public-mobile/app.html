@@ -298,6 +298,13 @@ select:focus{border-color:var(--green)}
 .sx-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text3);font-size:12px;font-weight:700;width:20px;height:20px;display:none;align-items:center;justify-content:center;border-radius:50%;background:var(--border);border:none;padding:0;line-height:1;font-family:inherit}
 .sx-clear.show{display:flex}
 .sx-clear:hover{background:var(--border2);color:var(--text2)}
+/* The SELLER field is taller than the rest of the form. It is the one field
+   on this screen that is searched rather than typed into — the operator is
+   reading results off it at a weighbridge, often one-handed — so it gets a
+   bigger target and more room for the text. Scoped to the two seller
+   searches by id: the LOT search shares .sx and stays at the standard 44px,
+   because it takes three characters and no reading. */
+#le-name,#ed-seller-input{height:54px;font-size:15px}
 .le-progress{flex-shrink:0;background:var(--stat-bg);color:#fff;padding:11px 14px;font-size:12px;box-shadow:0 -3px 12px rgba(13,124,95,.25);position:relative;overflow:hidden}
 .le-progress::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent)}
 .le-progress.over{background:linear-gradient(135deg,#c0392b 0%,#962d22 50%,#7a241b 100%);box-shadow:0 -3px 12px rgba(192,57,43,.35)}

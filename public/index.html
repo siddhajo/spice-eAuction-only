@@ -8172,10 +8172,10 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <div style="display:flex;gap:6px;padding:0 4px;border-left:2px solid var(--spice-line)">
             <button class="btn" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:var(--spice-saffron);color:#fff;font-weight:600;box-shadow:0 2px 6px color-mix(in srgb, var(--spice-saffron) 28%, transparent)" onclick="printSelectedPurchases()" title="Print all ticked purchase invoices">🖨 Print Selected</button>
             <button class="btn btn-o" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 14px;font-weight:600" onclick="saveSeparatePurchases()" title="Save one PDF per seller, named after them, as a .zip — for sending each party their own copy">📁 Separate PDFs</button>
-            <!-- Lot-wise print of seller-wise purchases: one Payment Voucher
-                 (commission memorandum) page per lot. Nothing is generated or
-                 numbered — see POST /api/purchases/commission-bulk. -->
-            <button class="btn btn-o" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="printSelectedPurchaseVouchers()" title="Print Payment Voucher (Memorandum) for all ticked purchase invoices — ONE A4 page PER LOT, even for seller-wise invoices">🧾 Payment Voucher (Lot-wise)</button>
+            <!-- The Payment Voucher (lot-wise) used to be its own button
+                 here. It is now an option inside Print Selected, next to the
+                 purchase invoice and the bill statement: all three print the
+                 same ticked rows, so they belong behind one Print. -->
             <button class="btn feat-whatsapp" data-sel-toolbar="pur" style="display:none;height:38px;padding:0 16px;background:#25D366;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(37,211,102,.28)" onclick="whatsappSelectedPurchases()" title="Send merged PDF of ticked purchase invoices via WhatsApp">📱 WhatsApp Selected</button>
             <button class="btn feat-whatsapp" style="height:38px;padding:0 14px;background:#0d7a3e;color:#fff;font-weight:600;box-shadow:0 2px 6px rgba(13,122,62,.28)" onclick="_waSelectUnsent('pur')" title="Tick only the rows WhatsApp did not deliver — the ones it refused and the ones a stopped run never tried. Rows with no send record are left alone, not guessed at.">↻ Select unsent</button>
             <button id="pur-bulk-del" class="needs-delete btn" style="display:none;height:38px;padding:0 14px;background:#c0392b;color:#fff;font-weight:600" onclick="deleteSelectedPurchases()" title="Delete all ticked purchase invoices">🗑 Delete Selected <span id="pur-sel-count" style="margin-left:4px;background:rgba(255,255,255,.25);padding:1px 6px;border-radius:10px;font-size:11px"></span></button>
@@ -41312,24 +41312,23 @@ async function _purchaseVoucherPdf(ids){
     withCommInvoiceNo(template ? { ids, template } : { ids }, invoiceNo)
   );
 }
-async function printSelectedPurchaseVouchers(){
-  const body=document.getElementById('purchases-list');
-  if(!body){alert('No purchases list found');return}
-  const ids=Array.from(body.querySelectorAll('.pur-select-cb:checked')).map(cb=>Number(cb.value)).filter(Boolean);
-  await _purchaseVoucherPdf(ids);
-}
+// printSelectedPurchaseVouchers() lived here and read the ticked rows for
+// the old toolbar button. Print Selected now owns that selection and calls
+// _purchaseVoucherPdf directly, so the wrapper went with the button.
+// downloadPurchaseVoucher below stays — it is the per-row icon.
 async function downloadPurchaseVoucher(id){
   await _purchaseVoucherPdf([Number(id)].filter(Boolean));
 }
 
 // ── Which document does "Print Selected" print? ──────────────────────
-// Two documents are made from the same ticked rows:
+// Three documents are made from the same ticked rows:
 //   • Purchase Invoice — the tax document, one per row, as before.
 //   • Bill Statement   — one page per DEALER: a line per lot and the
 //                        payment closed off (total − TDS = net).
-// Asked here rather than added as a fourth toolbar button: both act on the
-// same selection and the operator is already reaching for Print.
-// Returns 'invoice' | 'statement', or null when cancelled.
+//   • Payment Voucher  — the commission memorandum, one page per LOT.
+// Asked here rather than spread across three toolbar buttons: they act on
+// the same selection and the operator is already reaching for Print.
+// Returns 'invoice' | 'statement' | 'voucher', or null when cancelled.
 function pickPurchasePrintDoc(){
   return new Promise(resolve=>{
     const bg=document.createElement('div');
@@ -41341,9 +41340,10 @@ function pickPurchasePrintDoc(){
     // right tokens here (the --spice-* ones would go dark on a light card).
     bg.innerHTML=`<div style="background:var(--card,#fff);color:var(--text,#111);border-radius:14px;padding:22px;max-width:470px;width:92%;box-shadow:0 20px 60px -15px rgba(0,0,0,.4)">
       <strong style="font-size:16px">What would you like to print?</strong>
-      <div style="margin-top:6px;font-size:13px;color:var(--text3)">Both are built from the rows you ticked.</div>
+      <div style="margin-top:6px;font-size:13px;color:var(--text3)">All three are built from the rows you ticked.</div>
       ${row('invoice','Purchase Invoice','The tax document — one invoice per ticked row.',true)}
       ${row('statement','Bill Statement','One page per seller: every lot with its amount, refund, commission and GST, then total less TDS.',false)}
+      ${row('voucher','Payment Voucher (lot-wise)','The commission memorandum — one A4 page per lot, even for a seller-wise invoice.',false)}
       <div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">
         <button class="btn" data-x="0">Cancel</button>
         <button class="btn btn-g" data-x="1">Print</button>
@@ -41368,6 +41368,14 @@ async function printSelectedPurchases(){
 
   const doc = await pickPurchasePrintDoc();
   if (doc === null) return;                    // operator cancelled
+
+  if (doc === 'voucher') {
+    // Unchanged behaviour, just reached from the chooser instead of its own
+    // button: _purchaseVoucherPdf still asks the layout + invoice-number
+    // questions the memorandum has always asked.
+    await _purchaseVoucherPdf(ids);
+    return;
+  }
 
   if (doc === 'statement') {
     // Nothing is generated or numbered — the statement reports purchases
