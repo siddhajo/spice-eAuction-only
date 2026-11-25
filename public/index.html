@@ -43608,19 +43608,54 @@ async function whatsappSelectedPurchases() {
     total: Number(cb.dataset.total || 0),
     ano: cb.dataset.ano || '',
   }));
+  // Same question Print Selected asks, and the same documents come back —
+  // a seller gets ONE attachment holding whichever were ticked, not one
+  // message per document.
+  const docs = await pickPurchasePrintDocs();
+  if (docs === null) return;                   // operator cancelled
+
+  const extra = {};
+  if (docs.includes('invoice')) {
+    const template = await pickTemplate('purchase-invoice', 'Choose purchase invoice format');
+    if (template === null) return;
+    if (template) extra.template = template;
+  }
+  if (docs.includes('voucher')) {
+    const commTemplate = await pickCommissionTemplate();
+    if (commTemplate === null) return;
+    if (commTemplate) extra.commTemplate = commTemplate;
+    const invoiceNo = await pickCommissionInvoiceNo();
+    if (invoiceNo === null) return;
+    extra.invoiceNo = invoiceNo;
+  }
+
+  // What the covering message calls the attachment. One document keeps its
+  // own name; several are "documents", because naming three in a WhatsApp
+  // line reads worse than not.
+  const DOC_WORDS = { invoice: 'PURCHASE INVOICE', statement: 'BILL STATEMENT',
+                      voucher: 'PAYMENT VOUCHER' };
+  const DOC_FILES = { invoice: 'PurchaseInvoice', statement: 'BillStatement',
+                      voucher: 'PaymentVoucher' };
+  const single = docs.length === 1 ? docs[0] : null;
+  const docWord = single ? DOC_WORDS[single] : 'DOCUMENTS';
+  const fileWord = single ? DOC_FILES[single] : 'PurchaseDocs';
+
   const company = await _getCompanyName();
   const items = rows.map(r => ({
     name: r.name,
     ref: { type: 'purchase', id: r.id },
     prepare: async () => {
-      const blob = await _fetchPdfBlob(`/api/purchases/pdf/${r.auction_id}/${encodeURIComponent(r.name)}?invoiceNo=${encodeURIComponent(r.invo)}`);
+      // print-bulk for this ONE row: the same merged document the office
+      // prints, so what the seller receives is what the office filed.
+      const blob = await _fetchPdfBlob('/api/purchases/print-bulk',
+        Object.assign({ ids: [r.id], docs }, extra));
       const phone = await _lookupSellerPhone({ traderId: r.traderId, name: r.name });
       const amt = `₹${Number(r.total||0).toLocaleString('en-IN')}`;
       return {
         phone, blob,
-        filename: `PurchaseInvoice_${r.name}_${r.invo}.pdf`,
-        message: `${r.ano} ${r.name} ${company} PURCHASE INVOICE ${r.invo} ${amt}`,
-        params: [r.name, `your PURCHASE INVOICE ${r.invo} for ${amt} (Auction ${r.ano}) is attached.`, company],
+        filename: `${fileWord}_${r.name}_${r.invo}.pdf`,
+        message: `${r.ano} ${r.name} ${company} ${docWord} ${r.invo} ${amt}`,
+        params: [r.name, `your ${docWord} ${r.invo} for ${amt} (Auction ${r.ano}) is attached.`, company],
       };
     },
   }));

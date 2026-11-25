@@ -603,7 +603,7 @@
   'use strict';
   var $ = function(id){ return document.getElementById(id); };
   var token = sessionStorage.getItem('portal_token') || '';
-  var parties = [], active = null, myPhone = '';
+  var parties = [], active = null, myPhone = '', viewingAll = false;
   var allDocs = [], fyPick = '', moPick = '';   // moPick '' = the whole year
   var selMode = false, sel = {};                // id → true, only while selecting
   var ticker = null, expiresAt = 0, resendAt = 0;
@@ -793,13 +793,21 @@
       var sel = document.createElement('div'); sel.className = 'sel';
       var s = document.createElement('select');
       s.setAttribute('aria-label','Choose whose documents to view');
+      // One handset can be a BUYER and a SELLER at once — 8 numbers here
+      // are. Showing one party at a time meant signing in and seeing only
+      // tax invoices, with the rest behind a dropdown nobody had reason to
+      // open. So "All documents" leads, and is where everyone starts.
+      var oAll = document.createElement('option');
+      oAll.value = 'all';
+      oAll.textContent = 'All documents  (' + parties.length + ' parties)';
+      s.appendChild(oAll);
       parties.forEach(function(p, i){
         var o = document.createElement('option');
         o.value = String(i);
         o.textContent = p.name + (p.kind === 'buyer' ? '  (buyer)' : '');
         s.appendChild(o);
       });
-      s.onchange = function(){ select(Number(s.value)); };
+      s.onchange = function(){ select(s.value === 'all' ? 'all' : Number(s.value)); };
       sel.innerHTML = '<span class="avatar">' + svg('#i-user',17) + '</span>'
                     + '<span class="chev">' + svg('#i-chev',16) + '</span>';
       sel.insertBefore(s, sel.firstChild);
@@ -819,10 +827,53 @@
       sg.textContent = myPhone;
       who.appendChild(sg);
     }
-    select(0);
+    select(parties.length > 1 ? 'all' : 0);
+  }
+
+  // `i` is a party index, or 'all' for every party at once. In the combined
+  // view `active` stays null: every request still names ONE party (the
+  // server resolves and audits per party), so "all" is several calls, not a
+  // looser permission.
+  // Every party's documents in one list. Each row remembers which party it
+  // came from, because a download and a bulk zip are both per party.
+  async function selectAll(){
+    viewingAll = true;
+    active = null;
+    var list = $('doclist');
+    $('count').textContent = '';
+    $('period').hidden = true; $('grab').hidden = true;
+    $('pickbtn').hidden = true; $('band').hidden = true;
+    selMode = false; sel = {};
+    list.innerHTML = '<div class="empty">Loading…</div>';
+    try {
+      var docs = [], merged = {};
+      for (var k = 0; k < parties.length; k++) {
+        var p = parties[k];
+        var r = await api('/api/portal/documents?party=' + encodeURIComponent(p.kind + ':' + p.id));
+        (r.documents || []).forEach(function(d){ d._party = p; docs.push(d); });
+        // Totals are {fy: {documents, amount, qty, bags, lastDate}} — all
+        // numeric but lastDate, so they add straight up across parties.
+        var t = r.totals || {};
+        Object.keys(t).forEach(function(fy){
+          var a = merged[fy] || (merged[fy] = { documents:0, amount:0, qty:0, bags:0, lastDate:'' });
+          ['documents','amount','qty','bags'].forEach(function(f){ a[f] += Number(t[fy][f]) || 0; });
+          if ((t[fy].lastDate || '') > a.lastDate) a.lastDate = t[fy].lastDate || '';
+        });
+      }
+      docs.sort(function(a, b){ return String(b.date || '').localeCompare(String(a.date || '')); });
+      allDocs = docs; totals = merged;
+      fyPick = ''; moPick = '';
+      buildPeriod();
+      render();
+    } catch(e){
+      if (/sign in/i.test(e.message)) return signedOut();
+      list.innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+    }
   }
 
   async function select(i){
+    if (i === 'all') return selectAll();
+    viewingAll = false;
     active = parties[i];
     if (!active) return;
     var list = $('doclist');
@@ -1026,6 +1077,9 @@
       top.appendChild(t); top.appendChild(amt);
       var sub = document.createElement('div'); sub.className = 's';
       sub.textContent = when(d.date) + (d.ano ? ' \u00b7 Auction ' + d.ano : '');
+      // In the combined view the same date can carry documents for two
+      // different parties, so each row has to say whose it is.
+      if (viewingAll && d._party) sub.textContent += ' \u00b7 ' + d._party.name;
       // LOT NUMBERS. One or two are simply named — the common case, since
       // every commission bill here covers a single lot. More than two become
       // a tap that reveals the list under the row: a tax invoice can span 57,
@@ -1125,7 +1179,11 @@
     pick.hidden = docs.length < 2;
     pick.innerHTML = svg('#i-check', 15) + '<span>Select</span>';
     pick.onclick = function(){ selMode = true; sel = {}; render(); };
-    grab.hidden = false;
+    // "Download all" bundles ONE party's period. In the combined view there
+    // is no single party to bundle, so the button is not offered rather
+    // than offered and refused — Select still works, and a selection inside
+    // one party downloads normally.
+    grab.hidden = viewingAll;
     grab.disabled = false;
     grab.innerHTML = svg('#i-dl', 15) + '<span></span>';
     grab.lastChild.textContent = docs.length === 1 ? 'Download' : 'Download all ' + docs.length;
@@ -1136,6 +1194,27 @@
   // route that 413s lands the reader on a page of raw JSON with no way back.
   // ids = null → everything in the current period. ids = [...] → just those.
   async function downloadDocs(ids, n){
+    // The bundle route builds ONE party's documents. In the combined view a
+    // selection can straddle two parties, so resolve which party is being
+    // asked for and say so plainly when it is more than one, rather than
+    // silently bundling half of it.
+    if (!active) {
+      var picked = (ids || []).map(function(id){
+        var d = allDocs.find(function(x){ return String(x.id) === String(id); });
+        return d && d._party;
+      }).filter(Boolean);
+      var kinds = {};
+      picked.forEach(function(p){ kinds[p.kind + ':' + p.id] = p; });
+      var keys = Object.keys(kinds);
+      if (keys.length === 1) {
+        active = kinds[keys[0]];            // one party after all — carry on
+      } else {
+        alert(keys.length > 1
+          ? 'That selection covers more than one party. Choose a single name at the top, then download.'
+          : 'Choose a name at the top to download a whole period.');
+        return;
+      }
+    }
     var grab = $('grab');
     grab.disabled = true;
     grab.innerHTML = svg('#i-dl', 15) + '<span>Preparing…</span>';
