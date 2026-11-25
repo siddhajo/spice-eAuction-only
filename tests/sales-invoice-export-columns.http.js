@@ -11,6 +11,13 @@
 //   [totals]  the TOTAL row still carries no distance. Adding up the
 //             kilometres of every invoice on one lorry would state a
 //             journey nobody drove.
+//   [whole]   the figure prints as WHOLE kilometres, the way the Sales
+//             Invoice screen shows it. route_distances.km is an INTEGER
+//             column, so a decimal was never data — it was the format
+//             string: Excel carried numFmt '#,##0.0' ("70.0") and the PDF
+//             fell through fmtCell's catch-all, which treats any other
+//             number as rupees and printed "70.00" in a table that already
+//             has a money column.
 const path = require('path'), fs = require('fs'), os = require('os');
 const { spawn } = require('child_process');
 
@@ -80,7 +87,11 @@ const squash = (s) => s.replace(/\s+/g, '');
   T = (await api('POST', '/api/login', { username: 'admin', password: 'admin123' })).d.token;
 
   // ── Fixture: one trade, priced lots sold to one buyer, one invoice ──
-  await api('PUT', '/api/company-settings', { settings: { gunny_rate: '150', br1: 'BODI' } });
+  // A dispatch PIN and a saved route, so DIST (KM) resolves to a real
+  // figure. Without this the column is blank and [whole] proves nothing.
+  await api('PUT', '/api/company-settings',
+    { settings: { gunny_rate: '150', br1: 'BODI', tally_dispatch_pin: '685553' } });
+  await api('PUT', '/api/route-distances', { from_pin: '685553', to_pin: '625516', km: 70 });
   const A = (await api('POST', '/api/auctions', { ano: '24', date: '2026-11-10', crop_type: 'ISP' })).d.id;
   await api('POST', `/api/auctions/${A}/allocations`, { allocations: [{ branch: 'BODI', from_no: 1, to_no: 40 }] });
   await api('POST', '/api/buyers',
@@ -161,6 +172,35 @@ const squash = (s) => s.replace(/\s+/g, '');
   const afterTotal = txt.slice(txt.indexOf('TOTAL'));
   check('the PDF TOTAL row carries no extra distance figure',
         afterTotal.indexOf('DIST(KM)') === -1, afterTotal.slice(0, 120));
+
+  // ── [whole] ─────────────────────────────────────────────────────
+  console.log('\n[whole] the distance prints as whole kilometres');
+  // The saved route is 70 km. Anything with a decimal point attached to it
+  // is the bug.
+  check('the PDF shows the distance at all (else this proves nothing)',
+        /\b70\b/.test(txt.replace(/([A-Z])(\d)/g, '$1 $2')) || txt.indexOf('70') > -1,
+        txt.slice(txt.indexOf('DIST(KM)'), txt.indexOf('DIST(KM)') + 120));
+  check('…as "70", not "70.00" or "70.0"',
+        txt.indexOf('70.00') === -1 && txt.indexOf('70.0') === -1,
+        txt.slice(0, 400));
+
+  // In the spreadsheet the VALUE stays a number; what must not carry a
+  // forced decimal is the display format.
+  let distCell = null;
+  const distIdx = headers.indexOf('DIST (KM)');
+  ws.eachRow((row) => {
+    const c = row.getCell(distIdx + 1);
+    if (c && typeof c.value === 'number' && c.value === 70) distCell = c;
+  });
+  check('the spreadsheet carries the distance as a number', !!distCell,
+        { distIdx, found: distCell && distCell.value });
+  if (distCell) {
+    const nf = String(distCell.numFmt || '');
+    check('…and its number format forces no decimal place',
+          nf.indexOf('0.0') === -1 && nf.indexOf('0.00') === -1, { numFmt: nf });
+    check('…while still being a real number, not text',
+          typeof distCell.value === 'number' && distCell.value === 70, distCell.value);
+  }
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   cleanup();

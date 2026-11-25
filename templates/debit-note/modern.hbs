@@ -12,7 +12,13 @@
   .dn-page + .dn-page { page-break-before: always; }
   .band { background: var(--accent); color: #fff; padding: 14pt 16pt; border-radius: 6pt 6pt 0 0;
     display: flex; align-items: center; gap: 12pt; }
-  .band img { width: 46pt; height: 46pt; object-fit: contain; background: #fff; border-radius: 4pt; padding: 2pt; }
+  /* The data URI is emitted once per rendered document, not once per note —
+     see the note in letterhead.hbs. `content: url(...)` keeps this a REPLACED
+     element, so these are the same properties the <img> carried and it
+     rasterises identically. */
+  .band .logo { width: 46pt; height: 46pt; object-fit: contain; background: #fff; border-radius: 4pt; padding: 2pt; }
+{{#if co.logoDataUri}}  .band .logo { content: url("{{{co.logoDataUri}}}"); }
+{{/if}}
   .band .who { flex: 1; min-width: 0; }
   .band .co { font-size: 13pt; font-weight: bold; letter-spacing: .3pt; line-height: 1.15; overflow-wrap: anywhere; }
   .band .sub { font-size: 7.5pt; opacity: .9; }
@@ -56,7 +62,7 @@
 </style>{{/if}}
 <div class="dn-page">
   <div class="band">
-    {{#if co.logoDataUri}}<img src="{{co.logoDataUri}}">{{/if}}
+    {{#if co.logoDataUri}}<div class="logo"></div>{{/if}}
     <div class="who">
       <div class="co">{{co.name}}</div>
       <div class="sub">{{co.address1}}{{#if co.place}}, {{co.place}}{{/if}} · {{co.stateName}}</div>

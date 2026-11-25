@@ -36,6 +36,9 @@ const DEFAULTS = {
   'commission-bill': 'classic',
   // Debit note has only the Letterhead HTML layout so far, so it defaults to it.
   'debit-note': 'letterhead',
+  // Bill Statement (RD purchase, one page per dealer) ships only the
+  // Letterhead layout, so that is its default too.
+  'bill-statement': 'letterhead',
 };
 
 // Maps a document type to the cfg setting key that selects its template.
@@ -45,6 +48,7 @@ const SETTING_KEY = {
   'agri-bill': 'agri_bill_template',
   'commission-bill': 'commission_bill_template',
   'debit-note': 'debit_note_template',
+  'bill-statement': 'bill_statement_template',
 };
 
 const _cache = new Map(); // "docType/key" → compiled Handlebars template

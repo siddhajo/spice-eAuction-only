@@ -15837,6 +15837,171 @@ app.post('/api/documents/pdf-zip', requireView, async (req, res) => {
 // the plain number.
 //
 // Body: { ids: [purchase row ids], template?, invoiceNo? }
+// ── Per-purchase commission context (shared) ─────────────────────────
+// Resolves ONE purchase row into the things every commission-style document
+// about it needs: the trade it belongs to, the dealer's lots in that trade,
+// the seller party block, and the per-lot economics.
+//
+// Extracted so the Payment Voucher (one page per LOT) and the Bill Statement
+// (one page per SELLER, a row per lot) are built from the SAME numbers. They
+// are two layouts of one calculation; computing them twice is how the two
+// documents start disagreeing about what a dealer is owed.
+function purchaseCommissionContext(db, cfg, p, invoOpts) {
+  const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  // Lot scope mirrors buildPurchaseInvoice: the dealer's lots in this
+  // trade, narrowed to the ONE lot when the row was raised lot-wise.
+  const lotNo = String(p.lot_no == null ? '' : p.lot_no).trim();
+  const lotsForAuction = (aid) => {
+    const where = [
+      'auction_id = ?',
+      'UPPER(TRIM(name)) = UPPER(TRIM(?))',
+      '(amount > 0 OR puramt > 0)',
+      '(reserved IS NULL OR reserved = 0) AND COALESCE(godown,0) = 0',
+      hasValidGstinSql('cr'),
+    ];
+    const args = [aid, p.name];
+    // trader_id says WHICH dealer when two are registered under one name.
+    if (p.trader_id != null) { where.push('trader_id = ?'); args.push(p.trader_id); }
+    if (lotNo) {
+      // lot_id is exact; lot_no survives a delete + re-import of the trade.
+      where.push(`(${p.lot_id != null ? 'id = ? OR ' : ''}TRIM(CAST(lot_no AS TEXT)) = TRIM(CAST(? AS TEXT)))`);
+      if (p.lot_id != null) args.push(p.lot_id);
+      args.push(lotNo);
+    }
+    return db.all(
+      `SELECT * FROM lots WHERE ${where.join(' AND ')}
+        ORDER BY CAST(lot_no AS INTEGER), lot_no`, args);
+  };
+  // A stored auction_id goes stale when the trade is deleted and
+  // re-imported under a new id, so fall back to every auction carrying
+  // this trade number and keep the first that actually has lots.
+  const auctionCands = [];
+  if (p.auction_id) {
+    const a = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [p.auction_id]);
+    if (a) auctionCands.push(a);
+  }
+  if (p.ano != null && String(p.ano).trim() !== '') {
+    for (const a of db.all(
+      'SELECT id, ano, date FROM auctions WHERE CAST(ano AS TEXT) = CAST(? AS TEXT) ORDER BY id',
+      [String(p.ano)]
+    )) if (!auctionCands.some(c => c.id === a.id)) auctionCands.push(a);
+  }
+  let auction = auctionCands[0] || null;
+  let lots = [];
+  for (const a of auctionCands) {
+    const ls = lotsForAuction(a.id);
+    if (ls.length) { auction = a; lots = ls; break; }
+  }
+
+  const first = lots[0] || {};
+  // The dealer's registration prints as GSTIN (the planter memorandum
+  // prints AADHAR / CR instead) — strip any stored "GSTIN."/"CR." label so
+  // the template doesn't double it.
+  const gstinRaw = String(p.gstin || first.cr || '').trim();
+  const gstin = gstinRaw.replace(/^\s*(GSTIN|CR)[.\s]+/i, '');
+  const seller = {
+    name:    p.name || first.name || '',
+    address: p.add_line || first.padd || '',
+    place:   p.place    || first.ppla || '',
+    pin:     first.ppin || '',
+    state:   p.state    || first.pstate || '',
+    st_code: first.pst_code || gstin.slice(0, 2),
+    // `cr` stays blank for a dealer: the GSTIN line carries the id.
+    cr:      '',
+    gstin,
+    pan:     first.pan || '',
+    aadhar:  '',
+  };
+  // Phone + bank account (shown when flag_commission_bank is on) — trader
+  // master first, then the denormalised lot value; account prefers the
+  // trader's default bank over the legacy single-account column.
+  try {
+    let t = null;
+    if (p.trader_id) t = db.get('SELECT id, tel, acctnum, pan FROM traders WHERE id = ? LIMIT 1', [p.trader_id]);
+    if (!t && first.trader_id) t = db.get('SELECT id, tel, acctnum, pan FROM traders WHERE id = ? LIMIT 1', [first.trader_id]);
+    if (!t) t = db.get('SELECT id, tel, acctnum, pan FROM traders WHERE UPPER(TRIM(name)) = UPPER(TRIM(?)) LIMIT 1', [seller.name]);
+    seller.phone = (t && t.tel) || first.tel || '';
+    if (!seller.pan && t && t.pan) seller.pan = t.pan;
+    let acct = (t && t.acctnum) || '';
+    if (t && t.id) {
+      const tb = db.get('SELECT acctnum FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id LIMIT 1', [t.id]);
+      if (tb && tb.acctnum) acct = tb.acctnum;
+    }
+    seller.account = acct;
+  } catch (_) { seller.phone = first.tel || ''; seller.account = ''; }
+
+  const perLot = commissionPagesFromLots(db, cfg, lots, invoOpts);
+  // No live lots (deleted after generation, or an imported row with no
+  // lot lineage). Purchases carry no per-lot snapshot, so emit ONE
+  // consolidated page from the stored totals rather than nothing —
+  // commission/GST are unknown there and print as zero.
+  if (!perLot.length) {
+    perLot.push({
+      line: { lot: '—', qty: p.qty, bags: 0, rate: 0, cardamomCost: p.amount,
+              refundQty: 0, refundRate: 0, refundAmount: 0 },
+      purchaser: { ...EMPTY_COMMISSION_PURCHASER },
+      commission: 0, cgst: 0, sgst: 0, igst: 0, interState: false,
+      nett: round2(p.amount),
+      crpt: '',
+    });
+  }
+
+  let docDate = '';
+  if (auction && auction.date) docDate = formatDateForDisplay(auction.date, dateFmt);
+  if (!docDate && p.date) docDate = formatDateForDisplay(p.date, dateFmt);
+  return { auction, lots, first, seller, perLot, docDate };
+}
+
+// ── Bill Statement (RD purchase) ─────────────────────────────────────
+// One A4 page per ticked purchase row: the dealer, a row per lot, and the
+// payment closed off with total − TDS = net. Offered beside the purchase
+// invoice on the Purchases screen's Print Selected.
+//
+// Nothing is generated, numbered or stored — like the Payment Voucher it is
+// a statement OF documents that already exist, so printing it twice changes
+// nothing. It reads the same purchaseCommissionContext the voucher does, so
+// the two can never disagree about what a dealer is owed.
+app.post('/api/purchases/bill-statement-bulk', requireView, async (req, res) => {
+  try {
+    const db = getDb();
+    const cfg = getSettingsFlat(db);
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'No purchase IDs provided' });
+
+    const invoOpts = commissionInvoiceNoOpts(db, cfg, req);
+    const placeholders = ids.map(() => '?').join(',');
+    const stored = db.all(`SELECT * FROM purchases WHERE id IN (${placeholders})`, ids);
+    if (!stored.length) return res.status(404).json({ error: 'No matching purchase invoices found' });
+    const byId = new Map(stored.map(r => [r.id, r]));
+    const ordered = ids.map(id => byId.get(Number(id))).filter(Boolean);
+
+    const statements = [];
+    for (const p of ordered) {
+      const { auction, seller, perLot, docDate } =
+        purchaseCommissionContext(db, cfg, p, invoOpts);
+      statements.push({
+        seller,
+        auction: { ano: auction ? auction.ano : (p.ano || ''), date: docDate },
+        perLot,
+        // The TDS the office actually deducted on this purchase, not a
+        // recomputation — see the renderer.
+        tds: Number(p.tds) || 0,
+      });
+    }
+
+    const pdf = await require('./pdf/render-bill-statement-html')
+      .generateBillStatementPDF(statements, cfg);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+      `inline; filename="${exportFileName('BillStatement', anoLabelForRows(ordered), statements.length)}.pdf"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error('Bill statement PDF error:', e);
+    res.status(500).json({ error: 'Bill statement PDF generation failed: ' + e.message });
+  }
+});
+
 app.post('/api/purchases/commission-bulk', requireView, async (req, res) => {
   try {
     const db = getDb();
@@ -15857,107 +16022,8 @@ app.post('/api/purchases/commission-bulk', requireView, async (req, res) => {
     const payloads = [];
 
     for (const p of ordered) {
-      // Lot scope mirrors buildPurchaseInvoice: the dealer's lots in this
-      // trade, narrowed to the ONE lot when the row was raised lot-wise.
-      const lotNo = String(p.lot_no == null ? '' : p.lot_no).trim();
-      const lotsForAuction = (aid) => {
-        const where = [
-          'auction_id = ?',
-          'UPPER(TRIM(name)) = UPPER(TRIM(?))',
-          '(amount > 0 OR puramt > 0)',
-          '(reserved IS NULL OR reserved = 0) AND COALESCE(godown,0) = 0',
-          hasValidGstinSql('cr'),
-        ];
-        const args = [aid, p.name];
-        // trader_id says WHICH dealer when two are registered under one name.
-        if (p.trader_id != null) { where.push('trader_id = ?'); args.push(p.trader_id); }
-        if (lotNo) {
-          // lot_id is exact; lot_no survives a delete + re-import of the trade.
-          where.push(`(${p.lot_id != null ? 'id = ? OR ' : ''}TRIM(CAST(lot_no AS TEXT)) = TRIM(CAST(? AS TEXT)))`);
-          if (p.lot_id != null) args.push(p.lot_id);
-          args.push(lotNo);
-        }
-        return db.all(
-          `SELECT * FROM lots WHERE ${where.join(' AND ')}
-            ORDER BY CAST(lot_no AS INTEGER), lot_no`, args);
-      };
-      // A stored auction_id goes stale when the trade is deleted and
-      // re-imported under a new id, so fall back to every auction carrying
-      // this trade number and keep the first that actually has lots.
-      const auctionCands = [];
-      if (p.auction_id) {
-        const a = db.get('SELECT id, ano, date FROM auctions WHERE id = ?', [p.auction_id]);
-        if (a) auctionCands.push(a);
-      }
-      if (p.ano != null && String(p.ano).trim() !== '') {
-        for (const a of db.all(
-          'SELECT id, ano, date FROM auctions WHERE CAST(ano AS TEXT) = CAST(? AS TEXT) ORDER BY id',
-          [String(p.ano)]
-        )) if (!auctionCands.some(c => c.id === a.id)) auctionCands.push(a);
-      }
-      let auction = auctionCands[0] || null;
-      let lots = [];
-      for (const a of auctionCands) {
-        const ls = lotsForAuction(a.id);
-        if (ls.length) { auction = a; lots = ls; break; }
-      }
-
-      const first = lots[0] || {};
-      // The dealer's registration prints as GSTIN (the planter memorandum
-      // prints AADHAR / CR instead) — strip any stored "GSTIN."/"CR." label so
-      // the template doesn't double it.
-      const gstinRaw = String(p.gstin || first.cr || '').trim();
-      const gstin = gstinRaw.replace(/^\s*(GSTIN|CR)[.\s]+/i, '');
-      const seller = {
-        name:    p.name || first.name || '',
-        address: p.add_line || first.padd || '',
-        place:   p.place    || first.ppla || '',
-        pin:     first.ppin || '',
-        state:   p.state    || first.pstate || '',
-        st_code: first.pst_code || gstin.slice(0, 2),
-        // `cr` stays blank for a dealer: the GSTIN line carries the id.
-        cr:      '',
-        gstin,
-        pan:     first.pan || '',
-        aadhar:  '',
-      };
-      // Phone + bank account (shown when flag_commission_bank is on) — trader
-      // master first, then the denormalised lot value; account prefers the
-      // trader's default bank over the legacy single-account column.
-      try {
-        let t = null;
-        if (p.trader_id) t = db.get('SELECT id, tel, acctnum, pan FROM traders WHERE id = ? LIMIT 1', [p.trader_id]);
-        if (!t && first.trader_id) t = db.get('SELECT id, tel, acctnum, pan FROM traders WHERE id = ? LIMIT 1', [first.trader_id]);
-        if (!t) t = db.get('SELECT id, tel, acctnum, pan FROM traders WHERE UPPER(TRIM(name)) = UPPER(TRIM(?)) LIMIT 1', [seller.name]);
-        seller.phone = (t && t.tel) || first.tel || '';
-        if (!seller.pan && t && t.pan) seller.pan = t.pan;
-        let acct = (t && t.acctnum) || '';
-        if (t && t.id) {
-          const tb = db.get('SELECT acctnum FROM trader_banks WHERE trader_id = ? ORDER BY is_default DESC, id LIMIT 1', [t.id]);
-          if (tb && tb.acctnum) acct = tb.acctnum;
-        }
-        seller.account = acct;
-      } catch (_) { seller.phone = first.tel || ''; seller.account = ''; }
-
-      const perLot = commissionPagesFromLots(db, cfg, lots, invoOpts);
-      // No live lots (deleted after generation, or an imported row with no
-      // lot lineage). Purchases carry no per-lot snapshot, so emit ONE
-      // consolidated page from the stored totals rather than nothing —
-      // commission/GST are unknown there and print as zero.
-      if (!perLot.length) {
-        perLot.push({
-          line: { lot: '—', qty: p.qty, bags: 0, rate: 0, cardamomCost: p.amount,
-                  refundQty: 0, refundRate: 0, refundAmount: 0 },
-          purchaser: { ...EMPTY_COMMISSION_PURCHASER },
-          commission: 0, cgst: 0, sgst: 0, igst: 0, interState: false,
-          nett: round2(p.amount),
-          crpt: '',
-        });
-      }
-
-      let docDate = '';
-      if (auction && auction.date) docDate = formatDateForDisplay(auction.date, dateFmt);
-      if (!docDate && p.date) docDate = formatDateForDisplay(p.date, dateFmt);
+      const { auction, first, seller, perLot, docDate } =
+        purchaseCommissionContext(db, cfg, p, invoOpts);
 
       const invoNo = String(p.invo == null ? '' : p.invo).trim();
       perLot.forEach((pl, i) => {

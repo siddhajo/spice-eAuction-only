@@ -41322,12 +41322,65 @@ async function downloadPurchaseVoucher(id){
   await _purchaseVoucherPdf([Number(id)].filter(Boolean));
 }
 
+// ── Which document does "Print Selected" print? ──────────────────────
+// Two documents are made from the same ticked rows:
+//   • Purchase Invoice — the tax document, one per row, as before.
+//   • Bill Statement   — one page per DEALER: a line per lot and the
+//                        payment closed off (total − TDS = net).
+// Asked here rather than added as a fourth toolbar button: both act on the
+// same selection and the operator is already reaching for Print.
+// Returns 'invoice' | 'statement', or null when cancelled.
+function pickPurchasePrintDoc(){
+  return new Promise(resolve=>{
+    const bg=document.createElement('div');
+    bg.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+    const row=(val,title,sub,checked)=>`<label style="display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border:1px solid var(--border);border-radius:10px;margin-top:8px;cursor:pointer">
+      <input type="radio" name="purdoc" value="${val}" ${checked?'checked':''} style="margin-top:3px">
+      <span><b>${title}</b><br><span style="font-size:12px;color:var(--text3)">${sub}</span></span></label>`;
+    // A modal surface does NOT flip in dark mode, so --card/--text are the
+    // right tokens here (the --spice-* ones would go dark on a light card).
+    bg.innerHTML=`<div style="background:var(--card,#fff);color:var(--text,#111);border-radius:14px;padding:22px;max-width:470px;width:92%;box-shadow:0 20px 60px -15px rgba(0,0,0,.4)">
+      <strong style="font-size:16px">What would you like to print?</strong>
+      <div style="margin-top:6px;font-size:13px;color:var(--text3)">Both are built from the rows you ticked.</div>
+      ${row('invoice','Purchase Invoice','The tax document — one invoice per ticked row.',true)}
+      ${row('statement','Bill Statement','One page per seller: every lot with its amount, refund, commission and GST, then total less TDS.',false)}
+      <div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn" data-x="0">Cancel</button>
+        <button class="btn btn-g" data-x="1">Print</button>
+      </div></div>`;
+    document.body.appendChild(bg);
+    const done=v=>{bg.remove();resolve(v)};
+    bg.addEventListener('click',e=>{if(e.target===bg)done(null)});
+    bg.querySelector('[data-x="0"]').onclick=()=>done(null);
+    bg.querySelector('[data-x="1"]').onclick=()=>{
+      const sel=bg.querySelector('input[name="purdoc"]:checked');
+      done(sel?sel.value:'invoice');
+    };
+  });
+}
+
 async function printSelectedPurchases(){
   const body=document.getElementById('purchases-list');
   if(!body){alert('No purchases list found');return}
   const checked=Array.from(body.querySelectorAll('.pur-select-cb:checked'));
   if(!checked.length){alert('Tick one or more purchase invoices first');return}
   const ids=checked.map(cb=>Number(cb.value)).filter(Boolean);
+
+  const doc = await pickPurchasePrintDoc();
+  if (doc === null) return;                    // operator cancelled
+
+  if (doc === 'statement') {
+    // Nothing is generated or numbered — the statement reports purchases
+    // that already exist, so printing it twice changes nothing.
+    await fetchPdfWithOverlay(
+      `Building bill statement for ${ids.length} seller(s)…`,
+      '/api/purchases/bill-statement-bulk',
+      `BillStatement_${ids.length}.pdf`,
+      { ids }
+    );
+    return;
+  }
+
   // Offer a layout choice when more than one purchase-invoice template exists.
   const template = await pickTemplate('purchase-invoice', 'Choose purchase invoice format');
   if (template === null) return; // operator cancelled

@@ -22,8 +22,17 @@
   /* Letterhead — logo left, company block centred with matching gutters. */
   .head { position: relative; text-align: center; padding: 6pt 8pt; }
   .head.has-logo { padding-left: 74pt; padding-right: 74pt; min-height: 64pt; }
+  /* The logo comes from CSS, not from a per-page <img>, so the data URI is
+     emitted ONCE per rendered document instead of once per note. At 25 notes
+     a chunk that was ~4 MB of repeated base64 in a single setContent — enough
+     to hang a render when the browser is busy with other print jobs.
+     `content: url(...)` (rather than background-image) keeps this a REPLACED
+     element, so `object-fit: contain` applies and Chromium rasterises it down
+     exactly the way it did the <img> — same pixels, one copy of the bytes. */
   .head .logo { position: absolute; left: 8pt; top: 50%; transform: translateY(-50%);
     width: 60pt; height: 60pt; object-fit: contain; }
+{{#if co.logoDataUri}}  .head .logo { content: url("{{{co.logoDataUri}}}"); }
+{{/if}}
   .head .co { font-weight: bold; font-size: 13pt; letter-spacing: .3pt; }
   .head .ln { font-size: 7.5pt; }
   /* Statutory-ID rows: centred, pipe-separated, each item unbreakable. */
@@ -61,7 +70,7 @@
 <div class="doc">
   <!-- Letterhead -->
   <div class="head{{#if co.logoDataUri}} has-logo{{/if}}">
-    {{#if co.logoDataUri}}<img class="logo" src="{{co.logoDataUri}}">{{/if}}
+    {{#if co.logoDataUri}}<div class="logo"></div>{{/if}}
     <div class="co">{{co.name}}</div>
     {{#if co.idValue}}<div class="ln strong">{{co.idLabel}}: {{co.idValue}}</div>{{/if}}
     <div class="ln">{{co.address1}}{{#if co.address2}}, {{co.address2}}{{/if}}</div>
