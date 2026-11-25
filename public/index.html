@@ -6386,7 +6386,7 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <span id="pa-flagwarn" style="display:none;font-size:12px;font-weight:700;color:#8B6508;background:var(--spice-turmeric-lt,#fef3c7);border:1px solid #e0c068;border-radius:6px;padding:3px 9px">Portal is switched OFF &mdash; Settings &rarr; Flags</span>
           <button class="btn" style="margin-left:auto;height:36px;padding:0 14px" onclick="loadPortalAccess()">&#8635; Refresh</button>
         </div>
-        <p style="margin:8px 0 0;font-size:13px;color:var(--text3);max-width:70ch">
+        <p style="margin:8px 0 0;font-size:13px;color:var(--text3);max-width:70ch;max-height:22vh;overflow:auto">
           A seller or buyer signs in at <code>/my</code> with their phone number and sees only their
           own documents. A party is enrolled automatically the moment a document is raised for them;
           the list below is every grant that is currently live.
@@ -6404,9 +6404,9 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
         </p>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="paSeed(false)">Check what would change</button>
-          <button class="btn btn-g" id="pa-seed-go" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="paSeed(true)">Enrol them</button>
+          <button class="btn btn-g" id="pa-seed-go" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="paConfirmSeed()">Enrol them&hellip;</button>
         </div>
-        <div id="pa-seed-out" style="margin-top:10px;font-size:13px"></div>
+        <div id="pa-seed-out" style="margin-top:10px;font-size:13px;max-height:34vh;overflow:auto"></div>
       </div>
 
       <div class="card">
@@ -6417,9 +6417,12 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
                  oninput="paSearchDebounced(this.value)"
                  style="margin-left:auto;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;min-width:240px">
         </div>
-        <div style="overflow:auto">
-          <table class="data" id="pa-table">
-            <thead><tr>
+        <!-- The grant list runs to four figures on a live install, so it
+             scrolls inside the card with its header pinned, rather than
+             turning the page into one long column. -->
+        <div style="overflow:auto;max-height:min(58vh,560px);border:1px solid var(--spice-line);border-radius:8px">
+          <table class="data" id="pa-table" style="margin:0">
+            <thead><tr style="position:sticky;top:0;z-index:1;background:var(--spice-cream,#f5f3ee)">
               <th>Party</th><th>Side</th><th>Signs in with</th><th>Shared</th>
               <th>Granted by</th><th>Added</th><th></th>
             </tr></thead>
@@ -22095,6 +22098,8 @@ async function paRebind(id){
   } catch (e) { alert(e.message || 'Could not change the number'); }
 }
 
+let _paSeedPreview = null;
+
 async function paSeed(commit){
   const out = document.getElementById('pa-seed-out');
   const go  = document.getElementById('pa-seed-go');
@@ -22106,18 +22111,72 @@ async function paSeed(commit){
   if (commit) {
     out.innerHTML = '<div style="color:var(--green);font-weight:600">Enrolled ' + (d.written || 0) + ' party(ies).</div>';
     if (go) go.style.display = 'none';
+    _paSeedPreview = null;
     loadPortalAccess();
     return;
   }
+  _paSeedPreview = d;
   out.innerHTML =
-      line('sellers hold a document and have a number', d.sellers || 0)
+      '<div style="font-weight:700;color:' + (d.willChange ? 'var(--green)' : 'var(--text3)') + '">'
+    + (d.willChange ? d.willChange + ' party(ies) would gain access.' : 'Nothing to do — everyone who holds a document can already sign in.')
+    + '</div>'
+    + line('sellers hold a document and have a number', d.sellers || 0)
     + line('buyers hold an invoice and have a number', d.buyers || 0)
     + line('distinct handsets', d.distinctPhones || 0)
     + '<div style="margin-top:6px;color:#8B6508"><strong>' + (d.sharedPhones || 0)
     + '</strong> of those open MORE THAN ONE party (' + (d.sharedParties || 0)
     + ' parties in all) — anyone signing in on such a number sees every party it holds.</div>'
     + '<div style="margin-top:6px;color:var(--text3)">Nothing has been written.</div>';
-  if (go) go.style.display = 'inline-flex';
+  if (go) go.style.display = d.willChange ? 'inline-flex' : 'none';
+}
+
+// "Enrol them" shows WHO, then asks. Granting read access to a party's whole
+// document history is not something to confirm with a count — the admin has
+// to be able to see a name they did not expect before any of it is real.
+function paConfirmSeed(){
+  const d = _paSeedPreview;
+  if (!d) { paSeed(false); return; }
+  const list = d.changes || [];
+  const bg = document.createElement('div');
+  bg.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:18px';
+  const rows = list.map(c =>
+      '<tr><td style="padding:4px 8px">' + esc(c.name || '(unnamed)') + '</td>'
+    + '<td style="padding:4px 8px;color:var(--text3)">' + (c.kind === 'buyer' ? 'Buyer' : 'Seller') + '</td>'
+    + '<td style="padding:4px 8px;font-family:monospace">' + esc(c.phone) + '</td>'
+    + '<td style="padding:4px 8px">' + (c.action === 'move'
+        ? '<span style="font-size:10px;font-weight:700;color:#8B6508;background:var(--spice-turmeric-lt,#fef3c7);border-radius:8px;padding:1px 7px">MOVES</span>'
+        : '<span style="font-size:10px;font-weight:700;color:var(--green);background:var(--green-bg);border-radius:8px;padding:1px 7px">NEW</span>') + '</td></tr>').join('');
+  const hidden = (d.willChange || 0) - list.length;
+  // A modal surface does NOT flip in dark mode — --card/--text are right here.
+  bg.innerHTML =
+      '<div style="background:var(--card,#fff);color:var(--text,#111);border-radius:14px;padding:20px;'
+    + 'max-width:640px;width:100%;max-height:86vh;display:flex;flex-direction:column;'
+    + 'box-shadow:0 20px 60px -15px rgba(0,0,0,.4)">'
+    + '<strong style="font-size:16px">Give ' + (d.willChange || 0) + ' party(ies) access?</strong>'
+    + '<div style="margin-top:6px;font-size:13px;color:var(--text3)">'
+    + 'Each can then sign in at /my with the number shown and read that party&rsquo;s whole '
+    + 'document history. <b>MOVES</b> means the grant shifts off a number the master no longer holds.'
+    + '</div>'
+    + '<div style="flex:1;overflow:auto;margin-top:12px;border:1px solid var(--border);border-radius:8px">'
+    + '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+    + '<thead><tr style="position:sticky;top:0;background:var(--spice-cream,#f5f3ee)">'
+    + '<th style="text-align:left;padding:6px 8px">Party</th>'
+    + '<th style="text-align:left;padding:6px 8px">Side</th>'
+    + '<th style="text-align:left;padding:6px 8px">Signs in with</th>'
+    + '<th style="text-align:left;padding:6px 8px"></th></tr></thead>'
+    + '<tbody>' + (rows || '<tr><td colspan="4" style="padding:14px;text-align:center;color:var(--text3)">Nothing to enrol.</td></tr>') + '</tbody>'
+    + '</table></div>'
+    + (hidden > 0 ? '<div style="margin-top:8px;font-size:12px;color:var(--text3)">&hellip;and ' + hidden
+        + ' more not listed here. All ' + d.willChange + ' will be enrolled.</div>' : '')
+    + '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">'
+    + '<button class="btn" data-x="0">Cancel</button>'
+    + '<button class="btn btn-g" data-x="1"' + (d.willChange ? '' : ' disabled') + '>Enrol them</button>'
+    + '</div></div>';
+  document.body.appendChild(bg);
+  const close = () => bg.remove();
+  bg.addEventListener('click', e => { if (e.target === bg) close(); });
+  bg.querySelector('[data-x="0"]').onclick = close;
+  bg.querySelector('[data-x="1"]').onclick = () => { close(); paSeed(true); };
 }
 
 async function loadUsers(){

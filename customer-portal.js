@@ -169,6 +169,11 @@ function autoEnrol(db, partyKind, partyId, rawPhone, opts) {
         WHERE party_kind = ? AND party_id = ? AND status = 'active'`,
       [partyKind, id]);
 
+    // `dryRun` answers the same question without writing, so a preview and
+    // the run itself cannot disagree about what will happen. Returns the
+    // ACTION ('grant' | 'move') instead of true.
+    const dry = !!opts.dryRun;
+
     // Already reachable on this number.
     if (live.some(l => String(l.phone_key) === pkey)) return false;
 
@@ -192,6 +197,8 @@ function autoEnrol(db, partyKind, partyId, rawPhone, opts) {
     // authority for a link this code owns, so follow it and retire the
     // stale row. Retired, not deleted: who could once see what is exactly
     // the question asked after a dispute.
+    if (dry) return live.length ? 'move' : 'grant';
+
     for (const l of live) {
       db.run(`UPDATE party_links
                  SET status = 'revoked', revoked_at = datetime('now','localtime'),
@@ -918,8 +925,19 @@ function mountPortal(app, deps) {
     const where = ["l.status = 'active'"];
     const args = [];
     if (q) {
-      where.push(`(l.phone_key LIKE ? OR UPPER(COALESCE(t.name, b.buyer1, b.buyer, '')) LIKE UPPER(?))`);
-      args.push('%' + q.replace(/\D/g, '') + '%', '%' + q + '%');
+      // Build the clause from the parts that actually APPLY. Searching a
+      // name used to strip to no digits, leaving `phone_key LIKE '%%'` —
+      // true for every row — so the OR matched everything and the box
+      // looked broken. A number-only term likewise should not be matched
+      // against names.
+      const digits = q.replace(/\D/g, '');
+      const ors = [];
+      if (digits) { ors.push('l.phone_key LIKE ?'); args.push('%' + digits + '%'); }
+      if (/[^\d\s]/.test(q)) {
+        ors.push(`UPPER(COALESCE(t.name, b.buyer1, b.buyer, '')) LIKE UPPER(?)`);
+        args.push('%' + q + '%');
+      }
+      if (ors.length) where.push('(' + ors.join(' OR ') + ')');
     }
     // The master's CURRENT number, cleaned the same way a link key is, so
     // the admin screen can show a grant that no longer matches the master —
@@ -1000,12 +1018,12 @@ function mountPortal(app, deps) {
     // deliberately absent — a seller is not shown those, so enrolling on one
     // alone used to let somebody sign in to an empty screen.
     const sellers = db.all(
-      `SELECT t.id, ${CLEAN('t.tel')} AS pkey FROM traders t
+      `SELECT t.id, t.name AS pname, ${CLEAN('t.tel')} AS pkey FROM traders t
         WHERE LENGTH(${CLEAN('t.tel')}) = 10
           AND EXISTS (SELECT 1 FROM bills b WHERE b.trader_id = t.id
                       UNION ALL SELECT 1 FROM purchases p WHERE p.trader_id = t.id)`);
     const buyers = db.all(
-      `SELECT b.id, ${CLEAN('b.tel')} AS pkey FROM buyers b
+      `SELECT b.id, COALESCE(b.buyer1, b.buyer) AS pname, ${CLEAN('b.tel')} AS pkey FROM buyers b
         WHERE LENGTH(${CLEAN('b.tel')}) = 10
           AND EXISTS (SELECT 1 FROM invoices i WHERE i.buyer_id = b.id AND COALESCE(i.is_proforma,0) = 0)`);
 
@@ -1015,6 +1033,26 @@ function mountPortal(app, deps) {
     buyers.forEach(r => note(r.pkey));
     let shared = 0, sharedParties = 0;
     for (const n of phones.values()) if (n > 1) { shared += 1; sharedParties += n; }
+
+    // Which parties the run would actually TOUCH, decided by autoEnrol
+    // itself in dry-run mode — the preview and the run cannot disagree
+    // about what is about to happen because they ask the same function.
+    // Capped: the admin is confirming a shape, not auditing 1,300 rows,
+    // and the screen says how many are not shown.
+    const PREVIEW_CAP = 400;
+    const changes = [];
+    let willChange = 0;
+    for (const [kind, list] of [['seller', sellers], ['buyer', buyers]]) {
+      for (const r of list) {
+        const act = autoEnrol(db, kind, r.id, r.pkey, { dryRun: true });
+        if (!act) continue;
+        willChange += 1;
+        if (changes.length < PREVIEW_CAP) {
+          changes.push({ kind, id: r.id, name: r.pname || '', phone: r.pkey, action: act });
+        }
+      }
+    }
+    changes.sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
     let written = 0;
     if (commit) {
@@ -1030,6 +1068,9 @@ function mountPortal(app, deps) {
 
     res.json({
       committed: commit,
+      willChange,
+      changes,
+      changesShown: changes.length,
       sellers: sellers.length,
       buyers: buyers.length,
       distinctPhones: phones.size,

@@ -14,6 +14,12 @@
 //             marked PINNED (autoEnrol will not move it) and STALE
 //   [seed]    checking reports and writes NOTHING; enrolling writes
 //   [revoke]  a grant can be withdrawn, and the list follows
+//   [search]  searching a NAME narrows the list. It used to strip to no
+//             digits, leaving `phone_key LIKE '%%'` — true for every row —
+//             so the OR matched everything and the box looked broken
+//   [scroll]  the list scrolls inside its card, header pinned, instead of
+//             making the page one long column
+//   [confirm] "Enrol them" names the parties and writes only on confirm
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -170,7 +176,11 @@ const cleanup = () => {
   check('the check reports counts', /sellers hold a document/.test(dry.out), dry.out);
   check('…warns about shared handsets', /MORE THAN ONE party/.test(dry.out), dry.out);
   check('…says plainly that nothing was written', /Nothing has been written/.test(dry.out), dry.out);
-  check('…and only THEN offers to enrol', dry.goShown, dry);
+  // Everyone in this fixture is already enrolled at this point, so there is
+  // nothing to offer — and the button must NOT appear, or it would promise
+  // work it cannot do. The opposite case is proved in [confirm] below.
+  check('…says plainly there is nothing to do', /Nothing to do/.test(dry.out), dry.out);
+  check('…and does not offer a button that would do nothing', !dry.goShown, dry);
   const afterDry = (await api('GET', '/api/portal/admin/links')).d.total;
   check('the check really wrote nothing', afterDry === before, { before, afterDry });
 
@@ -187,6 +197,107 @@ const cleanup = () => {
   const kept = (await api('GET', '/api/portal/admin/links')).d.rows;
   check('…the server agrees it is no longer active',
         !kept.some(r => r.phone_key === '9112233445'), kept.map(r => r.phone_key));
+
+  // ── [search] ─────────────────────────────────────────────────────
+  console.log('\n[search] a term NARROWS the list');
+  const NAMES = ['ANAKKARA TRADERS', 'BASIL SPICES', 'CHUKKURUMBEL', 'DEEPA ESTATES',
+                 'ELAICHI ROYAL', 'GREEN EARTH', 'JJ SPICES', 'MALLINGA', 'MARY MATHA',
+                 'NILGIRI GOLD', 'PRAKASH K', 'SARANYA G'];
+  for (let i = 0; i < NAMES.length; i++) {
+    await api('POST', '/api/traders', { name: NAMES[i], tel: '90000000' + (10 + i), place: 'BODI' });
+  }
+  const allT = (await api('GET', '/api/traders?search=')).d;
+  const tRows = Array.isArray(allT) ? allT : ((allT && allT.rows) || []);
+  for (const n of NAMES) {
+    const t = tRows.find(x => String(x.name).toUpperCase() === n);
+    if (t) await api('POST', '/api/portal/admin/links',
+      { party_kind: 'seller', party_id: t.id, phone: String(t.tel) });
+  }
+  const total = (await api('GET', '/api/portal/admin/links')).d.total;
+  check('fixture: enough grants to search', total >= 12, total);
+
+  const byApi = async (q) => (await api('GET', '/api/portal/admin/links?q=' + encodeURIComponent(q))).d;
+  const nm = await byApi('BASIL');
+  check('a NAME narrows to the matches', nm.shown === 1 && nm.shown < nm.total,
+        { shown: nm.shown, total: nm.total });
+  check('…and it is the right one', /BASIL/i.test((nm.rows[0] || {}).party_name || ''), nm.rows[0]);
+  const ph = await byApi('9000000011');
+  check('a NUMBER narrows too', ph.shown === 1 && ph.shown < ph.total,
+        { shown: ph.shown, total: ph.total });
+  const none = await byApi('zzzqqq');
+  check('a term that matches nothing returns NOTHING, not everything',
+        none.shown === 0, { shown: none.shown, total: none.total });
+
+  // Through the box, which is what the operator actually uses.
+  await page.evaluate(() => {
+    const i = document.getElementById('pa-search');
+    i.value = 'MARY'; i.dispatchEvent(new Event('input'));
+  });
+  await new Promise(r => setTimeout(r, 900));
+  const typed = await page.evaluate(() => ({
+    count: document.getElementById('pa-count').textContent,
+    rows: document.querySelectorAll('#pa-rows tr').length,
+    first: (document.querySelector('#pa-rows td') || {}).innerText || '' }));
+  check('typing in the box narrows the table', typed.rows === 1, typed);
+  check('…to the party searched for', /MARY/i.test(typed.first), typed);
+  check('…and the count says so', /of \d+ shown/.test(typed.count), typed.count);
+
+  // ── [scroll] ─────────────────────────────────────────────────────
+  console.log('\n[scroll] the list scrolls inside its card');
+  await page.evaluate(() => {
+    const i = document.getElementById('pa-search');
+    i.value = ''; i.dispatchEvent(new Event('input'));
+  });
+  await new Promise(r => setTimeout(r, 900));
+  const sc = await page.evaluate(() => {
+    const box = document.getElementById('pa-table').parentElement;
+    return { scrolls: box.scrollHeight > box.clientHeight + 2,
+             head: getComputedStyle(document.querySelector('#pa-table thead tr')).position,
+             pageRunsOn: document.documentElement.scrollHeight > window.innerHeight + 400 };
+  });
+  check('the grants list has its own scroll', sc.scrolls, sc);
+  check('…with the header pinned while it moves', sc.head === 'sticky', sc);
+  check('…so the page itself does not run on', !sc.pageRunsOn, sc);
+
+  // ── [confirm] ────────────────────────────────────────────────────
+  console.log('\n[confirm] "Enrol them" names the parties first');
+  // Revoke the auto grant so the seed has something real to offer.
+  const liveRows = (await api('GET', '/api/portal/admin/links')).d.rows;
+  const auto = liveRows.find(r => r.source === 'auto');
+  if (auto) await api('POST', '/api/portal/admin/links/' + auto.id + '/revoke', {});
+  await page.evaluate(() => paSeed(false));
+  await new Promise(r => setTimeout(r, 1100));
+  const nowOffered = await page.evaluate(() => ({
+    out: document.getElementById('pa-seed-out').innerText.replace(/\s+/g, ' ').trim(),
+    goShown: getComputedStyle(document.getElementById('pa-seed-go')).display !== 'none' }));
+  check('with work to do, the check says how many', /would gain access/.test(nowOffered.out), nowOffered.out);
+  check('…and NOW the Enrol button appears', nowOffered.goShown, nowOffered);
+  const beforeConfirm = (await api('GET', '/api/portal/admin/links')).d.total;
+  await page.evaluate(() => paConfirmSeed());
+  await new Promise(r => setTimeout(r, 600));
+  const modal = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('div'))
+      .find(d => /Give .* access\?/.test(d.textContent || '') && d.offsetParent);
+    if (!b) return null;
+    const tb = b.querySelector('tbody');
+    return { listed: tb ? tb.querySelectorAll('tr').length : 0,
+             text: tb ? tb.innerText.replace(/\s+/g, ' ').trim() : '' };
+  });
+  check('the confirmation lists the parties by name', !!modal && modal.listed >= 1, modal);
+  check('…naming the one that would gain access', !!modal && /ABSAL SPICES/.test(modal.text), modal);
+  check('…with the number they would sign in with', !!modal && /9488818786/.test(modal.text), modal);
+  const stillUnwritten = (await api('GET', '/api/portal/admin/links')).d.total;
+  check('opening the confirmation writes NOTHING', stillUnwritten === beforeConfirm,
+        { before: beforeConfirm, now: stillUnwritten });
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('div'))
+      .find(d => /Give .* access\?/.test(d.textContent || '') && d.offsetParent);
+    b.querySelector('[data-x="1"]').click();
+  });
+  await new Promise(r => setTimeout(r, 1600));
+  const afterConfirm = (await api('GET', '/api/portal/admin/links')).d.total;
+  check('…and confirming does write', afterConfirm > stillUnwritten,
+        { before: stillUnwritten, after: afterConfirm });
 
   if (process.env.CA_SHOT_DIR) await page.screenshot({ path: process.env.CA_SHOT_DIR + '/customer-access.png' });
   console.log(`\n${pass} passed, ${fail} failed`);
