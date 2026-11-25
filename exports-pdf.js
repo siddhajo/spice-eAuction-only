@@ -285,6 +285,15 @@ function renderTablePdf({ title, subtitle, columns, rows, totals, layout, compan
       if (Number.isInteger(val) && (h === 'BAG' || h === 'BAGS' || h === 'LOTS')) {
         return String(val);
       }
+      // Road distance, in kilometres — not money. Falling through to the
+      // rupee branch below printed "70.00", which reads like an amount in a
+      // table that already has one. The route table holds whole kilometres
+      // and the Sales Invoice screen prints Number(v), so match that: whole
+      // numbers plain, and a fractional route (if one is ever entered) kept
+      // rather than silently rounded.
+      if (h === 'DIST (KM)' || h === 'DISTANCE' || h === 'KM') {
+        return String(Number(val));
+      }
       // Everything else numeric is treated as rupees: 2 decimals, Indian commas.
       return fmtMoney(val);
     }

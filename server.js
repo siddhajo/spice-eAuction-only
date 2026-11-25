@@ -19451,8 +19451,10 @@ app.post('/api/invoices/export-selected', requireExport, async (req, res) => {
       { header: 'QTY',         key: 'qty',    width: 12, numFmt: '#,##0.000' },
       { header: 'BILL AMOUNT', key: 'tot',    width: 16, numFmt: '#,##0.00'  },
       // Last column, matching the PDF — a reference figure, kept clear of
-      // the money columns.
-      { header: 'DIST (KM)',   key: 'distance_km', width: 11, numFmt: '#,##0.0' },
+      // the money columns. Whole kilometres, like the Sales Invoice screen:
+      // '#,##0.0' printed "70.0" for every route. The optional decimals keep
+      // a half-kilometre route honest instead of rounding it away.
+      { header: 'DIST (KM)',   key: 'distance_km', width: 11, numFmt: '#,##0.##' },
     ];
     // createExcelBuffer renders opts.sections as a titled group band then its
     // rows. Pass one section per lorry.
