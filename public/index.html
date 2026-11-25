@@ -28558,9 +28558,16 @@ function leChalanLines(o) {
   // A Spices Board consignment is the SAMPLES ALONE — the draw from every lot
   // in the trade, which is the whole reason that despatch exists. No net line:
   // the goods themselves are not going to the Board.
+  //
+  // The line is DESCRIBED as the configured goods ("CARDAMOM"), not as
+  // "SAMPLES". What travels is cardamom, and the paper has to name the
+  // commodity for anyone who stops the vehicle; that the consignment is a
+  // sample draw is what the Remarks line says. Applies whichever way round
+  // the parties are — sampleOnly is set from the BRANCH being the Board, so
+  // swapping sender and receiver does not change it.
   if (o.sampleOnly) {
     return sample > 0
-      ? [{ desc: 'SAMPLES', hsn, qty: sample, unit: 'kg', rate, value: sample * rate }]
+      ? [{ desc, hsn, qty: sample, unit: 'kg', rate, value: sample * rate }]
       : [];
   }
   const out = [{ desc, hsn, qty, unit: 'kg', rate, value: qty * rate }];
@@ -41320,30 +41327,33 @@ async function downloadPurchaseVoucher(id){
   await _purchaseVoucherPdf([Number(id)].filter(Boolean));
 }
 
-// ── Which document does "Print Selected" print? ──────────────────────
+// ── Which documents does "Print Selected" print? ─────────────────────
 // Three documents are made from the same ticked rows:
-//   • Purchase Invoice — the tax document, one per row, as before.
+//   • Purchase Invoice — the tax document, one per row.
 //   • Bill Statement   — one page per DEALER: a line per lot and the
 //                        payment closed off (total − TDS = net).
 //   • Payment Voucher  — the commission memorandum, one page per LOT.
-// Asked here rather than spread across three toolbar buttons: they act on
-// the same selection and the operator is already reaching for Print.
-// Returns 'invoice' | 'statement' | 'voucher', or null when cancelled.
-function pickPurchasePrintDoc(){
+// CHECKBOXES, not radios: the office prints more than one of these for the
+// same rows, and three separate downloads is three things to collate. Pick
+// several and they come back as ONE file, always in the order listed above
+// however the boxes were ticked, so a stack of them collates the same way.
+// Returns an array of keys (possibly empty), or null when cancelled.
+function pickPurchasePrintDocs(){
   return new Promise(resolve=>{
     const bg=document.createElement('div');
     bg.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:9999';
     const row=(val,title,sub,checked)=>`<label style="display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border:1px solid var(--border);border-radius:10px;margin-top:8px;cursor:pointer">
-      <input type="radio" name="purdoc" value="${val}" ${checked?'checked':''} style="margin-top:3px">
+      <input type="checkbox" name="purdoc" value="${val}" ${checked?'checked':''} style="margin-top:3px">
       <span><b>${title}</b><br><span style="font-size:12px;color:var(--text3)">${sub}</span></span></label>`;
     // A modal surface does NOT flip in dark mode, so --card/--text are the
     // right tokens here (the --spice-* ones would go dark on a light card).
     bg.innerHTML=`<div style="background:var(--card,#fff);color:var(--text,#111);border-radius:14px;padding:22px;max-width:470px;width:92%;box-shadow:0 20px 60px -15px rgba(0,0,0,.4)">
       <strong style="font-size:16px">What would you like to print?</strong>
-      <div style="margin-top:6px;font-size:13px;color:var(--text3)">All three are built from the rows you ticked.</div>
+      <div style="margin-top:6px;font-size:13px;color:var(--text3)">Tick as many as you need — they print as one file, built from the rows you ticked.</div>
       ${row('invoice','Purchase Invoice','The tax document — one invoice per ticked row.',true)}
       ${row('statement','Bill Statement','One page per seller: every lot with its amount, refund, commission and GST, then total less TDS.',false)}
       ${row('voucher','Payment Voucher (lot-wise)','The commission memorandum — one A4 page per lot, even for a seller-wise invoice.',false)}
+      <div id="purdoc-err" style="display:none;margin-top:10px;font-size:12px;color:var(--red,#b3261e);font-weight:600">Tick at least one document.</div>
       <div style="margin-top:18px;display:flex;gap:8px;justify-content:flex-end">
         <button class="btn" data-x="0">Cancel</button>
         <button class="btn btn-g" data-x="1">Print</button>
@@ -41353,8 +41363,11 @@ function pickPurchasePrintDoc(){
     bg.addEventListener('click',e=>{if(e.target===bg)done(null)});
     bg.querySelector('[data-x="0"]').onclick=()=>done(null);
     bg.querySelector('[data-x="1"]').onclick=()=>{
-      const sel=bg.querySelector('input[name="purdoc"]:checked');
-      done(sel?sel.value:'invoice');
+      const picked=Array.from(bg.querySelectorAll('input[name="purdoc"]:checked')).map(c=>c.value);
+      // Nothing ticked is a slip, not a request — say so rather than
+      // closing on a Print that prints nothing.
+      if(!picked.length){ bg.querySelector('#purdoc-err').style.display='block'; return; }
+      done(picked);
     };
   });
 }
@@ -41366,37 +41379,34 @@ async function printSelectedPurchases(){
   if(!checked.length){alert('Tick one or more purchase invoices first');return}
   const ids=checked.map(cb=>Number(cb.value)).filter(Boolean);
 
-  const doc = await pickPurchasePrintDoc();
-  if (doc === null) return;                    // operator cancelled
+  const docs = await pickPurchasePrintDocs();
+  if (docs === null) return;                   // operator cancelled
 
-  if (doc === 'voucher') {
-    // Unchanged behaviour, just reached from the chooser instead of its own
-    // button: _purchaseVoucherPdf still asks the layout + invoice-number
-    // questions the memorandum has always asked.
-    await _purchaseVoucherPdf(ids);
-    return;
+  // Each document asks its own follow-up questions, and only the ones that
+  // were actually ticked get asked: nobody should answer "which invoice
+  // number for the memorandum?" to print a purchase invoice.
+  const body_ = { ids, docs };
+  if (docs.includes('invoice')) {
+    const template = await pickTemplate('purchase-invoice', 'Choose purchase invoice format');
+    if (template === null) return;
+    if (template) body_.template = template;
+  }
+  if (docs.includes('voucher')) {
+    const commTemplate = await pickCommissionTemplate();
+    if (commTemplate === null) return;
+    if (commTemplate) body_.commTemplate = commTemplate;
+    const invoiceNo = await pickCommissionInvoiceNo();
+    if (invoiceNo === null) return;
+    body_.invoiceNo = invoiceNo;
   }
 
-  if (doc === 'statement') {
-    // Nothing is generated or numbered — the statement reports purchases
-    // that already exist, so printing it twice changes nothing.
-    await fetchPdfWithOverlay(
-      `Building bill statement for ${ids.length} seller(s)…`,
-      '/api/purchases/bill-statement-bulk',
-      `BillStatement_${ids.length}.pdf`,
-      { ids }
-    );
-    return;
-  }
-
-  // Offer a layout choice when more than one purchase-invoice template exists.
-  const template = await pickTemplate('purchase-invoice', 'Choose purchase invoice format');
-  if (template === null) return; // operator cancelled
+  const LABELS = { invoice:'purchase invoice', statement:'bill statement', voucher:'payment voucher' };
+  const what = docs.length === 1 ? LABELS[docs[0]] : (docs.length + ' documents');
   await fetchPdfWithOverlay(
-    `Building merged PDF for ${ids.length} purchase invoices…`,
-    '/api/purchases/pdf-bulk',
-    `Purchases_Batch_${ids.length}.pdf`,
-    template ? { ids, template } : { ids }
+    `Building ${what} for ${ids.length} row(s)…`,
+    '/api/purchases/print-bulk',
+    `PurchaseDocs_${ids.length}.pdf`,
+    body_
   );
 }
 

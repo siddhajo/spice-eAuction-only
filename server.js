@@ -1519,6 +1519,12 @@ mountPortal(app, {
   renderBillOfSupplyPdf:     (db, row)  => renderCommissionBoSPdf(db, [row]),
   renderBillOfSupplyPdfMany: (db, rows) => renderCommissionBoSPdf(db, rows),
   renderPurchaseInvoicePdf:  (db, row)  => renderStoredPurchaseInvoicePdf(db, { storedRow: row }),
+  // The same purchase, shown two other ways. Both go through the very
+  // functions the Purchases screen prints from, so a dealer's download is
+  // the office's document and not a lookalike.
+  renderPurchaseStatementPdf: (db, row) => renderPurchaseBillStatementPdf(db, [row]),
+  renderPurchaseVoucherPdf:   async (db, row) =>
+    (await renderPurchaseVoucherPdf(db, [row])).pdf,
   commissionNettForBills:    (db, rows) => commissionNettByBillId(db, rows),
   renderPlainBillOfSupplyPdf:(db, row) => renderStoredBillOfSupplyPdf(db, { storedRow: row }),
   renderDebitNotePlanterPdf: (db, row) => renderStoredDebitNotePlanterPdf(db, row),
@@ -15953,6 +15959,154 @@ function purchaseCommissionContext(db, cfg, p, invoOpts) {
   return { auction, lots, first, seller, perLot, docDate };
 }
 
+// Payment Voucher (commission memorandum) PDF for a set of purchase rows —
+// one A4 page per LOT. Extracted alongside renderPurchaseBillStatementPdf so
+// the CUSTOMER PORTAL hands a dealer the same bytes the office prints.
+async function renderPurchaseVoucherPdf(db, rows, opts) {
+  opts = opts || {};
+  const cfg = opts.cfg || getSettingsFlat(db);
+  const invoOpts = opts.invoOpts || {};
+  const tplChoice = String(opts.tplChoice || '').trim();
+  const payloads = [];
+  for (const p of (rows || [])) {
+    const { auction, first, seller, perLot, docDate } =
+      purchaseCommissionContext(db, cfg, p, invoOpts);
+    const invoNo = String(p.invo == null ? '' : p.invo).trim();
+    perLot.forEach((pl, i) => {
+      payloads.push({
+        billNo: perLot.length > 1 ? `${invoNo}/${i + 1}` : invoNo,
+        billData: {
+          crpt: pl.crpt || first.crpt || '',
+          auction: { ano: auction ? auction.ano : (p.ano || ''), date: docDate },
+          seller,
+          purchaser: pl.purchaser,
+          lineItems: [pl.line],
+          commission: pl.commission,
+          cgst: pl.cgst, sgst: pl.sgst, igst: pl.igst,
+          interState: pl.interState,
+          gstRate: Number(cfg.commission_gst_rate) || 9.0,
+          nett: pl.nett,
+        },
+      });
+    });
+  }
+  // Same renderer as the Bill-of-Supply memorandum — the page is identical
+  // for both seller kinds, so the operator's commission-bill layout choice
+  // (saved default or per-print override) applies here too.
+  const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
+    engineKey: 'commission_bill_engine', templateKey: 'commission_bill_template', tplChoice });
+  const pdf = useHtml
+    ? await require('./pdf/render-commission-html')
+        .generateCommissionBoSHtmlPDF(payloads, tplChoice ? { ...cfg, commission_bill_template: tplChoice } : cfg)
+    : await generateCommissionBoSBatchPDF(payloads, cfg);
+  // `pages` comes back with the buffer because the document is one page per
+  // LOT, not per row: the download's name quotes that count, and only the
+  // payload list knows it. Counting the finished PDF would mean parsing it
+  // again to learn something we already had.
+  return { pdf, pages: payloads.length };
+}
+
+// ── Print Selected: several document types in ONE file ───────────────
+// The Purchases screen lets the operator tick more than one document for the
+// same rows — invoice AND statement AND voucher. Rather than three downloads
+// to collate by hand, this returns one PDF.
+//
+// It does NOT re-implement any of them. Each is fetched from this server's
+// own route over loopback and the results are concatenated, the same trick
+// the Separate-PDFs zip uses. A document printed here is therefore byte-for
+// -byte the document printed on its own; there is no second code path to
+// drift.
+//
+// The order is FIXED (invoice, statement, voucher), not the order the boxes
+// happened to be ticked in, so a stack of these always collates the same way.
+const PURCHASE_PRINT_DOCS = {
+  invoice:   { url: '/api/purchases/pdf-bulk',
+               body: (o) => (o.template ? { template: o.template } : {}) },
+  statement: { url: '/api/purchases/bill-statement-bulk',
+               body: () => ({}) },
+  voucher:   { url: '/api/purchases/commission-bulk',
+               body: (o) => Object.assign({},
+                 o.commTemplate ? { template: o.commTemplate } : {},
+                 o.invoiceNo    ? { invoiceNo: o.invoiceNo }    : {}) },
+};
+const PURCHASE_PRINT_ORDER = ['invoice', 'statement', 'voucher'];
+
+app.post('/api/purchases/print-bulk', requireView, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'No purchase IDs provided' });
+    const asked = Array.isArray(req.body?.docs) ? req.body.docs.map(String) : [];
+    const docs = PURCHASE_PRINT_ORDER.filter(k => asked.includes(k));
+    if (!docs.length) return res.status(400).json({ error: 'No document types selected' });
+
+    const auth = req.headers.authorization || '';
+    const baseUrl = `http://127.0.0.1:${PORT}`;
+    const opts = {
+      template:     String(req.body?.template || '').trim(),
+      commTemplate: String(req.body?.commTemplate || '').trim(),
+      invoiceNo:    String(req.body?.invoiceNo || '').trim(),
+    };
+
+    // Serial, not parallel: each of these is itself a Chromium render of up
+    // to 25 pages, and running three at once competes for the memory the
+    // per-document slicing already exists to stay inside of.
+    const parts = [];
+    for (const kind of docs) {
+      const def = PURCHASE_PRINT_DOCS[kind];
+      const r = await fetch(baseUrl + def.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: auth },
+        body: JSON.stringify(Object.assign({ ids }, def.body(opts))),
+      });
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try { const e = await r.json(); if (e && e.error) msg = e.error; } catch (_) {}
+        return res.status(502).json({ error: `${kind}: ${msg}` });
+      }
+      parts.push(Buffer.from(await r.arrayBuffer()));
+    }
+
+    const { mergePdfs } = require('./pdf/merge-pdf');
+    const pdf = parts.length === 1 ? parts[0] : await mergePdfs(parts);
+    const db = getDb();
+    const ph = ids.map(() => '?').join(',');
+    const rows = db.all(`SELECT ano FROM purchases WHERE id IN (${ph})`, ids) || [];
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+      `inline; filename="${exportFileName('PurchaseDocs', anoLabelForRows(rows), ids.length)}.pdf"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error('Purchase multi-document print error:', e);
+    res.status(500).json({ error: 'Print failed: ' + e.message });
+  }
+});
+
+// Bill Statement PDF for a set of purchase rows. Extracted so the CUSTOMER
+// PORTAL serves a dealer the very bytes the office prints — a portal copy
+// that differs from the office copy is the bug this indirection exists to
+// prevent (same rule as renderStoredPurchaseInvoicePdf and friends).
+async function renderPurchaseBillStatementPdf(db, rows, opts) {
+  opts = opts || {};
+  const cfg = opts.cfg || getSettingsFlat(db);
+  const invoOpts = opts.invoOpts || {};
+  const statements = (rows || []).map((p) => {
+    const { auction, first, seller, perLot, docDate } =
+      purchaseCommissionContext(db, cfg, p, invoOpts);
+    return {
+      seller,
+      auction: { ano: auction ? auction.ano : (p.ano || ''), date: docDate },
+      perLot,
+      // Meta bands, matching the Payment Voucher's.
+      crpt: (perLot[0] && perLot[0].crpt) || first.crpt || '',
+      billNo: String(p.invo == null ? '' : p.invo).trim(),
+      // The TDS the office actually deducted on this purchase, not a
+      // recomputation — see the renderer.
+      tds: Number(p.tds) || 0,
+    };
+  });
+  return require('./pdf/render-bill-statement-html').generateBillStatementPDF(statements, cfg);
+}
+
 // ── Bill Statement (RD purchase) ─────────────────────────────────────
 // One A4 page per ticked purchase row: the dealer, a row per lot, and the
 // payment closed off with total − TDS = net. Offered beside the purchase
@@ -15976,28 +16130,10 @@ app.post('/api/purchases/bill-statement-bulk', requireView, async (req, res) => 
     const byId = new Map(stored.map(r => [r.id, r]));
     const ordered = ids.map(id => byId.get(Number(id))).filter(Boolean);
 
-    const statements = [];
-    for (const p of ordered) {
-      const { auction, first, seller, perLot, docDate } =
-        purchaseCommissionContext(db, cfg, p, invoOpts);
-      statements.push({
-        seller,
-        auction: { ano: auction ? auction.ano : (p.ano || ''), date: docDate },
-        perLot,
-        // Meta bands, matching the Payment Voucher's.
-        crpt: (perLot[0] && perLot[0].crpt) || first.crpt || '',
-        billNo: String(p.invo == null ? '' : p.invo).trim(),
-        // The TDS the office actually deducted on this purchase, not a
-        // recomputation — see the renderer.
-        tds: Number(p.tds) || 0,
-      });
-    }
-
-    const pdf = await require('./pdf/render-bill-statement-html')
-      .generateBillStatementPDF(statements, cfg);
+    const pdf = await renderPurchaseBillStatementPdf(db, ordered, { cfg, invoOpts });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition',
-      `inline; filename="${exportFileName('BillStatement', anoLabelForRows(ordered), statements.length)}.pdf"`);
+      `inline; filename="${exportFileName('BillStatement', anoLabelForRows(ordered), ordered.length)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Bill statement PDF error:', e);
@@ -16020,49 +16156,10 @@ app.post('/api/purchases/commission-bulk', requireView, async (req, res) => {
     const byId = new Map(stored.map(r => [r.id, r]));
     const ordered = ids.map(id => byId.get(Number(id))).filter(Boolean);
 
-    const dateFmt = (cfg && cfg.date_format) || 'dd/mm/yyyy';
-    const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-    const payloads = [];
-
-    for (const p of ordered) {
-      const { auction, first, seller, perLot, docDate } =
-        purchaseCommissionContext(db, cfg, p, invoOpts);
-
-      const invoNo = String(p.invo == null ? '' : p.invo).trim();
-      perLot.forEach((pl, i) => {
-        payloads.push({
-          billNo: perLot.length > 1 ? `${invoNo}/${i + 1}` : invoNo,
-          billData: {
-            crpt: pl.crpt || first.crpt || '',
-            auction: { ano: auction ? auction.ano : (p.ano || ''), date: docDate },
-            seller,
-            purchaser: pl.purchaser,
-            lineItems: [pl.line],
-            commission: pl.commission,
-            cgst: pl.cgst, sgst: pl.sgst, igst: pl.igst,
-            interState: pl.interState,
-            gstRate: Number(cfg.commission_gst_rate) || 9.0,
-            nett: pl.nett,
-          },
-        });
-      });
-    }
-
-    // Same renderer as the Bill-of-Supply memorandum — the page is identical
-    // for both seller kinds, so the operator's commission-bill layout choice
-    // (saved default or per-print override) applies here too.
     const tplChoice = String((req.body && req.body.template) || (req.query && req.query.template) || '').trim();
-    let pdf;
-    const useHtml = require('./pdf/engine-toggle').resolveWantHtml(cfg, {
-      engineKey: 'commission_bill_engine', templateKey: 'commission_bill_template', tplChoice });
-    if (useHtml) {
-      const cfg2 = tplChoice ? { ...cfg, commission_bill_template: tplChoice } : cfg;
-      pdf = await require('./pdf/render-commission-html').generateCommissionBoSHtmlPDF(payloads, cfg2);
-    } else {
-      pdf = await generateCommissionBoSBatchPDF(payloads, cfg);
-    }
+    const { pdf, pages } = await renderPurchaseVoucherPdf(db, ordered, { cfg, invoOpts, tplChoice });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PaymentVouchers', anoLabelForRows(ordered), payloads.length)}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${exportFileName('PaymentVouchers', anoLabelForRows(ordered), pages)}.pdf"`);
     res.send(pdf);
   } catch (e) {
     console.error('Purchase payment voucher PDF error:', e);

@@ -348,6 +348,18 @@
           border:1.5px solid var(--accent-soft);color:var(--accent);
           text-decoration:none;background:var(--card);transition:transform .1s ease}
   .acts a:active{transform:scale(.92)}
+  /* A purchase is downloadable three ways (invoice / statement / voucher),
+     so those rows carry labelled chips instead of one nameless icon — at
+     three buttons, a picture of a down-arrow stops saying which is which.
+     They sit on their OWN line under the row: measured beside the title they
+     took 209px of a 340px row and squeezed the document name to nothing. */
+  .fmts{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .fmts a{height:32px;padding:0 11px;border-radius:9px;display:inline-grid;place-items:center;
+          border:1.5px solid var(--accent-soft);color:var(--accent);background:var(--card);
+          text-decoration:none;font-size:11.5px;font-weight:700;letter-spacing:.2px;
+          white-space:nowrap;transition:transform .1s ease}
+  .fmts a:active{transform:scale(.94)}
+  @media (max-width:360px){ .fmts a{padding:0 9px;font-size:11px} }
   .doc.on{background:var(--accent-soft)}
   .doc .pick{width:24px;height:24px;flex:none;margin:0;accent-color:var(--accent)}
   .selall{display:flex;align-items:center;gap:11px;padding:11px 16px;
@@ -1037,6 +1049,27 @@
         sub.appendChild(lb);
       }
       g.appendChild(top); g.appendChild(sub);
+      // A purchase is ONE document the dealer can have in three shapes — the
+      // invoice, the bill statement and the per-lot payment voucher. They are
+      // formats of this row, not rows of their own (three rows would repeat
+      // the same money three times), and they get their own line because
+      // beside the title they left it no width at all on a 360px phone.
+      if (!selMode && d.formats && d.formats.length) {
+        var fm = document.createElement('div'); fm.className = 'fmts';
+        d.formats.forEach(function(f){
+          var a = document.createElement('a');
+          a.href = '/api/portal/documents/' + f.kind + '/' + d.id
+                 + '/pdf?token=' + encodeURIComponent(token) + '&dl=1';
+          a.textContent = f.label;
+          a.title = 'Save ' + f.label;
+          a.setAttribute('aria-label',
+            'Download the ' + f.label + ' for ' + d.label + ' ' + (d.no || ''));
+          // The row's own tap opens the invoice; a chip must not do both.
+          a.onclick = function(ev){ ev.stopPropagation(); };
+          fm.appendChild(a);
+        });
+        g.appendChild(fm);
+      }
       row.appendChild(g);
 
       if (!selMode) {

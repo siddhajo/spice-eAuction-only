@@ -99,10 +99,24 @@ setInterval(() => {
 // invoice. Both belong on their side of the portal — before `purchase` was
 // here, every GSTIN-holding seller signed in to an empty screen with nothing
 // saying why.
+//
+// `statement` and `voucher` are not separate documents: both are the SAME
+// purchase row shown another way (the bill statement, and the per-lot
+// payment voucher). They are listed here because the download route keys on
+// the kind, but they add no ROWS to the list — the purchase row carries them
+// as extra formats. See PURCHASE_FORMATS.
 const VISIBLE_KINDS = {
-  seller: ['bill', 'purchase'],
+  seller: ['bill', 'purchase', 'statement', 'voucher'],
   buyer:  ['invoice'],
 };
+
+// The downloads offered on a purchase row, in the order they appear. `kind`
+// is what the download URL carries; `label` is what the button says.
+const PURCHASE_FORMATS = [
+  { kind: 'purchase',  label: 'Invoice'   },
+  { kind: 'statement', label: 'Statement' },
+  { kind: 'voucher',   label: 'Voucher'   },
+];
 
 const OTP_TTL_MIN      = 10;   // how long a code stays usable
 const OTP_MAX_ATTEMPTS = 5;    // wrong guesses before the code is burned
@@ -214,6 +228,11 @@ function mountPortal(app, deps) {
     renderBillOfSupplyPdfMany,
     // A registered dealer's document. See VISIBLE_KINDS.
     renderPurchaseInvoicePdf,
+    // The same purchase row, rendered as the bill statement and as the
+    // per-lot payment voucher. Injected for the same reason as the rest:
+    // the portal must not own a second renderer.
+    renderPurchaseStatementPdf,
+    renderPurchaseVoucherPdf,
     // Map(bill id -> the NETT its commission bill prints). Injected rather
     // than recomputed here: a second implementation of this number is a
     // second number.
@@ -546,7 +565,11 @@ function mountPortal(app, deps) {
            FROM purchases
           WHERE trader_id = ?${win} ORDER BY date DESC, id DESC`, [party.id, ...span]))
         out.push({ kind: 'purchase', id: r.id, ano: r.ano, date: r.date, no: String(r.no || ''),
-                   amount: r.amount, label: 'Purchase Invoice', _lotNo: r.lot_no });
+                   amount: r.amount, label: 'Purchase Invoice', _lotNo: r.lot_no,
+                   // The same purchase, downloadable three ways. One ROW —
+                   // listing the statement and the voucher separately would
+                   // repeat the money three times and treble the list.
+                   formats: PURCHASE_FORMATS });
     } else {
       for (const r of db.all(
         `SELECT i.id, i.ano, i.date, i.invo AS no, i.tot AS amount, i.line_items
@@ -826,6 +849,21 @@ function mountPortal(app, deps) {
         if (!party) return res.status(403).json({ error: 'Not your document.' });
         docNo = String(row.invo || '');
         ({ pdf, filename } = await renderPurchaseInvoicePdf(db, row));
+
+      } else if (req.params.kind === 'statement' || req.params.kind === 'voucher') {
+        // Both are the purchase row seen another way, so the lookup and the
+        // ownership check are the purchase invoice's. Only the renderer
+        // differs — and it is the office's own, injected above.
+        if (!kindOk('seller')) return res.status(404).json({ error: 'Unknown document type.' });
+        const row = db.get('SELECT * FROM purchases WHERE id = ?', [id]);
+        if (!row) return res.status(404).json({ error: 'Not found.' });
+        party = claimParty(req, 'seller', row.trader_id);
+        if (!party) return res.status(403).json({ error: 'Not your document.' });
+        docNo = String(row.invo || '');
+        const isStmt = req.params.kind === 'statement';
+        pdf = await (isStmt ? renderPurchaseStatementPdf(db, row)
+                            : renderPurchaseVoucherPdf(db, row));
+        filename = `${isStmt ? 'BillStatement' : 'PaymentVoucher'}_${docNo || id}.pdf`;
 
       } else if (req.params.kind === 'invoice') {
         if (!kindOk('buyer')) return res.status(404).json({ error: 'Unknown document type.' });
