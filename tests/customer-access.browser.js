@@ -20,6 +20,11 @@
 //   [scroll]  the list scrolls inside its card, header pinned, instead of
 //             making the page one long column
 //   [confirm] "Enrol them" names the parties and writes only on confirm
+//   [pick]    …and lets the admin CHOOSE which of them. Enrolling the lot
+//             is one click; a name the admin did not expect can be left
+//             out without abandoning the rest. The subset is honoured
+//             SERVER-side (seed `only[]`), so this checks the database, not
+//             the button label.
 const os = require('os'), path = require('path'), fs = require('fs');
 const { spawn } = require('child_process');
 const pptr = require('puppeteer-core');
@@ -261,10 +266,29 @@ const cleanup = () => {
 
   // ── [confirm] ────────────────────────────────────────────────────
   console.log('\n[confirm] "Enrol them" names the parties first');
-  // Revoke the auto grant so the seed has something real to offer.
+  // A SECOND dealer holding a purchase invoice. With only one enrollable
+  // party, "enrol this one but not that one" cannot be tested at all.
+  await api('POST', '/api/traders',
+    { name: 'KANTHI ESTATES', tel: '9445566778', place: 'BODI', cr: '33ALCPU9807E1Z1' });
+  const t2all = (await api('GET', '/api/traders?search=KANTHI')).d;
+  const t2rows = Array.isArray(t2all) ? t2all : ((t2all && t2all.rows) || []);
+  const sid2 = (t2rows.find(t => /KANTHI/i.test(t.name)) || {}).id;
+  await api('POST', '/api/lots', { auction_id: A, lot_no: '141', trader_id: sid2,
+    name: 'KANTHI ESTATES', branch: 'BODI', bags: 8, qty: 190.2, gross_wt: 191.2,
+    cr: '33ALCPU9807E1Z1' });
+  const lots2 = (await api('GET', `/api/lots/${A}`)).d || [];
+  await api('POST', '/api/lots/bulk-price',
+    { items: lots2.filter(l => l.lot_no === '141').map(l => ({ id: l.id, price: 2900 })) });
+  await api('POST', '/api/lots/calculate/' + A, {});
+  await api('POST', `/api/purchases/generate/${A}`,
+    { sellerName: 'KANTHI ESTATES', invoiceNo: '302' });
+  check('fixture: a second dealer holds a purchase invoice', !!sid2, { sid2 });
+
+  // Revoke the auto grants so the seed has something real to offer.
   const liveRows = (await api('GET', '/api/portal/admin/links')).d.rows;
-  const auto = liveRows.find(r => r.source === 'auto');
-  if (auto) await api('POST', '/api/portal/admin/links/' + auto.id + '/revoke', {});
+  for (const a of liveRows.filter(r => r.source === 'auto')) {
+    await api('POST', '/api/portal/admin/links/' + a.id + '/revoke', {});
+  }
   await page.evaluate(() => paSeed(false));
   await new Promise(r => setTimeout(r, 1100));
   const nowOffered = await page.evaluate(() => ({
@@ -277,13 +301,13 @@ const cleanup = () => {
   await new Promise(r => setTimeout(r, 600));
   const modal = await page.evaluate(() => {
     const b = Array.from(document.querySelectorAll('div'))
-      .find(d => /Give .* access\?/.test(d.textContent || '') && d.offsetParent);
+      .find(d => /Who should get access\?/.test(d.textContent || '') && d.offsetParent);
     if (!b) return null;
     const tb = b.querySelector('tbody');
     return { listed: tb ? tb.querySelectorAll('tr').length : 0,
              text: tb ? tb.innerText.replace(/\s+/g, ' ').trim() : '' };
   });
-  check('the confirmation lists the parties by name', !!modal && modal.listed >= 1, modal);
+  check('the confirmation lists the parties by name', !!modal && modal.listed >= 2, modal);
   check('…naming the one that would gain access', !!modal && /ABSAL SPICES/.test(modal.text), modal);
   check('…with the number they would sign in with', !!modal && /9488818786/.test(modal.text), modal);
   const stillUnwritten = (await api('GET', '/api/portal/admin/links')).d.total;
@@ -291,13 +315,113 @@ const cleanup = () => {
         { before: beforeConfirm, now: stillUnwritten });
   await page.evaluate(() => {
     const b = Array.from(document.querySelectorAll('div'))
-      .find(d => /Give .* access\?/.test(d.textContent || '') && d.offsetParent);
+      .find(d => /Who should get access\?/.test(d.textContent || '') && d.offsetParent);
     b.querySelector('[data-x="1"]').click();
   });
   await new Promise(r => setTimeout(r, 1600));
   const afterConfirm = (await api('GET', '/api/portal/admin/links')).d.total;
   check('…and confirming does write', afterConfirm > stillUnwritten,
         { before: stillUnwritten, after: afterConfirm });
+
+  // ── [pick] ───────────────────────────────────────────────────────
+  console.log('\n[pick] the admin chooses WHICH parties to enrol');
+  // Back to both revoked, so there are two on offer again.
+  const rows2 = (await api('GET', '/api/portal/admin/links')).d.rows;
+  for (const a of rows2.filter(r => r.source === 'auto')) {
+    await api('POST', '/api/portal/admin/links/' + a.id + '/revoke', {});
+  }
+  const activeFor = async (name) => {
+    const rows = (await api('GET', '/api/portal/admin/links?q=' + encodeURIComponent(name))).d.rows || [];
+    return rows.filter(r => new RegExp(name, 'i').test(r.party_name || '')).length;
+  };
+  check('fixture: neither dealer can sign in now',
+        (await activeFor('ABSAL')) === 0 && (await activeFor('KANTHI')) === 0,
+        { absal: await activeFor('ABSAL'), kanthi: await activeFor('KANTHI') });
+
+  await page.evaluate(() => paSeed(false));
+  await new Promise(r => setTimeout(r, 1100));
+  await page.evaluate(() => paConfirmSeed());
+  await new Promise(r => setTimeout(r, 600));
+  const find = () => Array.from(document.querySelectorAll('div'))
+    .find(d => /Who should get access\?/.test(d.textContent || '') && d.offsetParent);
+
+  const picker = await page.evaluate(`(() => {
+    const b = (${find.toString()})();
+    const cbs = Array.from(b.querySelectorAll('.pa-pick'));
+    return { boxes: cbs.length, allTicked: cbs.every(c => c.checked),
+             btn: b.querySelector('[data-x="1"]').textContent.trim(),
+             note: (b.querySelector('#pa-pick-note').innerText || '').replace(/\\s+/g,' ').trim(),
+             hasFilter: !!b.querySelector('#pa-pick-q'),
+             hasAll: !!b.querySelector('[data-x="all"]'),
+             hasNone: !!b.querySelector('[data-x="none"]') };
+  })()`);
+  check('every listed party has its own tickbox', picker.boxes >= 2, picker);
+  check('…all ticked to start — enrolling the lot stays one click', picker.allTicked, picker);
+  check('…and the button counts what is ticked', /^Enrol \d+$/.test(picker.btn), picker);
+  check('…with Select all / Select none and a filter', picker.hasAll && picker.hasNone && picker.hasFilter, picker);
+
+  // Unticking must move the count — a button that says "Enrol 2" while one
+  // is unticked is the bug this whole section exists to prevent.
+  const afterUntick = await page.evaluate(`(() => {
+    const b = (${find.toString()})();
+    const rows = Array.from(b.querySelectorAll('tr[data-k]'));
+    const kanthi = rows.find(r => /KANTHI/i.test(r.textContent));
+    const cb = kanthi.querySelector('.pa-pick');
+    cb.checked = false; cb.onchange();
+    return { btn: b.querySelector('[data-x="1"]').textContent.trim(),
+             note: (b.querySelector('#pa-pick-note').innerText || '').replace(/\\s+/g,' ').trim() };
+  })()`);
+  check('unticking one lowers the count on the button', afterUntick.btn === 'Enrol 1', afterUntick);
+  check('…and the footer says how many of how many', /1<?\/?b?> of 2|1 of 2/.test(afterUntick.note), afterUntick);
+
+  // The filter HIDES rows; it must not change what is about to be written.
+  const afterFilter = await page.evaluate(`(() => {
+    const b = (${find.toString()})();
+    const q = b.querySelector('#pa-pick-q');
+    q.value = 'ABSAL'; q.oninput();
+    const rows = Array.from(b.querySelectorAll('tr[data-k]'));
+    return { shown: rows.filter(r => r.style.display !== 'none').length,
+             btn: b.querySelector('[data-x="1"]').textContent.trim() };
+  })()`);
+  check('filtering narrows the list', afterFilter.shown === 1, afterFilter);
+  check('…without changing what is about to be enrolled', afterFilter.btn === 'Enrol 1', afterFilter);
+
+  // Commit the subset and read the DATABASE — the label proves nothing.
+  await page.evaluate(`(() => {
+    const b = (${find.toString()})();
+    const q = b.querySelector('#pa-pick-q'); q.value = ''; q.oninput();
+    b.querySelector('[data-x="1"]').click();
+  })()`);
+  await new Promise(r => setTimeout(r, 1800));
+  const absalN = await activeFor('ABSAL'), kanthiN = await activeFor('KANTHI');
+  check('the ticked party is enrolled', absalN === 1, { absal: absalN });
+  check('…and the unticked one is NOT', kanthiN === 0, { kanthi: kanthiN });
+  const said = await page.evaluate(() =>
+    document.getElementById('pa-seed-out').innerText.replace(/\s+/g, ' ').trim());
+  check('…and the screen says how many of how many were asked for',
+        /Enrolled 1 party\(ies\)\.? ?\(of 1 selected\)/.test(said), said);
+
+  // Leaving somebody out is not permanent: the next check offers them again.
+  await page.evaluate(() => paSeed(false));
+  await new Promise(r => setTimeout(r, 1100));
+  const again = await page.evaluate(() => ({
+    out: document.getElementById('pa-seed-out').innerText.replace(/\s+/g, ' ').trim(),
+    goShown: getComputedStyle(document.getElementById('pa-seed-go')).display !== 'none' }));
+  check('the one left out is still on offer next time',
+        again.goShown && /1 party\(ies\) would gain access/.test(again.out), again);
+
+  // Select none must not leave an "Enrol 0" that writes nothing noisily.
+  await page.evaluate(() => paConfirmSeed());
+  await new Promise(r => setTimeout(r, 600));
+  const noneState = await page.evaluate(`(() => {
+    const b = (${find.toString()})();
+    b.querySelector('[data-x="none"]').click();
+    const go = b.querySelector('[data-x="1"]');
+    return { disabled: go.disabled, label: go.textContent.trim() };
+  })()`);
+  check('Select none disables Enrol rather than writing nothing',
+        noneState.disabled === true, noneState);
+  await page.evaluate(`(() => { (${find.toString()})().querySelector('[data-x="0"]').click(); })()`);
 
   if (process.env.CA_SHOT_DIR) await page.screenshot({ path: process.env.CA_SHOT_DIR + '/customer-access.png' });
   console.log(`\n${pass} passed, ${fail} failed`);

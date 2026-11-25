@@ -753,6 +753,21 @@ function mountPortal(app, deps) {
     const range = asked ? null : periodRange(req.query);
     let docs = documentsFor(db, party, range);
 
+    // Which SHAPES of a purchase to put in the bundle. A dealer's purchase
+    // row is one document the office can print three ways — the invoice, the
+    // bill statement and the per-lot payment voucher — and the row's own
+    // chips already offer all three singly. A bundle used to be invoices
+    // only, so selecting a month and pressing Download gave no way to ask
+    // for the statements. Absent means 'purchase', which is exactly the old
+    // behaviour. Unknown names are DROPPED rather than honoured, and if that
+    // leaves nothing the request is refused instead of quietly sending
+    // invoices somebody did not ask for.
+    const fmtAsked = String(req.query.formats || '').split(',').map(x => x.trim()).filter(Boolean);
+    const shapes = fmtAsked.length
+      ? PURCHASE_FORMATS.map(f => f.kind).filter(k => fmtAsked.includes(k))
+      : ['purchase'];
+    if (!shapes.length) return res.status(400).json({ error: 'Unknown document format.' });
+
     if (asked) {
       const want = asked.split(',').map(n => Number(n)).filter(Number.isFinite);
       if (!want.length) return res.status(400).json({ error: 'No documents selected.' });
@@ -766,9 +781,16 @@ function mountPortal(app, deps) {
     if (!docs.length) return res.status(404).json({ error: 'Nothing to download for that period.' });
     // A cap, because this renders one Chromium page per document and a
     // runaway request is the one way a customer can cost this box real work.
-    if (docs.length > 60) {
+    // Counted in RENDERS, not rows: asking for three shapes of twenty-five
+    // purchases is seventy-five renders, and the old row-count cap waved it
+    // through.
+    const purchaseRows = docs.filter(d => d.kind === 'purchase').length;
+    const renders = docs.length - purchaseRows + purchaseRows * shapes.length;
+    if (renders > 60) {
       return res.status(413).json({
-        error: `That is ${docs.length} documents. Please pick a single month — the whole year is too large to send in one file.`,
+        error: shapes.length > 1
+          ? `That is ${docs.length} documents in ${shapes.length} formats — ${renders} pages to build. Please pick fewer formats, or a single month.`
+          : `That is ${docs.length} documents. Please pick a single month — the whole year is too large to send in one file.`,
       });
     }
 
@@ -787,9 +809,17 @@ function mountPortal(app, deps) {
             billIds);
           parts.push((await renderBillOfSupplyPdfMany(db, rows)).pdf);
         }
+        // Grouped BY DOCUMENT, not by format: a dealer reading the file wants
+        // one purchase's invoice, statement and voucher together, not every
+        // invoice and then every statement.
         for (const d of docs.filter(x => x.kind === 'purchase')) {
           const row = db.get('SELECT * FROM purchases WHERE id = ?', [d.id]);
-          if (row) parts.push((await renderPurchaseInvoicePdf(db, row)).pdf);
+          if (!row) continue;
+          for (const shape of shapes) {
+            if (shape === 'statement') parts.push(await renderPurchaseStatementPdf(db, row));
+            else if (shape === 'voucher') parts.push(await renderPurchaseVoucherPdf(db, row));
+            else parts.push((await renderPurchaseInvoicePdf(db, row)).pdf);
+          }
         }
         pdf = await require('./pdf/merge-pdf').mergePdfs(parts);
       } else {
@@ -803,16 +833,28 @@ function mountPortal(app, deps) {
         pdf = await require('./pdf/merge-pdf').mergePdfs(parts);
       }
 
+      // One audit row per SHAPE actually handed over — 'who saw what' has to
+      // say which of the three it was, the same as a single download does.
       for (const d of docs) {
-        db.run(
-          `INSERT INTO party_downloads (phone_key, party_kind, party_id, doc_kind, doc_id, doc_no, ip)
-           VALUES (?,?,?,?,?,?,?)`,
-          [req.portal.phoneKey, party.kind, party.id, d.kind, d.id, d.no, clientIp(req)]);
+        const kinds = d.kind === 'purchase' ? shapes : [d.kind];
+        for (const k of kinds) {
+          db.run(
+            `INSERT INTO party_downloads (phone_key, party_kind, party_id, doc_kind, doc_id, doc_no, ip)
+             VALUES (?,?,?,?,?,?,?)`,
+            [req.portal.phoneKey, party.kind, party.id, k, d.id, d.no, clientIp(req)]);
+        }
       }
 
-      const tag = asked
+      // When the reader asked for something other than plain invoices, the
+      // filename says so — three files called NAME_4_documents.pdf in a
+      // downloads folder are indistinguishable.
+      const SHAPE_TAG = { purchase: 'Invoices', statement: 'Statements', voucher: 'Vouchers' };
+      const shapeTag = (shapes.length === 1 && shapes[0] !== 'purchase')
+        ? '_' + SHAPE_TAG[shapes[0]]
+        : (shapes.length > 1 ? '_' + shapes.map(k => SHAPE_TAG[k]).join('_') : '');
+      const tag = (asked
         ? `${docs.length}_documents`
-        : String(req.query.month || req.query.fy || 'all').replace(/[^\w-]/g, '');
+        : String(req.query.month || req.query.fy || 'all').replace(/[^\w-]/g, '')) + shapeTag;
       const safe = String(party.name || 'documents').replace(/[^\w]+/g, '_').slice(0, 40);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${safe}_${tag}.pdf"`);
@@ -1054,6 +1096,19 @@ function mountPortal(app, deps) {
     }
     changes.sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
+    // `only` narrows a commit to the parties the admin ticked in the
+    // confirmation. Absent means all of them — the request the screen used
+    // to send, so a stale cached page still behaves.
+    //
+    // It is a FILTER over the eligible list, never a lookup: an id that is
+    // not already in that list simply never matches, so this cannot be used
+    // to enrol a party who holds no document.
+    const only = Array.isArray(req.body && req.body.only) ? req.body.only : null;
+    const picked = only && new Set(only
+      .filter(o => o && (o.kind === 'seller' || o.kind === 'buyer') && Number.isFinite(Number(o.id)))
+      .map(o => o.kind + ':' + Number(o.id)));
+    const wanted = (kind, id) => !picked || picked.has(kind + ':' + Number(id));
+
     let written = 0;
     if (commit) {
       const by = (req.user && req.user.username) || '';
@@ -1061,7 +1116,9 @@ function mountPortal(app, deps) {
       // rule — including the reconciliation: a re-run repairs a link left
       // pointing at a number the master no longer holds, which a plain
       // INSERT…catch(UNIQUE) silently left broken.
-      const put = (kind, id, pkey) => { if (autoEnrol(db, kind, id, pkey)) written += 1; };
+      const put = (kind, id, pkey) => {
+        if (wanted(kind, id) && autoEnrol(db, kind, id, pkey)) written += 1;
+      };
       sellers.forEach(r => put('seller', r.id, r.pkey));
       buyers.forEach(r => put('buyer', r.id, r.pkey));
     }
@@ -1076,6 +1133,9 @@ function mountPortal(app, deps) {
       distinctPhones: phones.size,
       sharedPhones: shared,
       partiesOnSharedPhones: sharedParties,
+      // How many the request ASKED for, so the screen can say "8 of 203"
+      // rather than leaving the admin to infer it from `written`.
+      requested: picked ? picked.size : null,
       written,
     });
   });

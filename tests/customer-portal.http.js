@@ -530,6 +530,73 @@ const signIn = async (phone) => {
           Math.abs(officeBuf.length - portalBuf.length) < 2048 && officeBuf.length > 1000,
           { office: officeBuf.length, portal: portalBuf.length });
 
+    // ── A BUNDLE can carry the three shapes too ──────────────────────
+    // The row chips offered all three for ONE document; a bundle could only
+    // ever carry invoices, so picking a month and pressing Download gave no
+    // way to ask for the statements. `?formats=` is how the chooser asks.
+    const pagesOf = async (u) => {
+      const g = await raw(u);
+      if (g.s !== 200 || g.buf.slice(0, 4).toString() !== '%PDF') return -1;
+      return (await PDFDocument.load(g.buf)).getPageCount();
+    };
+    const one = `/api/portal/documents/purchase/${purDoc.id}/pdf?token=${tokD2}`;
+    const nInv = await pagesOf(one);
+    const nStmt = await pagesOf(`/api/portal/documents/statement/${purDoc.id}/pdf?token=${tokD2}`);
+    const nVou = await pagesOf(`/api/portal/documents/voucher/${purDoc.id}/pdf?token=${tokD2}`);
+    const bundle = (f) => `/api/portal/documents/bulk?party=seller:${sDealer.id}`
+      + `&ids=${purDoc.id}` + (f ? `&formats=${f}` : '') + `&token=${tokD2}`;
+
+    check('a bundle with no format asked for is still invoices only',
+          nInv > 0 && (await pagesOf(bundle(''))) === nInv,
+          { invoice: nInv, bundle: await pagesOf(bundle('')) });
+    const nAll = await pagesOf(bundle('purchase,statement,voucher'));
+    check('…asking for all three puts all three in the file',
+          nStmt > 0 && nVou > 0 && nAll === nInv + nStmt + nVou,
+          { invoice: nInv, statement: nStmt, voucher: nVou, bundle: nAll });
+    check('…and asking for one shape gives only that shape',
+          (await pagesOf(bundle('statement'))) === nStmt,
+          { want: nStmt, got: await pagesOf(bundle('statement')) });
+    // Honoured in a fixed order, not in whatever order the query listed —
+    // so two readers asking the same thing get the same file.
+    check('…the order is the document\'s, not the query string\'s',
+          (await pagesOf(bundle('voucher,purchase'))) === nInv + nVou,
+          { got: await pagesOf(bundle('voucher,purchase')) });
+
+    // A name nobody offers is DROPPED, and if that leaves nothing the
+    // request is refused — never quietly answered with invoices.
+    const junk = await raw(bundle('wishlist'));
+    check('…an unknown format is refused, not silently replaced',
+          junk.s === 400, { s: junk.s, body: junk.buf.slice(0, 120).toString() });
+    check('…while an unknown one alongside a real one just drops',
+          (await pagesOf(bundle('wishlist,statement'))) === nStmt);
+
+    // Three files called NAME_1_documents.pdf are indistinguishable in a
+    // downloads folder, so the filename says which shapes are inside.
+    const cdAll = (await raw(bundle('purchase,statement,voucher'))).cd || '';
+    check('…and the filename names the shapes it carries',
+          /Invoices_Statements_Vouchers\.pdf/.test(cdAll), cdAll);
+    const cdStmt = (await raw(bundle('statement'))).cd || '';
+    check('…including when only one was asked for',
+          /_Statements\.pdf/.test(cdStmt), cdStmt);
+
+    // 'Who saw what' has to name the shape. One audit row per shape handed
+    // over, the same as a single download writes.
+    await raw(bundle('statement,voucher'));
+    const audit = (await api('GET', '/api/portal/admin/downloads')).d.rows || [];
+    const forDoc = audit.filter(x => Number(x.doc_id) === Number(purDoc.id));
+    check('…and the audit names each shape, not just "the bundle"',
+          forDoc.some(x => x.doc_kind === 'statement') && forDoc.some(x => x.doc_kind === 'voucher'),
+          forDoc.slice(0, 6).map(x => x.doc_kind).join(','));
+
+    // The format is not a side door: ownership is still checked against the
+    // party's own set, exactly as it is without one. Unconditional, because
+    // this fixture may hold only one dealer's purchases and an `if` around
+    // it would pass by not running.
+    const steal = await raw(`/api/portal/documents/bulk?party=seller:${sDealer.id}`
+      + `&ids=${(theirPur && theirPur.id) || 999999}&formats=statement&token=${tokD2}`);
+    check("…and a format cannot reach a purchase this party does not hold",
+          steal.s === 403, { s: steal.s, other: !!theirPur });
+
     // A buyer must not reach the purchase kind either — checked in [E],
     // where a buyer token exists.
     dealerPurchaseId = purDoc.id;

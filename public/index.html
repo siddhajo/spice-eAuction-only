@@ -18596,11 +18596,13 @@ async function runReport(key, mode){
   if(!spec || !Array.isArray(spec.rows) || !spec.rows.length){ toast('No data to export yet — load the report first.'); return; }
   await withOverlay(`Preparing ${spec.title||'report'}…`, async () => {
     try{
-      const blob = await _reportPdfBlob(mode==='print' ? Object.assign({}, spec, {inline:1}) : spec);
       if(mode==='print'){
-        if(typeof triggerBrowserPrint==='function'){ await triggerBrowserPrint(blob, spec.title||'report'); }
-        else { const u=URL.createObjectURL(blob); const w=window.open(u); if(w) w.addEventListener('load',()=>{try{w.focus();w.print()}catch(_){}}); }
+        // Preview link, so "Save as PDF" from the print dialog — and the
+        // viewer's own download — offer the report's real name.
+        await _openPdfInTab(B + '/api/report-pdf',
+          { postBody: Object.assign({}, spec, {inline:1}), print:true });
       } else {
+        const blob = await _reportPdfBlob(spec);
         const u=URL.createObjectURL(blob);
         const a=document.createElement('a'); a.href=u; a.download=(spec.title||'report').replace(/[^\w]+/g,'_')+'.pdf';
         document.body.appendChild(a); a.click(); a.remove();
@@ -22100,16 +22102,25 @@ async function paRebind(id){
 
 let _paSeedPreview = null;
 
-async function paSeed(commit){
+// `only` is the subset ticked in the confirmation — an array of {kind,id}.
+// Left out means every eligible party, which is what the dry run reports.
+async function paSeed(commit, only){
   const out = document.getElementById('pa-seed-out');
   const go  = document.getElementById('pa-seed-go');
   out.innerHTML = '<span style="color:var(--text3)">Working…</span>';
   let d;
-  try { d = await j('/api/portal/admin/seed', { method:'POST', body: JSON.stringify({ commit: !!commit }) }); }
+  const payload = { commit: !!commit };
+  if (only) payload.only = only;
+  try { d = await j('/api/portal/admin/seed', { method:'POST', body: JSON.stringify(payload) }); }
   catch (e) { out.innerHTML = '<span style="color:var(--red,#b3261e)">' + esc(e.message || 'Failed') + '</span>'; return; }
   const line = (k, v) => '<div><strong>' + v + '</strong> ' + k + '</div>';
   if (commit) {
-    out.innerHTML = '<div style="color:var(--green);font-weight:600">Enrolled ' + (d.written || 0) + ' party(ies).</div>';
+    // When a subset was asked for, say so — "Enrolled 8" out of a preview
+    // that said 203 otherwise reads as a failure.
+    const askedFor = (d.requested == null) ? '' :
+      ' <span style="font-weight:400;color:var(--text3)">(of ' + d.requested + ' selected)</span>';
+    out.innerHTML = '<div style="color:var(--green);font-weight:600">Enrolled '
+      + (d.written || 0) + ' party(ies).' + askedFor + '</div>';
     if (go) go.style.display = 'none';
     _paSeedPreview = null;
     loadPortalAccess();
@@ -22130,53 +22141,127 @@ async function paSeed(commit){
   if (go) go.style.display = d.willChange ? 'inline-flex' : 'none';
 }
 
-// "Enrol them" shows WHO, then asks. Granting read access to a party's whole
-// document history is not something to confirm with a count — the admin has
-// to be able to see a name they did not expect before any of it is real.
+// "Enrol them" shows WHO, and lets the admin PICK. Granting read access to a
+// party's whole document history is not something to confirm with a count —
+// the admin has to see a name they did not expect, and be able to leave it
+// out, before any of it is real. Everything starts ticked, because enrolling
+// the lot is still the ordinary case.
 function paConfirmSeed(){
   const d = _paSeedPreview;
   if (!d) { paSeed(false); return; }
   const list = d.changes || [];
+  // The dry run caps its list (the admin is confirming a shape, not auditing
+  // 1,300 rows), so some eligible parties may not be on screen. Ticking
+  // every visible row is then NOT the same request as "all of them", and the
+  // footer below says which one is about to be sent.
+  const hidden = (d.willChange || 0) - list.length;
+  const key = (c) => c.kind + ':' + c.id;
+  const picked = {};
+  list.forEach(c => { picked[key(c)] = true; });
+
   const bg = document.createElement('div');
   bg.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:18px';
+  const chip = (c) => c.action === 'move'
+    ? '<span style="font-size:10px;font-weight:700;color:#8B6508;background:var(--spice-turmeric-lt,#fef3c7);border-radius:8px;padding:1px 7px">MOVES</span>'
+    : '<span style="font-size:10px;font-weight:700;color:var(--green);background:var(--green-bg);border-radius:8px;padding:1px 7px">NEW</span>';
   const rows = list.map(c =>
-      '<tr><td style="padding:4px 8px">' + esc(c.name || '(unnamed)') + '</td>'
+      '<tr data-k="' + esc(key(c)) + '">'
+    + '<td style="padding:4px 8px;width:30px"><input type="checkbox" class="pa-pick" checked'
+    + ' aria-label="Enrol ' + esc(c.name || 'this party') + '" style="width:16px;height:16px;cursor:pointer"></td>'
+    + '<td style="padding:4px 8px">' + esc(c.name || '(unnamed)') + '</td>'
     + '<td style="padding:4px 8px;color:var(--text3)">' + (c.kind === 'buyer' ? 'Buyer' : 'Seller') + '</td>'
     + '<td style="padding:4px 8px;font-family:monospace">' + esc(c.phone) + '</td>'
-    + '<td style="padding:4px 8px">' + (c.action === 'move'
-        ? '<span style="font-size:10px;font-weight:700;color:#8B6508;background:var(--spice-turmeric-lt,#fef3c7);border-radius:8px;padding:1px 7px">MOVES</span>'
-        : '<span style="font-size:10px;font-weight:700;color:var(--green);background:var(--green-bg);border-radius:8px;padding:1px 7px">NEW</span>') + '</td></tr>').join('');
-  const hidden = (d.willChange || 0) - list.length;
+    + '<td style="padding:4px 8px">' + chip(c) + '</td></tr>').join('');
   // A modal surface does NOT flip in dark mode — --card/--text are right here.
   bg.innerHTML =
       '<div style="background:var(--card,#fff);color:var(--text,#111);border-radius:14px;padding:20px;'
-    + 'max-width:640px;width:100%;max-height:86vh;display:flex;flex-direction:column;'
+    + 'max-width:700px;width:100%;max-height:86vh;display:flex;flex-direction:column;'
     + 'box-shadow:0 20px 60px -15px rgba(0,0,0,.4)">'
-    + '<strong style="font-size:16px">Give ' + (d.willChange || 0) + ' party(ies) access?</strong>'
+    + '<strong style="font-size:16px">Who should get access?</strong>'
     + '<div style="margin-top:6px;font-size:13px;color:var(--text3)">'
-    + 'Each can then sign in at /my with the number shown and read that party&rsquo;s whole '
-    + 'document history. <b>MOVES</b> means the grant shifts off a number the master no longer holds.'
+    + 'Each party you leave ticked can sign in at /my with the number shown and read that '
+    + 'party&rsquo;s whole document history. <b>MOVES</b> means the grant shifts off a number '
+    + 'the master no longer holds. Untick anyone who should not.'
     + '</div>'
-    + '<div style="flex:1;overflow:auto;margin-top:12px;border:1px solid var(--border);border-radius:8px">'
+    + '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<input id="pa-pick-q" class="inp" placeholder="Filter this list by name or number"'
+    + ' style="flex:1;min-width:190px;height:32px;font-size:13px">'
+    + '<button class="btn" data-x="all" style="height:32px;padding:0 10px;font-size:12px">Select all</button>'
+    + '<button class="btn" data-x="none" style="height:32px;padding:0 10px;font-size:12px">Select none</button>'
+    + '</div>'
+    + '<div style="flex:1;overflow:auto;margin-top:10px;border:1px solid var(--border);border-radius:8px">'
     + '<table style="width:100%;border-collapse:collapse;font-size:13px">'
     + '<thead><tr style="position:sticky;top:0;background:var(--spice-cream,#f5f3ee)">'
+    + '<th style="text-align:left;padding:6px 8px"></th>'
     + '<th style="text-align:left;padding:6px 8px">Party</th>'
     + '<th style="text-align:left;padding:6px 8px">Side</th>'
     + '<th style="text-align:left;padding:6px 8px">Signs in with</th>'
     + '<th style="text-align:left;padding:6px 8px"></th></tr></thead>'
-    + '<tbody>' + (rows || '<tr><td colspan="4" style="padding:14px;text-align:center;color:var(--text3)">Nothing to enrol.</td></tr>') + '</tbody>'
+    + '<tbody id="pa-pick-body">' + (rows || '<tr><td colspan="5" style="padding:14px;text-align:center;color:var(--text3)">Nothing to enrol.</td></tr>') + '</tbody>'
     + '</table></div>'
-    + (hidden > 0 ? '<div style="margin-top:8px;font-size:12px;color:var(--text3)">&hellip;and ' + hidden
-        + ' more not listed here. All ' + d.willChange + ' will be enrolled.</div>' : '')
-    + '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">'
+    + '<div id="pa-pick-note" style="margin-top:8px;font-size:12px;color:var(--text3)"></div>'
+    + '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end">'
     + '<button class="btn" data-x="0">Cancel</button>'
-    + '<button class="btn btn-g" data-x="1"' + (d.willChange ? '' : ' disabled') + '>Enrol them</button>'
+    + '<button class="btn btn-g" data-x="1">Enrol</button>'
     + '</div></div>';
   document.body.appendChild(bg);
+
+  const body = bg.querySelector('#pa-pick-body');
+  const note = bg.querySelector('#pa-pick-note');
+  const goBtn = bg.querySelector('[data-x="1"]');
+  const nPicked = () => Object.keys(picked).filter(k => picked[k]).length;
+  // Everything on screen ticked AND nothing held back means "all of them" —
+  // which is the one case that can also reach the parties the cap hid.
+  const wantsEverything = () => nPicked() === list.length && list.length > 0;
+  const refresh = () => {
+    const n = nPicked();
+    goBtn.disabled = n === 0;
+    goBtn.textContent = n === 0 ? 'Enrol' : 'Enrol ' + n;
+    note.innerHTML = hidden > 0
+      ? (wantsEverything()
+          ? '&hellip;and ' + hidden + ' more not listed here. All <b>' + d.willChange + '</b> will be enrolled.'
+          : 'Only the <b>' + n + '</b> ticked above will be enrolled — the ' + hidden
+            + ' not listed here will be left out. Press &ldquo;Enrol them&rdquo; again afterwards to do the rest.')
+      : (n === list.length ? 'All <b>' + n + '</b> will be enrolled.'
+                           : '<b>' + n + '</b> of ' + list.length + ' will be enrolled.');
+  };
+  body.querySelectorAll('tr[data-k]').forEach(tr => {
+    const cb = tr.querySelector('.pa-pick');
+    if (!cb) return;
+    cb.onchange = () => { picked[tr.getAttribute('data-k')] = cb.checked; refresh(); };
+  });
+  const setAll = (on) => {
+    // Only the rows the filter is SHOWING, so "Select none" after a filter
+    // means what it looks like it means.
+    body.querySelectorAll('tr[data-k]').forEach(tr => {
+      if (tr.style.display === 'none') return;
+      const cb = tr.querySelector('.pa-pick');
+      if (cb) { cb.checked = on; picked[tr.getAttribute('data-k')] = on; }
+    });
+    refresh();
+  };
+  bg.querySelector('[data-x="all"]').onclick = () => setAll(true);
+  bg.querySelector('[data-x="none"]').onclick = () => setAll(false);
+  // Filtering HIDES rows; it never unticks them, so a filter cannot quietly
+  // change what is about to be written.
+  const q = bg.querySelector('#pa-pick-q');
+  q.oninput = () => {
+    const t = String(q.value || '').trim().toUpperCase();
+    body.querySelectorAll('tr[data-k]').forEach(tr => {
+      tr.style.display = (!t || tr.textContent.toUpperCase().indexOf(t) > -1) ? '' : 'none';
+    });
+  };
+  refresh();
+
   const close = () => bg.remove();
   bg.addEventListener('click', e => { if (e.target === bg) close(); });
   bg.querySelector('[data-x="0"]').onclick = close;
-  bg.querySelector('[data-x="1"]').onclick = () => { close(); paSeed(true); };
+  goBtn.onclick = () => {
+    const only = wantsEverything() ? null
+      : list.filter(c => picked[key(c)]).map(c => ({ kind: c.kind, id: c.id }));
+    close();
+    paSeed(true, only);
+  };
 }
 
 async function loadUsers(){
@@ -23050,11 +23135,8 @@ async function printTradeSummary(){
   const branchQs=br?`&branch=${encodeURIComponent(br)}`:'';
   await withOverlay('Preparing Auction Summary…', async () => {
     try{
-      const r=await fetch(`${B}/api/reports/summary-pdf/${aid}?token=${encodeURIComponent(T)}${branchQs}`);
-      if(!r.ok){ toast('Summary PDF failed'); return; }
-      const blob=await r.blob();
-      if(typeof triggerBrowserPrint==='function'){ await triggerBrowserPrint(blob, 'Auction_Summary'); }
-      else { const u=URL.createObjectURL(blob); const w=window.open(u); if(w) w.addEventListener('load',()=>{try{w.focus();w.print()}catch(_){}}); }
+      await _openPdfInTab(`${B}/api/reports/summary-pdf/${aid}?token=${encodeURIComponent(T)}${branchQs}`,
+        {print:true});
     }catch(e){ toast(e.message||'Print failed'); }
   });
 }
@@ -36741,37 +36823,63 @@ function renderLorryActions(){
 // filename — and the tab opens that. Save now offers exactly the name the
 // direct export gives. See preview-links.js.
 //
-// Returns the opened window, or null (having reported why) so callers can
-// bail. `print:true` fires the print dialog once the document is up.
-async function _openPdfInTab(url, opts) {
-  opts = opts || {};
+// Two halves, because the document viewers below must FETCH inside their
+// busy overlay and OPEN the tab after it is gone — a tab opened under a
+// modal overlay is the "stuck on Building PDF…" symptom.
+//
+// `_pdfPreviewHref` returns { href } to open, or { blob } when the endpoint
+// answered with bytes instead of a link, or null when it failed (having
+// already said so). `postBody` sends a POST with that object as JSON.
+async function _pdfPreviewHref(url, postBody) {
   const sep = url.indexOf('?') > -1 ? '&' : '?';
+  const init = { headers: { 'Authorization': 'Bearer ' + T } };
+  if (postBody) {
+    init.method = 'POST';
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(postBody);
+  }
   let r;
-  try { r = await fetch(url + sep + 'previewlink=1', { headers: { 'Authorization': 'Bearer ' + T } }); }
+  try { r = await fetch(url + sep + 'previewlink=1', init); }
   catch (e) { toast('Could not reach the server'); return null; }
   if (!r.ok) {
     let msg = 'Could not open the document';
     try { const e = await r.json(); if (e && e.error) msg = e.error; } catch (_) {}
     toast(msg); return null;
   }
-  // An endpoint that has not learned about preview links ignores the query
-  // parameter and just sends the PDF. That is a valid answer: use the bytes
-  // we already have and fall back to the old blob tab, rather than failing
-  // in front of the operator. Such a tab still saves under a blob name —
-  // that endpoint needs sendPdfDocument() to fix it — but it WORKS.
+  // An endpoint that does not answer with a link just sends the PDF. That is
+  // a valid answer: hand back the bytes so the caller can still show the
+  // document rather than failing in front of the operator. Since the
+  // interceptor in server.js covers every PDF route, this is now the path
+  // taken only by something that did not go through Express at all.
   const ctype = String(r.headers.get('Content-Type') || '');
-  let href = null;
   if (ctype.indexOf('application/json') > -1) {
+    let href = null;
     try { const jj = await r.json(); if (jj && jj.url) href = B + jj.url; } catch (_) {}
     if (!href) { toast('Could not open the document'); return null; }
-  } else {
-    href = URL.createObjectURL(await r.blob());
-    setTimeout(() => { try { URL.revokeObjectURL(href); } catch (_) {} }, 120000);
+    return { href };
   }
+  return { blob: await r.blob() };
+}
+
+// Open an href in a tab. `print:true` fires the print dialog once it loads.
+function _openHrefInTab(href, print) {
   const w = window.open(href);
   if (!w) { toast('Allow pop-ups for this site to preview documents'); return null; }
-  if (opts.print) w.addEventListener('load', () => { try { w.focus(); w.print(); } catch (_) {} });
+  if (print) w.addEventListener('load', () => { try { w.focus(); w.print(); } catch (_) {} });
   return w;
+}
+
+// Fetch-and-open in one call, for the callers that own their own overlay.
+// Returns the opened window, or null (having reported why) so callers can
+// bail. `print:true` fires the print dialog once the document is up.
+async function _openPdfInTab(url, opts) {
+  opts = opts || {};
+  const got = await _pdfPreviewHref(url, opts.postBody);
+  if (!got) return null;
+  if (got.href) return _openHrefInTab(got.href, opts.print);
+  const u = URL.createObjectURL(got.blob);
+  setTimeout(() => { try { URL.revokeObjectURL(u); } catch (_) {} }, 120000);
+  return _openHrefInTab(u, opts.print);
 }
 
 // Preview the lorry report PDF inline in a new tab (mirrors exportPreview).
@@ -41140,29 +41248,24 @@ async function triggerBrowserPrint(blob, fallbackName) {
 // happens when the print/new-tab open path takes time or hangs — we never
 // want the user to be staring at "Building merged PDF…" while the PDF
 // has already arrived and is being printed.
+// Asks for a PREVIEW LINK rather than the bytes, so the tab it opens is
+// `/p/<id>/<Real Name>.pdf` and the viewer's Save offers the same filename a
+// direct export does. The fetch happens inside the overlay and the tab opens
+// after it is down — see _pdfPreviewHref. An endpoint that answers with
+// bytes anyway still works, via the old blob tab.
 async function fetchPdfWithOverlay(overlayMsg, endpoint, fallbackName, postBody) {
-  let blob;
+  let got = null;
   try {
     await withOverlay(overlayMsg, async () => {
-      const opts = { headers: { 'Authorization': 'Bearer ' + T } };
-      if (postBody) {
-        opts.method = 'POST';
-        opts.headers['Content-Type'] = 'application/json';
-        opts.body = JSON.stringify(postBody);
-      }
-      const r = await fetch(B + endpoint, opts);
-      if (!r.ok) {
-        let m = 'PDF failed';
-        try { const e = await r.json(); if (e.error) m = e.error; } catch (_) {}
-        throw new Error(m);
-      }
-      blob = await r.blob();
+      got = await _pdfPreviewHref(B + endpoint, postBody);
     });
   } catch (e) {
     showError(e);
     return;
   }
-  if (blob) await triggerBrowserPrint(blob, fallbackName);
+  if (!got) return;                                  // already reported
+  if (got.href) { _openHrefInTab(got.href); return; }
+  if (got.blob) await triggerBrowserPrint(got.blob, fallbackName);
 }
 
 // ── Separate PDFs: one file per party, downloaded as a .zip ──────────
@@ -41204,22 +41307,14 @@ async function downloadSeparatePdfs(kind, ids, template, labelPlural, extra){
   toast(`${ids.length} PDF${ids.length === 1 ? '' : 's'} saved to ${name}`);
 }
 
+// The no-overlay twin of fetchPdfWithOverlay. Same preview-link path, same
+// reason: the tab must carry the document's real name.
 async function fetchAndPrint(endpoint, fallbackName, postBody) {
   try {
-    const opts = { headers: { 'Authorization': 'Bearer ' + T } };
-    if (postBody) {
-      opts.method = 'POST';
-      opts.headers['Content-Type'] = 'application/json';
-      opts.body = JSON.stringify(postBody);
-    }
-    const r = await fetch(B + endpoint, opts);
-    if (!r.ok) {
-      let m = 'PDF failed';
-      try { const e = await r.json(); if (e.error) m = e.error; } catch (_) {}
-      throw new Error(m);
-    }
-    const blob = await r.blob();
-    await triggerBrowserPrint(blob, fallbackName);
+    const got = await _pdfPreviewHref(B + endpoint, postBody);
+    if (!got) return;                                // already reported
+    if (got.href) { _openHrefInTab(got.href); return; }
+    if (got.blob) await triggerBrowserPrint(got.blob, fallbackName);
   } catch (e) {
     showError(e);
   }
@@ -48770,19 +48865,9 @@ async function printDebitNote(id){
     const template = await pickTemplate('debit-note','Choose debit note format');
     if (template === null) return; // operator cancelled
     const qs = template ? ('?template=' + encodeURIComponent(template)) : '';
-    const r = await fetch(B + `/api/debit-notes/${id}/pdf` + qs, {
-      headers: { 'Authorization': 'Bearer ' + T }
-    });
-    if (!r.ok) {
-      let msg = 'Failed to render debit note';
-      try { const e = await r.json(); if (e.error) msg = e.error; } catch(_) {}
-      toast(msg);
-      return;
-    }
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    // Preview link, not a blob: the tab carries the note's real filename so
+    // the viewer's Save offers it too. See _pdfPreviewHref.
+    await _openPdfInTab(B + `/api/debit-notes/${id}/pdf` + qs);
   } catch (e) {
     toast(e.message || 'Print failed');
   }
@@ -49348,17 +49433,7 @@ async function printDebitNotePlanter(id){
     const template = await pickTemplate('debit-note','Choose debit note format');
     if (template === null) return; // operator cancelled
     const qs = template ? ('?template=' + encodeURIComponent(template)) : '';
-    const r = await fetch(B + `/api/debit-notes-planter/${id}/pdf` + qs, { headers: { 'Authorization': 'Bearer ' + T } });
-    if (!r.ok) {
-      let msg = 'Failed to render debit note';
-      try { const e = await r.json(); if (e.error) msg = e.error; } catch(_) {}
-      toast(msg);
-      return;
-    }
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    await _openPdfInTab(B + `/api/debit-notes-planter/${id}/pdf` + qs);
   } catch (e) {
     toast(e.message || 'Print failed');
   }
@@ -51517,12 +51592,13 @@ function piMountInline(idx, aid, buyerCode, saleType, noTI){
   const frameStyle = 'width:100%;height:820px;border:1px solid var(--border);border-radius:8px;background:#fff;margin-top:8px';
   if (_piSalesEngine === 'pdfkit') {
     slot.innerHTML = `<div style="padding:10px;color:var(--text3);font-size:12px">Building invoice preview…</div>`;
-    fetch(B + `/api/invoices/preview-pdf/${aid}`, { method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-      body: JSON.stringify({ saleType, buyerCode, noTI: (noTI==='1'||noTI===1||noTI===true), lotNos }) })
-      .then(async r => { if(!r.ok){ let m='Preview failed'; try{const e=await r.json(); if(e.error)m=e.error;}catch(_){}; throw new Error(m); } return r.blob(); })
-      .then(blob => {
-        const url = URL.createObjectURL(blob);
+    // A preview LINK, so the embedded viewer's own download button saves the
+    // invoice under its real name instead of a blob UUID.
+    _pdfPreviewHref(B + `/api/invoices/preview-pdf/${aid}`,
+      { saleType, buyerCode, noTI: (noTI==='1'||noTI===1||noTI===true), lotNos })
+      .then(got => {
+        if (!got) throw new Error('Preview failed');
+        const url = got.href || URL.createObjectURL(got.blob);
         slot.innerHTML = `<iframe src="${url}" title="Invoice preview" style="${frameStyle}"></iframe>`;
       })
       .catch(e => { slot.dataset.mounted=''; slot.innerHTML = `<div style="padding:10px;color:var(--spice-chili);font-size:12px">${esc(e.message||e)}</div>`; });
@@ -51615,17 +51691,17 @@ function piCard(p, aid, noTI, idx, single){
 // stamped "PREVIEW". Reuses the preview-pdf endpoint — no persistence.
 async function piPreviewPdf(aid, buyerCode, saleType, noTI, lotNosCsv){
   const lotNos = String(lotNosCsv||'').split(',').map(s=>s.trim()).filter(Boolean);
+  // Fetch the link under the overlay, open the tab once it is down.
+  let got = null;
   await withOverlay('Building pre-invoice…', async () => {
-    const r = await fetch(B + `/api/invoices/preview-pdf/${aid}`, { method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+T},
-      body: JSON.stringify({ saleType, buyerCode, noTI: !!noTI, lotNos }) });
-    if (!r.ok) { let m='Pre-invoice failed'; try { const e=await r.json(); if(e.error) m=e.error; } catch(_){} toast(m); return; }
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url);
-    if (!w) toast('Allow pop-ups to view the pre-invoice');
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    got = await _pdfPreviewHref(B + `/api/invoices/preview-pdf/${aid}`,
+      { saleType, buyerCode, noTI: !!noTI, lotNos });
   });
+  if (!got) return;                                  // already reported
+  if (got.href) { _openHrefInTab(got.href); return; }
+  const url = URL.createObjectURL(got.blob);
+  _openHrefInTab(url);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 // Build the HTML for ONE invoice preview. `label` (optional) is a heading shown

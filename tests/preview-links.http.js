@@ -17,6 +17,13 @@
 //   [compat]   plain export / download is byte-for-byte unaffected
 //   [fallback] an endpoint that ignores the parameter still returns a PDF,
 //              which is what lets the client fall back to a blob tab
+//   [app-wide] the OTHER ~40 PDF routes — the transaction menu, the reports,
+//              the receipts — answer with a link too, without any of them
+//              having been edited. Covered by one interceptor in server.js,
+//              so this section exercises each WAY a route can send:
+//              res.send(buffer) and doc.pipe(res) streaming.
+//   [passthru] a response that is NOT a PDF is never touched, however the
+//              parameter was passed — a JSON error stays a JSON error
 const path = require('path'), fs = require('fs'), os = require('os');
 const { spawn } = require('child_process');
 
@@ -62,6 +69,33 @@ const get = async (u, withAuth) => {
            json: (() => { try { return JSON.parse(buf.toString('utf8')); } catch (_) { return null; } })() };
 };
 const nameFromCd = (cd) => { const m = /filename="([^"]+)"/.exec(cd || ''); return m ? m[1] : ''; };
+// A POST returning headers + bytes, for the routes that take a body.
+const post = async (u, body) => {
+  const r = await fetch(B + u, { method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + T },
+    body: JSON.stringify(body) });
+  const buf = Buffer.from(await r.arrayBuffer());
+  return { s: r.status, type: r.headers.get('content-type') || '',
+           cd: r.headers.get('content-disposition') || '', buf,
+           json: (() => { try { return JSON.parse(buf.toString('utf8')); } catch (_) { return null; } })() };
+};
+// The one assertion that matters for every family: the name a PREVIEW
+// offers is the name a DIRECT download offers. Returns the direct name so a
+// caller can show it, and fails loudly when either leg did not render.
+const sameName = (label, direct, linked) => {
+  const want = nameFromCd(direct.cd);
+  const url = (linked.json && linked.json.url) || '';
+  const got = decodeURIComponent(String(url).split('/').pop() || '');
+  check(label + ': the direct download really renders',
+    direct.s === 200 && direct.buf.slice(0, 5).toString() === '%PDF-' && /\.pdf$/.test(want),
+    { s: direct.s, cd: direct.cd, head: direct.buf.slice(0, 60).toString() });
+  check(label + ': …the preview answers with a /p/ link, not the bytes',
+    linked.s === 200 && /^application\/json/.test(linked.type) && /^\/p\/[0-9a-f]{32}\//.test(url),
+    { s: linked.s, type: linked.type, url, head: linked.buf.slice(0, 80).toString() });
+  check(label + ': …and the SAVED NAME is identical to the direct export',
+    !!want && got === want, { direct: want, preview: got });
+  return want;
+};
 
 (async () => {
   for (let i = 0; i < 200; i++) {
@@ -211,6 +245,70 @@ const nameFromCd = (cd) => { const m = /filename="([^"]+)"/.exec(cd || ''); retu
   check('…and the link answer is a /p/ url, not the PDF bytes',
     looksJson && /\/p\/[0-9a-f]{32}\//.test(piBody.toString('utf8')),
     piBody.slice(0, 80).toString());
+
+  // ── [app-wide] routes that never call sendPdfDocument ────────────────
+  // These four were NOT edited to support preview links. They are covered
+  // by the interceptor in server.js, which is the whole point: the fix had
+  // to reach every PDF the app serves, not the handful wired by hand.
+  console.log('\n[app-wide] the other PDF routes answer with a link too');
+
+  // (a) res.send(buffer) — the lot receipt, off the transaction menu.
+  const lotId = ids[0];
+  sameName('lot receipt',
+    await get('/api/receipt/' + lotId),
+    await get('/api/receipt/' + lotId + '?previewlink=1'));
+
+  // (b) doc.pipe(res) — a STREAMING route. res.send() is never called here,
+  // so this is what proves the write()/end() half of the interceptor. A
+  // route like this was the reason to intercept rather than convert.
+  const sumQs = '?token=' + encodeURIComponent(T);
+  sameName('auction summary (streamed)',
+    await get('/api/reports/summary-pdf/' + A + sumQs, false),
+    await get('/api/reports/summary-pdf/' + A + sumQs + '&previewlink=1', false));
+
+  // (c) a POST route — the report widgets' Print button.
+  const spec = { title: 'Lot Register', columns: [{ header: 'Lot', key: 'lot' }],
+                 rows: [{ lot: '016' }, { lot: '017' }], inline: 1 };
+  sameName('report widget PDF (POST)',
+    await post('/api/report-pdf', spec),
+    await post('/api/report-pdf?previewlink=1', spec));
+
+  // (d) the exports menu, which goes through sendPdfDocument — pinned here
+  // too so the two paths are known to agree on the name.
+  sameName('exports menu PDF',
+    await get('/api/exports/lot_slip/' + A + '?format=pdf'),
+    await get('/api/exports/lot_slip/' + A + '?format=pdf&previewlink=1'));
+
+  // ── [passthru] everything that is not a PDF is left alone ────────────
+  console.log('\n[passthru] a non-PDF response is never intercepted');
+  const errDirect = await post('/api/report-pdf', { title: 'No columns', rows: [] });
+  const errLink = await post('/api/report-pdf?previewlink=1', { title: 'No columns', rows: [] });
+  check('a route that fails still returns its JSON error, not a link',
+    errLink.s === errDirect.s && errLink.s === 400 &&
+    errLink.json && /columns/.test(String(errLink.json.error)) && !errLink.json.url,
+    { direct: errDirect.s, link: errLink.s, body: errLink.json });
+  const xl = await get('/api/exports/lot_slip/' + A + '?format=xlsx&previewlink=1');
+  check('…and a spreadsheet is still a spreadsheet',
+    xl.s === 200 && /spreadsheetml/.test(xl.type) && xl.buf.slice(0, 2).toString() === 'PK',
+    { s: xl.s, type: xl.type });
+  // express.static is mounted ABOVE the interceptor, so a page never even
+  // reaches it. Pinned anyway: the ordering is what keeps it that way.
+  const html = await fetch(B + '/help.html?previewlink=1');
+  check('…and an ordinary page still loads',
+    html.status === 200 && /text\/html/.test(html.headers.get('content-type') || ''),
+    { s: html.status, type: html.headers.get('content-type') });
+
+  // The parked copy must be the SAME document, not a re-render — a second
+  // render could differ (a date, a page count) and the operator would be
+  // saving something they had not seen.
+  const recDirect = await get('/api/receipt/' + lotId);
+  const recLink = await get('/api/receipt/' + lotId + '?previewlink=1');
+  const recServed = await get((recLink.json && recLink.json.url) || '/p/x/y', false);
+  check('the link serves the very bytes the route rendered',
+    recServed.s === 200 && recServed.buf.length > 500 &&
+    Math.abs(recServed.buf.length - recDirect.buf.length) < 2000 &&
+    recServed.buf.slice(0, 5).toString() === '%PDF-',
+    { served: recServed.buf.length, direct: recDirect.buf.length });
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   cleanup();

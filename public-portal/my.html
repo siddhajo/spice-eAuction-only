@@ -360,6 +360,20 @@
           white-space:nowrap;transition:transform .1s ease}
   .fmts a:active{transform:scale(.94)}
   @media (max-width:360px){ .fmts a{padding:0 9px;font-size:11px} }
+  /* The same three shapes, asked ONCE for a whole bundle. A row chip is a
+     link (one document, one shape); these are toggles that say what every
+     purchase in the bundle should carry, so they are buttons with an on
+     state and at least one is always on. */
+  .shapes{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 2px 10px}
+  .shapes .lb{font-size:12px;color:var(--muted);font-weight:600;margin-right:1px}
+  .shapes button{height:33px;padding:0 12px;border-radius:9px;cursor:pointer;
+          border:1.5px solid var(--line);background:var(--card);color:var(--muted);
+          font-size:11.5px;font-weight:700;letter-spacing:.2px;white-space:nowrap;
+          font-family:inherit;transition:transform .1s ease}
+  .shapes button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent-ink);
+          background:var(--accent)}
+  .shapes button:active{transform:scale(.94)}
+  @media (max-width:360px){ .shapes button{padding:0 10px;font-size:11px} }
   .doc.on{background:var(--accent-soft)}
   .doc .pick{width:24px;height:24px;flex:none;margin:0;accent-color:var(--accent)}
   .selall{display:flex;align-items:center;gap:11px;padding:11px 16px;
@@ -578,6 +592,7 @@
         <button class="grab" id="grab" hidden></button>
       </span>
     </div>
+    <div class="shapes" id="shapes" hidden></div>
     <div class="card" id="doclist"></div>
   </section>
 
@@ -606,6 +621,9 @@
   var parties = [], active = null, myPhone = '', viewingAll = false;
   var allDocs = [], fyPick = '', moPick = '';   // moPick '' = the whole year
   var selMode = false, sel = {};                // id → true, only while selecting
+  // Which shapes of a purchase a BUNDLE should carry. Defaults to the
+  // invoice alone, which is what the bundle has always contained.
+  var shapePick = { purchase: true, statement: false, voucher: false };
   var ticker = null, expiresAt = 0, resendAt = 0;
   var CO = {}, totals = {};
 
@@ -1015,6 +1033,7 @@
       $('count').textContent = '';
       $('grab').hidden = true;
       $('pickbtn').hidden = true;
+      $('shapes').hidden = true;
       drawTiles();
       drawHelp();
       return;
@@ -1022,6 +1041,7 @@
     $('count').textContent = docs.length + ' document' + (docs.length === 1 ? '' : 's');
 
     drawBar(docs);
+    drawShapes(docs);
     drawTiles();
     drawHelp();
 
@@ -1056,6 +1076,7 @@
           if (cb.checked) sel[d.id] = true; else delete sel[d.id];
           row.className = (i % 2 ? 'doc alt' : 'doc') + (cb.checked ? ' on' : '');
           drawBar(docs);
+          drawShapes(docs);
           var head = list.querySelector('.selall input');
           if (head) {
             head.checked = docs.every(function(x){ return sel[x.id]; });
@@ -1150,6 +1171,50 @@
     });
   }
 
+  // A purchase can be bundled in three shapes, so a bundle has to ask which
+  // — the row chips answer it for ONE document, and before this the only
+  // answer a bundle had was "invoices". Shown only when the documents that
+  // would actually go into the file include a purchase; a buyer's invoices
+  // have one shape and a chooser over them would be furniture.
+  function drawShapes(docs){
+    var box = $('shapes');
+    var inBundle = selMode
+      ? docs.filter(function(d){ return sel[d.id]; })   // what Download N takes
+      : docs;                                           // what Download all takes
+    var fmts = null;
+    for (var i = 0; i < inBundle.length; i++) {
+      if (inBundle[i].formats && inBundle[i].formats.length > 1) { fmts = inBundle[i].formats; break; }
+    }
+    // No bulk button on screen means nothing to choose FOR.
+    var bulkOffered = !$('grab').hidden && !$('grab').disabled;
+    if (!fmts || !bulkOffered) { box.hidden = true; box.innerHTML = ''; return; }
+
+    box.hidden = false;
+    box.innerHTML = '';
+    var lb = document.createElement('span'); lb.className = 'lb';
+    lb.textContent = 'Include:';
+    box.appendChild(lb);
+    fmts.forEach(function(f){
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = f.label;
+      var on = !!shapePick[f.kind];
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.setAttribute('aria-label', (on ? 'Leave out the ' : 'Add the ') + f.label
+        + ' for every purchase in this download');
+      b.onclick = function(){
+        // Turning the last one off would ask for an empty file. Refuse it
+        // here rather than letting the server answer 400 for something the
+        // screen could see coming.
+        var live = fmts.filter(function(x){ return shapePick[x.kind]; });
+        if (on && live.length === 1) return;
+        shapePick[f.kind] = !on;
+        render();
+      };
+      box.appendChild(b);
+    });
+  }
+
   // The bar under the pickers. Two states, because the question changes:
   // browsing asks "do you want the lot?", selecting asks "do you want these?".
   function drawBar(docs){
@@ -1218,10 +1283,15 @@
     var grab = $('grab');
     grab.disabled = true;
     grab.innerHTML = svg('#i-dl', 15) + '<span>Preparing…</span>';
+    // Always stated, never implied: the server defaults to invoices when the
+    // parameter is missing, and a bundle that silently dropped the chosen
+    // statements would look like the chooser does nothing.
+    var shapes = Object.keys(shapePick).filter(function(k){ return shapePick[k]; });
     var qs = '/api/portal/documents/bulk?party=' + encodeURIComponent(active.kind + ':' + active.id)
            + (ids ? '&ids=' + ids.join(',')
                   : '&fy=' + encodeURIComponent(fyPick)
                     + (moPick ? '&month=' + encodeURIComponent(moPick) : ''))
+           + (shapes.length ? '&formats=' + encodeURIComponent(shapes.join(',')) : '')
            + '&token=' + encodeURIComponent(token);
     try {
       var r = await fetch(qs);

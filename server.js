@@ -212,6 +212,91 @@ app.get('/p/:id/:name', (req, res) => {
   return res.send(doc.buf);
 });
 
+// ── PREVIEW LINKS FOR EVERY PDF ROUTE ────────────────────────────────────
+// `sendPdfDocument` below gives a route preview-link support, but only four
+// routes call it — and the app serves PDFs from about forty: the transaction
+// menu's invoices, bills, debit notes and receipts, the exports menu, the
+// statutory reports, the mobile receipts. Each sets its own Content-Type and
+// Content-Disposition and then sends. Converting them one at a time would be
+// forty edits, and the forty-first route written next month would quietly go
+// back to offering a UUID in the Save dialog.
+//
+// So intercept rather than convert. When a request asks for
+// `?previewlink=1`, watch the response: if it turns out to be a PDF, park
+// the bytes and answer with the URL instead. The filename is lifted from the
+// Content-Disposition the route ALREADY set, so every route keeps its own
+// naming and none of them need to know this exists — including new ones.
+//
+// Three ways a route can send are covered: res.send(buffer), the Uint8Array
+// a headless-Chromium render returns, and `doc.pipe(res)` streaming, where
+// write() collects and end() answers. Anything that is not a PDF — a JSON
+// error, an XLSX, a redirect — passes straight through untouched.
+app.use((req, res, next) => {
+  if (String(req.query.previewlink || '') !== '1') return next();
+
+  const origSend  = res.send.bind(res);
+  const origWrite = res.write.bind(res);
+  const origEnd   = res.end.bind(res);
+  const chunks = [];
+  let answered = false;
+
+  const isPdf = () => /application\/pdf/i.test(String(res.getHeader('Content-Type') || ''));
+  const asBuf = (c, enc) => (Buffer.isBuffer(c) ? c
+    : c instanceof Uint8Array ? Buffer.from(c)
+    : Buffer.from(String(c), typeof enc === 'string' ? enc : 'utf8'));
+  // The name the route already chose. Both quoting styles, and the RFC 5987
+  // form, because the routes were not written to one convention.
+  const filename = () => {
+    const cd = String(res.getHeader('Content-Disposition') || '');
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+    let n = m && m[1] ? m[1].trim() : '';
+    try { n = decodeURIComponent(n); } catch (_) {}
+    return n || 'document.pdf';
+  };
+
+  // `answered` is set FIRST: this goes out through res.send(), which is
+  // patched below, and the guard is what stops it recursing into itself.
+  const answerWithLink = (buf) => {
+    answered = true;
+    const name = filename();
+    res.removeHeader('Content-Disposition');
+    res.removeHeader('Content-Length');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    const id = previewLinks.stash(buf, name);
+    if (!id) {
+      res.statusCode = 413;
+      return origSend(JSON.stringify({ error: 'Document is too large to preview' }));
+    }
+    return origSend(JSON.stringify({
+      url: `/p/${id}/${encodeURIComponent(previewLinks.safeName(name))}`,
+    }));
+  };
+
+  res.send = function (body) {
+    const bin = Buffer.isBuffer(body) || body instanceof Uint8Array;
+    if (answered || !isPdf() || !bin) return origSend(body);
+    return answerWithLink(asBuf(body));
+  };
+  res.write = function (chunk, enc, cb) {
+    if (answered || !isPdf()) return origWrite(chunk, enc, cb);
+    if (chunk) chunks.push(asBuf(chunk, enc));
+    const done = typeof enc === 'function' ? enc : cb;
+    if (typeof done === 'function') done();
+    return true;   // nothing is really queued, so never signal backpressure
+  };
+  res.end = function (chunk, enc, cb) {
+    if (answered || !isPdf()) return origEnd(chunk, enc, cb);
+    if (chunk && typeof chunk !== 'function') chunks.push(asBuf(chunk, enc));
+    if (!chunks.length) return origEnd(chunk, enc, cb);
+    answerWithLink(Buffer.concat(chunks));
+    const done = typeof chunk === 'function' ? chunk
+      : typeof enc === 'function' ? enc : cb;
+    if (typeof done === 'function') done();
+    return res;
+  };
+  next();
+});
+
 // Send a rendered PDF — or, when the caller asked for one with
 // `?previewlink=1`, park it and hand back the URL to open instead. Every
 // Preview button goes through the second path so the tab it opens carries
