@@ -65,6 +65,11 @@ function buildStatementView(stmt, cfg, first) {
     first: !!first,
     cfg,
     co,
+    // The voucher's two meta bands. A statement covers one purchase invoice,
+    // so billNo is that invoice's number (the voucher suffixes /1, /2 … per
+    // lot; there is nothing to suffix here).
+    crpt: stmt.crpt || '',
+    billNo: stmt.billNo == null ? '' : String(stmt.billNo),
     ano: auction.ano == null ? '' : String(auction.ano),
     auctionDate: auction.date || '',
     seller: { block: sellerBlock },

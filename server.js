@@ -15978,12 +15978,15 @@ app.post('/api/purchases/bill-statement-bulk', requireView, async (req, res) => 
 
     const statements = [];
     for (const p of ordered) {
-      const { auction, seller, perLot, docDate } =
+      const { auction, first, seller, perLot, docDate } =
         purchaseCommissionContext(db, cfg, p, invoOpts);
       statements.push({
         seller,
         auction: { ano: auction ? auction.ano : (p.ano || ''), date: docDate },
         perLot,
+        // Meta bands, matching the Payment Voucher's.
+        crpt: (perLot[0] && perLot[0].crpt) || first.crpt || '',
+        billNo: String(p.invo == null ? '' : p.invo).trim(),
         // The TDS the office actually deducted on this purchase, not a
         // recomputation — see the renderer.
         tds: Number(p.tds) || 0,
