@@ -792,8 +792,15 @@ function cleanup() {
   });
   // The samples are drawn from EVERY lot in the trade, not one branch's.
   check('it covers every lot in the trade', sb.lots === 4, String(sb.lots));
-  check('…as a SAMPLES-only consignment', sb.sampleOnly === true && sb.lines.length === 1
-        && sb.lines[0].desc === 'SAMPLES', JSON.stringify(sb.lines));
+  // ONE line, and it is DESCRIBED as the configured goods — "CARDAMOM" from
+  // Settings, not the literal "SAMPLES" it used to print. What travels is
+  // cardamom, and the paper has to name the commodity for anyone who stops
+  // the vehicle; that the consignment is a sample draw is the Remarks line's
+  // job. (Changed 2026-11-25 at the office's request.)
+  check('…as a sample-draw consignment of ONE line', sb.sampleOnly === true
+        && sb.lines.length === 1, JSON.stringify(sb.lines));
+  check('…described as the configured goods, not "SAMPLES"',
+        sb.lines[0].desc === 'CARDAMOM', JSON.stringify(sb.lines));
   check('…so there is no net-weight line and no kilo field',
         sb.qty === '' && sb.qtyShown === 'none', JSON.stringify({ qty: sb.qty, shown: sb.qtyShown }));
   // 4 lots x 1.500 (the Board's own per-lot draw) — NOT 4 x 0.500, which is
@@ -819,8 +826,38 @@ function cleanup() {
     const c = (sb.html.match(/Code<\/span><span>: (\d+)/) || [])[1] || '';
     return g.slice(0, 2) === c;
   })(), 'code must equal the GSTIN prefix');
-  check('the paper shows one SAMPLES line', /SAMPLES/.test(sb.html) && !/>CARDAMOM</.test(sb.html));
+  if (process.env.CHALAN_SHOT_DIR) {
+    const fr = await page.$('#dc-preview');
+    if (fr) await fr.screenshot({ path: process.env.CHALAN_SHOT_DIR + '/sb-chalan.png' });
+  }
+  check('the paper shows one goods line, named CARDAMOM',
+        />CARDAMOM</.test(sb.html) && !/>SAMPLES</.test(sb.html),
+        (sb.html.match(/>(CARDAMOM|SAMPLES)</g) || []).join(','));
   check('…and the Board as consignee', /SPICES BOARD/.test(sb.html));
+  // "Either receiver or sender": the swap button flips the two party blocks.
+  // The goods line must not care — sampleOnly is set from the BRANCH being
+  // the Board, not from which side of the paper it lands on.
+  const swapped = await page.evaluate(async () => {
+    dcToggleSwap();
+    await new Promise(r => setTimeout(r, 300));
+    return { swapped: _dc.swapped, lines: leChalanLines(dcCollect()),
+             html: document.getElementById('dc-preview').contentDocument.body.innerHTML };
+  });
+  check('swapping puts the Board on the other side', swapped.swapped === true);
+  check('…and the goods line is STILL the configured CARDAMOM',
+        swapped.lines.length === 1 && swapped.lines[0].desc === 'CARDAMOM',
+        JSON.stringify(swapped.lines));
+  check('…on the paper too', />CARDAMOM</.test(swapped.html) && !/>SAMPLES</.test(swapped.html),
+        (swapped.html.match(/>(CARDAMOM|SAMPLES)</g) || []).join(','));
+  await page.evaluate(async () => { dcToggleSwap(); await new Promise(r => setTimeout(r, 200)); });
+  // It must read the SETTING, not a second hardcoded word: an install that
+  // calls the commodity something else gets its own name on the paper.
+  const custom = await page.evaluate(() => {
+    const o = dcCollect();
+    return leChalanLines({ ...o, cfg: { ...o.cfg, chalan_goods_desc: 'ELAICHI' } })[0].desc;
+  });
+  check('the description follows Settings → Description of Goods',
+        custom === 'ELAICHI', custom);
   const codes = await page.evaluate(async () => {
     const cfg = await j('/api/company-settings/flat');
     const mk = (over) => leChalanPartyBlocks({ ...cfg, ...over }, '__SB_TN__').receiver;

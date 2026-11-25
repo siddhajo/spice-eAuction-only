@@ -493,6 +493,43 @@ const signIn = async (phone) => {
       r = await portal('GET', `/api/portal/documents/purchase/${theirPur.id}/pdf`, null, tokD2);
       check("…while another dealer's is refused", r.s === 403, r.s);
     }
+    // ── The same purchase, three ways ────────────────────────────────
+    // The bill statement and the per-lot payment voucher are the SAME
+    // purchase seen differently, so they add NO rows: the purchase row
+    // advertises them as formats. Listing them separately would repeat the
+    // dealer's money three times down the screen.
+    check('…the purchase is still ONE row',
+          r.d.documents.filter(x => x.id === purDoc.id).length === 1,
+          r.d.documents.map(x => x.kind + ':' + x.id).join(','));
+    check('…advertising three download formats',
+          Array.isArray(purDoc.formats)
+          && purDoc.formats.map(f => f.kind).join(',') === 'purchase,statement,voucher',
+          JSON.stringify(purDoc.formats));
+    for (const kind of ['statement', 'voucher']) {
+      const g = await raw(`/api/portal/documents/${kind}/${purDoc.id}/pdf?token=${tokD2}`);
+      check(`…the ${kind} downloads as a real PDF`,
+            g.s === 200 && g.buf.slice(0, 4).toString() === '%PDF',
+            { s: g.s, head: g.buf.slice(0, 50).toString() });
+      // As owned as the invoice: no token, and no OTHER party's token.
+      check(`…the ${kind} needs a token`,
+            (await raw(`/api/portal/documents/${kind}/${purDoc.id}/pdf`)).s === 401);
+      check(`…and is refused to another seller's handset`,
+            (await raw(`/api/portal/documents/${kind}/${purDoc.id}/pdf?token=${tokC}`)).s === 403);
+    }
+    // The statement must be the OFFICE's document, not a portal lookalike:
+    // same bytes as the Purchases screen prints for that row.
+    const office = await fetch(B + '/api/purchases/bill-statement-bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + T },
+      body: JSON.stringify({ ids: [myPur.id] }) });
+    const officeBuf = Buffer.from(await office.arrayBuffer());
+    const portalBuf = (await raw(`/api/portal/documents/statement/${purDoc.id}/pdf?token=${tokD2}`)).buf;
+    // Not byte-equal — a PDF carries a creation timestamp — so compare the
+    // size, which moves the moment the content does.
+    check('…and the statement is the office\'s own document, not a lookalike',
+          Math.abs(officeBuf.length - portalBuf.length) < 2048 && officeBuf.length > 1000,
+          { office: officeBuf.length, portal: portalBuf.length });
+
     // A buyer must not reach the purchase kind either — checked in [E],
     // where a buyer token exists.
     dealerPurchaseId = purDoc.id;

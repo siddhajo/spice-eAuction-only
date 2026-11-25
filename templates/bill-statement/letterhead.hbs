@@ -82,15 +82,17 @@
          cell: a statement covers every lot the dealer sold, so there is no
          one lot number to name here. -->
     <table style="table-layout:fixed">
+      <!-- The voucher carries a Crop Receipt No and a Bill No here. A
+           statement carries neither: it is not itself a numbered document,
+           and the crop receipt belongs to a single lot. The title takes the
+           whole width instead of sitting between two empty boxes. -->
       <tr class="band2">
-        <td style="width:33%">Crop Receipt No: {{crpt}}</td>
-        <td style="width:34%">Bill Statement<br>[ STATEMENT OF CARDAMOM SOLD THROUGH {{cfg.short_name}} ]</td>
-        <td style="width:33%">Bill No: {{billNo}}</td>
+        <td colspan="3">Bill Statement<br>[ STATEMENT OF CARDAMOM SOLD THROUGH {{cfg.short_name}} ]</td>
       </tr>
       <tr class="band">
-        <td>Auction No: {{ano}}</td>
-        <td></td>
-        <td>Date: {{auctionDate}}</td>
+        <td style="width:33%">Auction No: {{ano}}</td>
+        <td style="width:34%"></td>
+        <td style="width:33%">Date: {{auctionDate}}</td>
       </tr>
     </table>
 
@@ -127,10 +129,19 @@
           <td class="right">{{rup this.payable}}</td>
         </tr>
         {{/each}}
-        <!-- Closing rows, in the voucher's own summary style: label right,
-             figure in the last column. Qty and Amount are deliberately NOT
-             totalled — only what is being paid is. -->
-        <tr><td colspan="7" class="sumlbl">Total</td><td class="right bold">{{rup totalPayable}}</td></tr>
+        <!-- Totals for every figure column, so each one can be checked
+             against the column above it. Sl.No and Lot No have nothing to
+             add up; the Lot No cell carries the label instead. -->
+        <tr class="sum">
+          <td></td>
+          <td class="center bold">Total</td>
+          <td class="right bold">{{qtyg totals.qty}}</td>
+          <td class="right bold">{{rup totals.amount}}</td>
+          <td class="right bold">{{rup totals.refund}}</td>
+          <td class="right bold">{{rup totals.commission}}</td>
+          <td class="right bold">{{rup totals.gst}}</td>
+          <td class="right bold">{{rup totalPayable}}</td>
+        </tr>
         <tr><td colspan="7" class="sumlbl">LESS: TDS</td><td class="right bold">{{rup tds}}</td></tr>
         <tr><td colspan="7" class="sumlbl">Net</td><td class="right bold">{{rup net}}</td></tr>
       </tbody>

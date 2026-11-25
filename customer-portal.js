@@ -921,9 +921,15 @@ function mountPortal(app, deps) {
       where.push(`(l.phone_key LIKE ? OR UPPER(COALESCE(t.name, b.buyer1, b.buyer, '')) LIKE UPPER(?))`);
       args.push('%' + q.replace(/\D/g, '') + '%', '%' + q + '%');
     }
+    // The master's CURRENT number, cleaned the same way a link key is, so
+    // the admin screen can show a grant that no longer matches the master —
+    // which is both "this party cannot sign in with their real number" and
+    // "whoever holds the old one can still read their documents".
+    const CLEAN = (c) => `substr(replace(replace(replace(replace(replace(IFNULL(${c},''),' ',''),'-',''),'+',''),'(',''),')',''), -10)`;
     const rows = db.all(
       `SELECT l.id, l.party_kind, l.party_id, l.phone_key, l.source, l.created_at, l.created_by,
               COALESCE(t.name, b.buyer1, b.buyer, '(deleted)') AS party_name,
+              CASE WHEN l.party_kind = 'seller' THEN ${CLEAN('t.tel')} ELSE ${CLEAN('b.tel')} END AS master_phone,
               (SELECT COUNT(*) FROM party_links x
                 WHERE x.phone_key = l.phone_key AND x.status = 'active') AS shares
          FROM party_links l

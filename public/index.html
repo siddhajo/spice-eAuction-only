@@ -5413,6 +5413,13 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
           <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Backup
         </button>
+        <!-- Customer Access — who can sign in to the customer portal, and
+             on which number. Admin-only: a link here is read access to a
+             party's whole document history. -->
+        <button class="side-item needs-user-manage" data-tab="portalaccess" onclick="go('portalaccess')">
+          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6"/><path d="M19 8v6"/></svg>
+          Customer Access
+        </button>
         <button class="side-item needs-user-manage" data-tab="importold" onclick="go('importold')">
           <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 14l-5 5-5-5M12 19V3"/></svg>
           Import Old Data
@@ -6361,6 +6368,63 @@ select.pay-lot-bank:disabled{background:#f3f4f6;color:var(--text3);cursor:not-al
               <button class="btn btn-sm" onclick="auditNext()" id="audit-next">Next →</button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ CUSTOMER ACCESS ══════════════════════════════════════════
+         Who can sign in to the customer portal, and on which handset.
+         A link here is read access to a party's WHOLE document history,
+         so the screen is admin-only and every grant says where it came
+         from: 'auto' (raised with a document), 'seeded' (the one-off
+         import) or 'admin' (bound by hand).
+    -->
+    <div class="tc" id="tc-portalaccess">
+      <div class="card" style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0">Customer Access</h2>
+          <span id="pa-flagwarn" style="display:none;font-size:12px;font-weight:700;color:#8B6508;background:var(--spice-turmeric-lt,#fef3c7);border:1px solid #e0c068;border-radius:6px;padding:3px 9px">Portal is switched OFF &mdash; Settings &rarr; Flags</span>
+          <button class="btn" style="margin-left:auto;height:36px;padding:0 14px" onclick="loadPortalAccess()">&#8635; Refresh</button>
+        </div>
+        <p style="margin:8px 0 0;font-size:13px;color:var(--text3);max-width:70ch">
+          A seller or buyer signs in at <code>/my</code> with their phone number and sees only their
+          own documents. A party is enrolled automatically the moment a document is raised for them;
+          the list below is every grant that is currently live.
+        </p>
+      </div>
+
+      <!-- Enrol everyone who already holds a document. -->
+      <div class="card" style="margin-bottom:14px">
+        <h3 style="margin:0 0 4px">Enrol parties that already hold documents</h3>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--text3);max-width:70ch">
+          Documents raised <em>before</em> the portal existed enrolled nobody &mdash; those parties
+          cannot sign in. This grants a link to every seller and buyer that holds at least one
+          document and has a 10-digit number on the master. Check first: it reports what would
+          change and writes nothing.
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-a" style="height:38px;padding:0 16px;font-weight:600" onclick="paSeed(false)">Check what would change</button>
+          <button class="btn btn-g" id="pa-seed-go" style="display:none;height:38px;padding:0 16px;font-weight:600" onclick="paSeed(true)">Enrol them</button>
+        </div>
+        <div id="pa-seed-out" style="margin-top:10px;font-size:13px"></div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <h3 style="margin:0">Who can sign in</h3>
+          <span id="pa-count" style="font-size:12px;color:var(--text3)"></span>
+          <input type="search" id="pa-search" placeholder="Search a name or number&hellip;"
+                 oninput="paSearchDebounced(this.value)"
+                 style="margin-left:auto;padding:0 12px;height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:13px;min-width:240px">
+        </div>
+        <div style="overflow:auto">
+          <table class="data" id="pa-table">
+            <thead><tr>
+              <th>Party</th><th>Side</th><th>Signs in with</th><th>Shared</th>
+              <th>Granted by</th><th>Added</th><th></th>
+            </tr></thead>
+            <tbody id="pa-rows"><tr><td colspan="7" style="text-align:center;color:var(--text3);padding:18px">Loading&hellip;</td></tr></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -14869,6 +14933,7 @@ const NAV_GROUPS = [
     items:[
       { tab:'settings',  label:'Settings' },
       { tab:'users',     label:'Users' },
+      { tab:'portalaccess', label:'Customer Access' },
       { tab:'backup',    label:'Backups' },
       { tab:'importold', label:'Import Old Data' },
       // Dev-only pair — hidden until spiceDev(true), which the source
@@ -15134,7 +15199,7 @@ function go(tab){
   if (typeof applyLogoBadge === 'function') {
     try { applyLogoBadge(); } catch(_) {}
   }
-  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},reports:loadReports,traders:()=>{_clearMasterSearch('traders-search');return searchTraders('')},buyers:()=>{_clearMasterSearch('buyers-search');return searchBuyers('')},birthdays:loadBirthdays,reminders:loadReminders,godown:loadGodown,'delivery-chalan':loadDeliveryChalan,
+  const loaders={hub:loadHub,dash:loadStats,insights:loadInsights,pertrade:loadPerTradeBreakdown,auctionmgr:loadAuctionManager,amreports:loadAmReports,settings:loadSettings,formulas:loadFormulas,fixdata:loadFixData,lotentry:loadLotEntry,users:()=>{loadUsers();loadLoginHistory();_auditPage=1;loadAuditLog();},portalaccess:loadPortalAccess,reports:loadReports,traders:()=>{_clearMasterSearch('traders-search');return searchTraders('')},buyers:()=>{_clearMasterSearch('buyers-search');return searchBuyers('')},birthdays:loadBirthdays,reminders:loadReminders,godown:loadGodown,'delivery-chalan':loadDeliveryChalan,
     auctions:loadAuctions,reassignreqs:loadReassignRequests,lotalloc:loadLotAllocation,lots:loadLotAuctions,invoices:loadInvAuctions,preinvoice:loadPreInvoice,purchases:loadPurAuctions,
     payments:loadPayAuctions,exports:loadExpAuctions,tds:()=>{},lorry:loadLorryAuctions,
     bills:loadBillAuctions,debit:loadDnAuctions,debitplanter:loadDnpAuctions,journals:loadJournalDefault,registers:loadRegisterDefault,tally:loadTallyAuctions,
@@ -21924,6 +21989,135 @@ function toggleUserCard(headerEl){
   card.setAttribute('data-open', next ? '1' : '0');
   if (body) body.style.display = next ? '' : 'none';
   if (chev) chev.textContent = next ? '▾' : '▸';
+}
+
+// ── CUSTOMER ACCESS ───────────────────────────────────────────────
+// The admin view of who can sign in to the customer portal. Every row is
+// read access to one party's whole document history, so the screen's job is
+// to make three things obvious: who holds it, how they got it, and where
+// the grant no longer matches the master.
+let _paRows = [], _paSearchT = null;
+
+function paSearchDebounced(q){
+  clearTimeout(_paSearchT);
+  _paSearchT = setTimeout(() => loadPortalAccess(q), 250);
+}
+
+async function loadPortalAccess(q){
+  const body = document.getElementById('pa-rows');
+  if (!body) return;
+  const term = q != null ? q : (document.getElementById('pa-search')||{}).value || '';
+  // The portal flag does not gate this screen — an admin has to be able to
+  // set access up before the door opens, and audit it after it shuts.
+  try {
+    const cfg = await j('/api/company-settings/flat');
+    const warn = document.getElementById('pa-flagwarn');
+    if (warn) warn.style.display = String(cfg.flag_customer_portal) === 'true' ? 'none' : 'inline-block';
+  } catch(_){}
+  body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:18px">Loading…</td></tr>';
+  let d;
+  try { d = await j('/api/portal/admin/links' + (term ? '?q=' + encodeURIComponent(term) : '')); }
+  catch (e) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--red,#b3261e);padding:18px">' + esc(e.message || 'Could not load') + '</td></tr>';
+    return;
+  }
+  _paRows = d.rows || [];
+  const cnt = document.getElementById('pa-count');
+  if (cnt) cnt.textContent = d.shown === d.total
+    ? d.total + ' active grant' + (d.total === 1 ? '' : 's')
+    : d.shown + ' of ' + d.total + ' shown';
+  if (!_paRows.length) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:18px">'
+      + (term ? 'Nothing matches that.' : 'Nobody is enrolled yet.') + '</td></tr>';
+    return;
+  }
+  // 'admin' and 'claim' are HAND-MADE grants: autoEnrol will not move them
+  // when the master phone changes, which is deliberate but worth seeing.
+  const SRC = { auto:'Document raised', seeded:'Seeded', admin:'Set by hand', claim:'Claimed' };
+  body.innerHTML = _paRows.map(r => {
+    const pinned = r.source === 'admin' || r.source === 'claim';
+    const stale  = !!r.master_phone && String(r.master_phone) !== String(r.phone_key);
+    const flags = [];
+    if (stale) flags.push('<span title="The master now says ' + esc(r.master_phone)
+      + '. Whoever holds this number can still read these documents."'
+      + ' style="font-size:10px;font-weight:700;color:#8B6508;background:var(--spice-turmeric-lt,#fef3c7);border:1px solid #e0c068;border-radius:8px;padding:1px 7px;margin-left:6px">STALE</span>');
+    if (pinned) flags.push('<span title="Set by hand — editing the seller master will NOT move this grant."'
+      + ' style="font-size:10px;font-weight:700;color:var(--green);background:var(--green-bg);border-radius:8px;padding:1px 7px;margin-left:6px">PINNED</span>');
+    return '<tr>'
+      + '<td><strong>' + esc(r.party_name || '') + '</strong>' + flags.join('') + '</td>'
+      + '<td>' + (r.party_kind === 'buyer' ? 'Buyer' : 'Seller') + '</td>'
+      + '<td style="font-family:monospace">' + esc(r.phone_key || '')
+        + (stale ? '<div style="font-size:11px;color:var(--text3);font-family:inherit">master: '
+                   + esc(r.master_phone) + '</div>' : '') + '</td>'
+      + '<td>' + (Number(r.shares) > 1
+          ? '<span title="This number opens ' + r.shares + ' parties">' + r.shares + ' parties</span>'
+          : '<span style="color:var(--text3)">—</span>') + '</td>'
+      + '<td>' + esc(SRC[r.source] || r.source || '') + '</td>'
+      + '<td style="white-space:nowrap">' + esc(String(r.created_at || '').slice(0, 10)) + '</td>'
+      + '<td style="white-space:nowrap">'
+        + '<button class="btn" style="height:30px;padding:0 10px;font-size:12px" onclick="paRebind(' + r.id + ')">Change number</button> '
+        + '<button class="btn btn-d" style="height:30px;padding:0 10px;font-size:12px" onclick="paRevoke(' + r.id + ')">Revoke</button>'
+      + '</td></tr>';
+  }).join('');
+}
+
+async function paRevoke(id){
+  const r = _paRows.find(x => Number(x.id) === Number(id));
+  if (!r) return;
+  if (!confirm('Revoke access for ' + r.party_name + ' on ' + r.phone_key + '?\n\n'
+             + 'They stop seeing these documents on their next tap. The grant is kept as a '
+             + 'revoked record, not deleted.')) return;
+  try {
+    await j('/api/portal/admin/links/' + id + '/revoke', { method:'POST' });
+    toast('Access revoked');
+    loadPortalAccess();
+  } catch (e) { alert(e.message || 'Could not revoke'); }
+}
+
+// Rebind = grant the new number, then revoke the old one. Two calls because
+// that is what the audit should show: one grant ended, another began.
+async function paRebind(id){
+  const r = _paRows.find(x => Number(x.id) === Number(id));
+  if (!r) return;
+  const suggested = (r.master_phone && r.master_phone !== r.phone_key) ? r.master_phone : '';
+  const next = prompt('Which number should ' + r.party_name + ' sign in with?'
+    + (suggested ? '\n\nThe seller master says ' + suggested + '.' : ''), suggested || r.phone_key);
+  if (next === null) return;
+  const digits = String(next).replace(/\D/g, '').slice(-10);
+  if (digits.length !== 10) { alert('That is not a 10-digit number.'); return; }
+  if (digits === r.phone_key) { toast('That is already the number'); return; }
+  try {
+    await j('/api/portal/admin/links', { method:'POST', body: JSON.stringify(
+      { party_kind: r.party_kind, party_id: r.party_id, phone: digits }) });
+    await j('/api/portal/admin/links/' + id + '/revoke', { method:'POST' });
+    toast('Now signs in with ' + digits);
+    loadPortalAccess();
+  } catch (e) { alert(e.message || 'Could not change the number'); }
+}
+
+async function paSeed(commit){
+  const out = document.getElementById('pa-seed-out');
+  const go  = document.getElementById('pa-seed-go');
+  out.innerHTML = '<span style="color:var(--text3)">Working…</span>';
+  let d;
+  try { d = await j('/api/portal/admin/seed', { method:'POST', body: JSON.stringify({ commit: !!commit }) }); }
+  catch (e) { out.innerHTML = '<span style="color:var(--red,#b3261e)">' + esc(e.message || 'Failed') + '</span>'; return; }
+  const line = (k, v) => '<div><strong>' + v + '</strong> ' + k + '</div>';
+  if (commit) {
+    out.innerHTML = '<div style="color:var(--green);font-weight:600">Enrolled ' + (d.written || 0) + ' party(ies).</div>';
+    if (go) go.style.display = 'none';
+    loadPortalAccess();
+    return;
+  }
+  out.innerHTML =
+      line('sellers hold a document and have a number', d.sellers || 0)
+    + line('buyers hold an invoice and have a number', d.buyers || 0)
+    + line('distinct handsets', d.distinctPhones || 0)
+    + '<div style="margin-top:6px;color:#8B6508"><strong>' + (d.sharedPhones || 0)
+    + '</strong> of those open MORE THAN ONE party (' + (d.sharedParties || 0)
+    + ' parties in all) — anyone signing in on such a number sees every party it holds.</div>'
+    + '<div style="margin-top:6px;color:var(--text3)">Nothing has been written.</div>';
+  if (go) go.style.display = 'inline-flex';
 }
 
 async function loadUsers(){

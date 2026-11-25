@@ -53,6 +53,17 @@ function buildStatementView(stmt, cfg, first) {
     };
   });
 
+  // Every figure column is totalled, not just Payable. Each total is the sum
+  // of the COLUMN as printed — so what the eye adds down the page is what
+  // the total row says, even where a cell was rounded to get there.
+  const sum = (k) => round2(rows.reduce((a, r) => a + (Number(r[k]) || 0), 0));
+  const totals = {
+    qty:        round2(rows.reduce((a, r) => a + (Number(r.qty) || 0), 0)),
+    amount:     sum('amount'),
+    refund:     sum('refund'),
+    commission: sum('commission'),
+    gst:        sum('gst'),
+  };
   const totalPayable = rows.reduce((a, r) => a + r.payable, 0);
   // TDS is NOT recomputed here. It is 194Q, it depends on a running annual
   // threshold, and the figure the office already deducted is the one stored
@@ -74,6 +85,7 @@ function buildStatementView(stmt, cfg, first) {
     auctionDate: auction.date || '',
     seller: { block: sellerBlock },
     rows,
+    totals,
     totalPayable,
     tds,
     net,

@@ -14,6 +14,10 @@
 //   [totals]  total is the sum of the ROUNDED rows, less TDS, = net
 //   [tds]     TDS is the figure the office deducted, never recomputed
 //   [agree]   the Payment Voucher still prints, from the same context
+//   [layout]  the statement wears the VOUCHER's layout — the same page
+//             furniture and, literally, the same stylesheet. Each .hbs is
+//             self-contained by design, so the CSS is a copy; this is what
+//             notices when someone edits one and not the other.
 const path = require('path'), fs = require('fs'), os = require('os');
 const { spawn } = require('child_process');
 
@@ -235,7 +239,20 @@ const squash = (s) => s.replace(/\s+/g, '');
         && txt.indexOf(squash('16/11/2026')) > -1);
 
   // ── [totals] ─────────────────────────────────────────────────────────
-  console.log('\n[totals] total − TDS = net, and the column adds up');
+  console.log('\n[totals] every figure column is totalled, and total − TDS = net');
+  // One total per figure column, so each can be checked against the column
+  // above it. Hand-added from the three rows.
+  for (const [what, v] of [
+    ['qty',        '788.900'],
+    ['amount',     '23,87,910.50'],
+    ['refund',     '25,852.35'],
+    ['commission', '24,137.63'],
+    ['gst',        '4,344.77'],
+  ]) check('the ' + what + ' column totals ' + v, txt.indexOf(squash(v)) > -1, v);
+  check('…and the arithmetic is the office\'s own',
+        Math.abs((8441.70 + 8664.00 + 8746.65) - 25852.35) < 0.005
+     && Math.abs((7095.47 + 8364.56 + 8677.60) - 24137.63) < 0.005
+     && Math.abs((1277.18 + 1505.62 + 1561.97) - 4344.77) < 0.005);
   check('total payable 23,85,280.00', txt.indexOf(squash('23,85,280.00')) > -1);
   check('…less TDS 2,414.00', txt.indexOf(squash('2,414.00')) > -1);
   check('…net 23,82,866.00', txt.indexOf(squash('23,82,866.00')) > -1);
@@ -273,6 +290,43 @@ const squash = (s) => s.replace(/\s+/g, '');
   const vt = squash(pdfText(v.buf));
   check('…and quotes the same per-lot amount as the statement',
         vt.indexOf(squash('7,01,105.40')) > -1, vt.slice(0, 200));
+
+  // ── [layout] ─────────────────────────────────────────────────────────
+  console.log('\n[layout] the statement wears the Payment Voucher\'s layout');
+  for (const [what, needle] of [
+    ['the green Auction band', 'AuctionNo:23'],
+    ['the seller box header', 'DETAILSOFSELLER[BILLEDFOR]'],
+    ['the "sold through" sub-title', 'STATEMENTOFCARDAMOMSOLDTHROUGH'],
+    ['the seller signature caption', 'Signatureoftheseller'],
+    ['the authorised-signatory caption', 'AuthorisedSignatory'],
+  ]) check(what, txt.indexOf(needle) > -1, needle);
+
+  // Two of the voucher's meta cells are deliberately NOT carried over: a
+  // statement is not itself a numbered document, and a crop receipt belongs
+  // to a single lot. (Dropped 2026-11-25 at the office's request.)
+  check('it does NOT carry a Crop Receipt No cell', txt.indexOf('CropReceiptNo') === -1);
+  check('…nor a Bill No cell', txt.indexOf('BillNo') === -1);
+
+  // The voucher pairs its ONE lot with its ONE buyer. A statement spans lots
+  // sold to different buyers, so it must NOT carry a buyer box — an empty one
+  // would read as "no buyer", which is worse than not asking.
+  check('…but NOT a buyer box, which a multi-lot statement cannot fill',
+        txt.indexOf('DETAILSOFBUYER') === -1);
+
+  // The real guarantee: one stylesheet, copied. If someone restyles the
+  // voucher and forgets this file, the two documents stop matching and this
+  // is what says so.
+  const styleOf = (f) => {
+    const src = fs.readFileSync(path.join(ROOT, 'templates', f), 'utf8');
+    const m = /<style>([\s\S]*?)<\/style>/.exec(src);
+    return m ? m[1] : '';
+  };
+  const vouchCss = styleOf('commission-bill/letterhead.hbs');
+  const stmtCss  = styleOf('bill-statement/letterhead.hbs');
+  check('the voucher has a stylesheet to copy', vouchCss.length > 500, vouchCss.length);
+  check('…and the statement carries it verbatim',
+        vouchCss.length > 500 && stmtCss.indexOf(vouchCss) > -1,
+        'the two stylesheets have diverged — restyle both, or extract a partial');
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   cleanup();
